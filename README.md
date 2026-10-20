@@ -26,7 +26,7 @@ yav dev
 - 🖥️ **Server-Side Rendering & Streaming** — HTML-first with instant initial render and async chunk streaming
 - 📁 **File-based & Route Groups** — Next.js-inspired file routing with Route Groups `(auth)`, hierarchical layouts, native **View Transitions API**, and predictive prefetching
 - 🧩 **Rich UI component library** — 40+ primitives: Drawers, Command Palette (⌘K), Carousels, Popovers, Tooltips, Sliders, Steppers, and KPI StatCards
-- 🎯 **Built-in icons** — 80+ Lucide icons embedded directly in the binary
+- 🎯 **Built-in icons** — 13,000+ icons embedded directly in the binary across three design systems: **Lucide** (Classic), **MynaUI** (Minimal), and **Phosphor** (System)
 - 🌊 **Tailwind CSS** — Standalone CLI, zero Node.js / npm dependencies required
 - 🗜️ **Asset Pre-Compression** — Automatic transparent Brotli (`.br`) & Gzip (`.gz`) serving based on client `Accept-Encoding`
 - 📥 **Validated File Uploads** — `UploadedFile` with built-in MIME-type, extension, and file size validation
@@ -109,7 +109,7 @@ Comprehensive guides are available in the [`docs/`](docs/) directory:
 - [Getting Started](docs/getting-started.md)
 - [Routing & Dynamic Routes](docs/routing.md)
 - [Components Guide (40+ primitives)](docs/components.md)
-- [Icons System (80+ Lucide icons)](docs/icons.md)
+- [Icons System (Lucide, MynaUI & Phosphor)](docs/icons.md)
 - [Styling & Tailwind CSS Engine](docs/styling.md)
 - [Interactivity & Client Islands](docs/interactivity-and-htmx.md)
 - [SEO, Open Graph & Structured Data](docs/seo-and-metadata.md)
@@ -121,7 +121,7 @@ Comprehensive guides are available in the [`docs/`](docs/) directory:
 
 ## Examples
 
-- **[Enterprise SaaS Dashboard (`examples/dashboard`)](examples/dashboard/)**: Full-featured enterprise application showcasing KPI stat cards, dynamic route parameter resolution (`/projects/:id`), interactive component showroom, searchable Lucide icon explorer, and CSRF-protected settings form.
+- **[Enterprise SaaS Dashboard (`examples/dashboard`)](examples/dashboard/)**: Full-featured enterprise application showcasing KPI stat cards, dynamic route parameter resolution (`/projects/:id`), interactive component showroom, searchable icon explorer (Lucide, MynaUI, Phosphor), and CSRF-protected settings form.
 
 ## License
 
@@ -135,5 +135,7 @@ at your option.
 ## Acknowledgments
 
 - [Lucide Icons](https://lucide.dev/) — ISC License
+- [MynaUI Icons](https://mynaui.com/) — MIT License
+- [Phosphor Icons](https://phosphoricons.com/) — MIT License
 - [Tailwind CSS](https://tailwindcss.com/) — MIT License
 - [Axum](https://github.com/tokio-rs/axum) — MIT License

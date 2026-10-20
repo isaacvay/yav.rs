@@ -1,6 +1,10 @@
 # Built-in Icon System
 
-Yav includes a curated, high-performance icon system based on [Lucide Icons](https://lucide.dev/).
+Yav includes a curated, high-performance icon system with over 13,000 icons organized into 3 aesthetic families:
+- **Classic** (based on [Lucide Icons](https://lucide.dev/))
+- **Minimal** (based on [MynaUI Icons](https://mynaui.com/))
+- **System** (based on [Phosphor Icons](https://phosphoricons.com/))
+
 Icons are embedded as pre-optimized SVG strings directly in the binary, requiring no external font downloads, SVG sprite sheets, or network requests.
 
 ## Basic Usage
@@ -72,3 +76,9 @@ The catalog includes over 80 commonly needed application and navigation icons:
 - **Feedback & Alerts**: `bell`, `bell-off`, `info`, `alert-circle`, `alert-triangle`, `check-circle`, `x-circle`, `help-circle`
 - **Communication & Media**: `mail`, `message-square`, `phone`, `image`, `play`, `pause`, `volume-2`, `volume-x`
 - **Theme & Misc**: `sun`, `moon`, `laptop`, `settings`, `calendar`, `clock`, `tag`, `hash`, `heart`, `star`, `sparkles`, `command`
+
+## Attribution & Licenses
+
+- **Classic** ([Lucide Icons](https://lucide.dev/)): Licensed under the [ISC License](https://github.com/lucide-icons/lucide/blob/main/LICENSE).
+- **Minimal** ([MynaUI Icons](https://mynaui.com/)): Licensed under the [MIT License](https://github.com/mynaui/icons/blob/main/LICENSE).
+- **System** ([Phosphor Icons](https://phosphoricons.com/)): Licensed under the [MIT License](https://github.com/phosphor-icons/core/blob/main/LICENSE).
