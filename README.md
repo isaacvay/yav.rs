@@ -1,8 +1,8 @@
-# Yav — A Rust-first Web Framework
+# Yav.rs — A Rust-first Web Framework
 
 > Write Rust. Keep HTML and CSS. Build modern interfaces without unnecessary tooling friction.
 
-Yav is a complete web framework that brings the developer experience of Next.js and the integrated UI philosophy of Flutter to Rust. Server-side rendering, file-based routing, a JSX-like component syntax, built-in UI components, and Tailwind CSS integration — all without requiring Node.js.
+Yav.rs is a complete web framework that brings the developer experience of Next.js and the integrated UI philosophy of Flutter to Rust. Server-side rendering, file-based routing, a JSX-like component syntax, built-in UI components, and Tailwind CSS integration — all without requiring Node.js.
 
 ## Quick Start
 

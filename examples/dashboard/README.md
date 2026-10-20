@@ -1,4 +1,4 @@
-# Yav SaaS Dashboard Example
+# Yav.rs SaaS Dashboard Example
 
 This is the official production demonstration application for the **Yav.rs** web framework, fulfilling Section 15 of the master specification (`prompt.md`).
 

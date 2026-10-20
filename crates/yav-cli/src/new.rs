@@ -1004,7 +1004,7 @@ Allow: /
     let readme = format!(
         r#"# {name}
 
-A web application built with the [Yav](https://github.com/isaacvay/yav.rs) web framework.
+A web application built with the [Yav.rs](https://github.com/isaacvay/yav.rs) web framework.
 
 ## Getting Started
 
