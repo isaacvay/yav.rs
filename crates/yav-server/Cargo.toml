@@ -1,0 +1,22 @@
+[package]
+name = "yav-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "HTTP server, SSR engine, and middleware for the Yav web framework"
+
+[dependencies]
+yav-core.workspace = true
+yav-build.workspace = true
+yav-router.workspace = true
+axum.workspace = true
+tokio.workspace = true
+tower.workspace = true
+tower-http.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+hyper.workspace = true
+sha2.workspace = true
+futures-util = "0.3"

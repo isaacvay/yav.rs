@@ -1,0 +1,9 @@
+[package]
+name = "yav-icons"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Built-in icon system with Lucide icons for the Yav web framework"
+
+[dependencies]
+yav-core.workspace = true

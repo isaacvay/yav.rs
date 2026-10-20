@@ -1,0 +1,41 @@
+use yav::prelude::*;
+
+#[component]
+pub fn StatCard(
+    title: String,
+    value: String,
+    change: Option<String>,
+    is_positive: bool,
+    subtitle: Option<String>,
+) -> Node {
+    let trend_node = change.map(|c| {
+        let (color, arrow) = if is_positive {
+            ("text-emerald-600 bg-emerald-50 dark:bg-emerald-950/50 dark:text-emerald-400", "↑")
+        } else {
+            ("text-rose-600 bg-rose-50 dark:bg-rose-950/50 dark:text-rose-400", "↓")
+        };
+        rsx! {
+            <span class={format!("inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full {}", color)}>
+                <span>{arrow}</span>
+                <span>{c}</span>
+            </span>
+        }
+    });
+
+    let sub_node = subtitle.map(|s| {
+        rsx! { <span class="text-xs text-muted-foreground ml-2">{s}</span> }
+    });
+
+    rsx! {
+        <div class="p-6 bg-card border border-border rounded-2xl shadow-sm hover:shadow-md transition">
+            <p class="text-sm font-medium text-muted-foreground">{title}</p>
+            <div class="mt-2 flex items-baseline justify-between">
+                <h3 class="text-3xl font-extrabold tracking-tight font-mono">{value}</h3>
+            </div>
+            <div class="mt-3 flex items-center">
+                {trend_node}
+                {sub_node}
+            </div>
+        </div>
+    }
+}

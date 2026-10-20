@@ -1,0 +1,19 @@
+[package]
+name = "yav"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "A Rust-first web framework with a modern frontend developer experience"
+readme = "../../README.md"
+
+[dependencies]
+yav-core.workspace = true
+yav-macros.workspace = true
+yav-router.workspace = true
+yav-server.workspace = true
+yav-ui.workspace = true
+yav-icons.workspace = true
+yav-build.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true

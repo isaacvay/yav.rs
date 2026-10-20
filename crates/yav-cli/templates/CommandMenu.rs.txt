@@ -1,0 +1,60 @@
+use yav::prelude::*;
+
+#[derive(Clone, Default)]
+pub struct CommandOption {
+    pub label: String,
+    pub shortcut: Option<String>,
+    pub href: Option<String>,
+}
+
+#[component]
+pub fn CommandMenu(
+    id: String,
+    placeholder: String,
+    options: Vec<CommandOption>,
+) -> Node {
+    let items = options.into_iter().map(|opt| {
+        let href = opt.href.unwrap_or_else(|| "#".to_string());
+        let sc_node = opt.shortcut.map(|sc| {
+            rsx! {
+                <kbd class="font-mono text-xs text-muted-foreground border border-border px-1.5 py-0.5 rounded bg-muted">
+                    {sc}
+                </kbd>
+            }
+        });
+
+        rsx! {
+            <a
+                href={href}
+                class="flex items-center justify-between px-3 py-2 rounded-lg text-sm text-foreground hover:bg-muted transition"
+            >
+                <span>{opt.label}</span>
+                {sc_node}
+            </a>
+        }
+    }).collect::<Vec<Node>>();
+
+    rsx! {
+        <div id={id.clone()} class="hidden fixed inset-0 z-50 p-4 sm:p-6 md:p-20 flex items-start justify-center" role="dialog" aria-modal="true">
+            <div
+                class="fixed inset-0 bg-black/60 backdrop-blur-sm"
+                onclick={format!("document.getElementById('{}').classList.add('hidden')", id)}
+            />
+            <div class="relative w-full max-w-lg bg-card border border-border rounded-xl shadow-2xl overflow-hidden divide-y divide-border">
+                <div class="px-4 py-3 flex items-center gap-2">
+                    <input
+                        type="text"
+                        class="w-full bg-transparent border-0 text-sm focus:outline-none placeholder:text-muted-foreground"
+                        placeholder={placeholder}
+                    />
+                    <kbd class="text-xs font-mono text-muted-foreground border border-border px-1.5 py-0.5 rounded bg-muted">
+                        "ESC"
+                    </kbd>
+                </div>
+                <div class="p-2 max-h-72 overflow-y-auto space-y-1">
+                    {items}
+                </div>
+            </div>
+        </div>
+    }
+}

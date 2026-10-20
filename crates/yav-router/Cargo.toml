@@ -1,0 +1,11 @@
+[package]
+name = "yav-router"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "File-based routing system for the Yav web framework"
+
+[dependencies]
+yav-core.workspace = true
+serde.workspace = true
+tracing.workspace = true

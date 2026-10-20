@@ -1,0 +1,56 @@
+use yav::prelude::*;
+
+#[derive(Clone, Default)]
+pub struct SlideItem {
+    pub image_url: String,
+    pub title: String,
+    pub description: Option<String>,
+}
+
+#[component]
+pub fn Carousel(
+    id: String,
+    slides: Vec<SlideItem>,
+) -> Node {
+    let slide_nodes = slides.iter().enumerate().map(|(i, slide)| {
+        let visibility = if i == 0 { "opacity-100 z-10" } else { "opacity-0 z-0 pointer-events-none" };
+        let desc_node = slide.description.as_ref().map(|d| {
+            rsx! { <p class="text-sm text-gray-200 mt-1">{d}</p> }
+        });
+
+        rsx! {
+            <div
+                class={format!("absolute inset-0 transition-opacity duration-500 ease-in-out {}", visibility)}
+                data-slide-index={i.to_string()}
+            >
+                <img src={slide.image_url.clone()} alt={slide.title.clone()} class="h-full w-full object-cover" />
+                <div class="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent flex flex-col justify-end p-6 text-white">
+                    <h3 class="text-2xl font-bold tracking-tight">{slide.title.clone()}</h3>
+                    {desc_node}
+                </div>
+            </div>
+        }
+    }).collect::<Vec<Node>>();
+
+    let total = slides.len();
+
+    rsx! {
+        <div id={id.clone()} class="relative w-full aspect-[16/9] overflow-hidden rounded-2xl bg-black shadow-xl" data-carousel="true">
+            <div class="relative h-full w-full">
+                {slide_nodes}
+            </div>
+            <div class="absolute bottom-4 left-1/2 -translate-x-1/2 z-20 flex gap-2">
+                {(0..total).map(|i| {
+                    let w = if i == 0 { "w-6 bg-white" } else { "w-2.5 bg-white/50" };
+                    rsx! {
+                        <button
+                            type="button"
+                            class={format!("h-2.5 rounded-full transition-all duration-300 {}", w)}
+                            aria-label={format!("Slide {}", i + 1)}
+                        />
+                    }
+                }).collect::<Vec<Node>>()}
+            </div>
+        </div>
+    }
+}

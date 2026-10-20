@@ -1,0 +1,103 @@
+{
+  "name": "yav-vscode",
+  "displayName": "Yav Framework Support",
+  "description": "Rich syntax highlighting, snippets, and language configuration for Yav components (.yav, .rsx)",
+  "version": "0.1.0",
+  "publisher": "yav-framework",
+  "author": {
+    "name": "Yav Framework Team"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yav-rs/yav"
+  },
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "icon": "./icons/icon.png",
+  "categories": [
+    "Programming Languages",
+    "Snippets"
+  ],
+  "keywords": [
+    "yav",
+    "rsx",
+    "rust",
+    "jsx",
+    "react",
+    "astro",
+    "nextjs",
+    "web"
+  ],
+  "main": "",
+  "contributes": {
+    "languages": [
+      {
+        "id": "yav",
+        "aliases": [
+          "Yav",
+          "yav",
+          "RSX",
+          "rsx"
+        ],
+        "extensions": [
+          ".yav",
+          ".rsx"
+        ],
+        "configuration": "./language-configuration.json",
+        "icon": {
+          "light": "./icons/yav-monogram-flat.svg",
+          "dark": "./icons/yav-monogram-flat.svg"
+        }
+      },
+      {
+        "id": "yavml",
+        "aliases": [
+          "Yav Manifest",
+          "Yavml",
+          "yavml"
+        ],
+        "extensions": [
+          ".yavml"
+        ],
+        "configuration": "./language-configuration-yavml.json",
+        "icon": {
+          "light": "./icons/yav-document.png",
+          "dark": "./icons/yav-document.png"
+        }
+      }
+    ],
+    "grammars": [
+      {
+        "language": "yav",
+        "scopeName": "source.yav",
+        "path": "./syntaxes/yav.tmLanguage.json"
+      },
+      {
+        "language": "yavml",
+        "scopeName": "source.yavml",
+        "path": "./syntaxes/yavml.tmLanguage.json"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "yav",
+        "path": "./snippets/yav.json"
+      },
+      {
+        "language": "yavml",
+        "path": "./snippets/yavml.json"
+      }
+    ],
+    "jsonValidation": [
+      {
+        "fileMatch": [
+          "package.yavml",
+          "*package.yavml"
+        ],
+        "url": "./schemas/package.yavml.json"
+      }
+    ]
+  }
+}

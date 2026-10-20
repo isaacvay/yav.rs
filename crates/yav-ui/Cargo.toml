@@ -1,0 +1,10 @@
+[package]
+name = "yav-ui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Official UI component library for the Yav web framework"
+
+[dependencies]
+yav-core.workspace = true
+yav-icons.workspace = true

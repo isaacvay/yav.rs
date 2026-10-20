@@ -1,0 +1,33 @@
+use yav::prelude::*;
+
+#[derive(Clone, Default)]
+pub struct StatItem {
+    pub label: String,
+    pub value: String,
+    pub change: String,
+    pub is_positive: bool,
+}
+
+#[component]
+pub fn StatGrid(items: Vec<StatItem>) -> Node {
+    let cards = items.into_iter().map(|item| {
+        let change_color = if item.is_positive { "text-emerald-500" } else { "text-rose-500" };
+        rsx! {
+            <div class="p-6 bg-card border border-border rounded-xl shadow-sm">
+                <p class="text-sm font-medium text-muted-foreground">{item.label}</p>
+                <div class="flex items-baseline justify-between mt-2">
+                    <h3 class="text-3xl font-extrabold">{item.value}</h3>
+                    <span class={format!("text-xs font-semibold px-2 py-0.5 rounded-full bg-muted {}", change_color)}>
+                        {item.change}
+                    </span>
+                </div>
+            </div>
+        }
+    }).collect::<Vec<Node>>();
+
+    rsx! {
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            {cards}
+        </div>
+    }
+}

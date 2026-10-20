@@ -1,0 +1,42 @@
+use yav::prelude::*;
+
+#[component]
+pub fn Drawer(
+    id: String,
+    title: String,
+    description: Option<String>,
+    children: Children,
+) -> Node {
+    let desc_node = description.map(|d| {
+        rsx! { <p class="text-xs text-muted-foreground mt-0.5">{d}</p> }
+    });
+
+    rsx! {
+        <div id={id.clone()} class="hidden fixed inset-0 z-50 overflow-hidden" role="dialog" aria-modal="true">
+            <div
+                class="fixed inset-0 bg-black/50 backdrop-blur-sm transition-opacity"
+                onclick={format!("document.getElementById('{}').classList.add('hidden')", id)}
+            />
+            <div class="fixed inset-y-0 right-0 flex max-w-full pl-10">
+                <div class="relative w-screen max-w-md bg-card border-l border-border shadow-2xl flex flex-col">
+                    <div class="flex items-center justify-between px-6 py-4 border-b border-border">
+                        <div>
+                            <h3 class="text-base font-semibold text-foreground">{title}</h3>
+                            {desc_node}
+                        </div>
+                        <button
+                            type="button"
+                            class="rounded-lg p-1 text-muted-foreground hover:bg-muted hover:text-foreground transition"
+                            onclick={format!("document.getElementById('{}').classList.add('hidden')", id)}
+                        >
+                            "✕"
+                        </button>
+                    </div>
+                    <div class="flex-1 overflow-y-auto p-6 space-y-4">
+                        {children}
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+}

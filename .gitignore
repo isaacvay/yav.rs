@@ -1,0 +1,38 @@
+# Rust / Cargo
+/target/
+**/target/
+**/*.rs.bk
+Cargo.lock.bak
+
+# IDE & Editor files
+.idea/
+*.iml
+*.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+*.swp
+*.swo
+*~
+
+# Node / Web (for VS Code extension or tooling)
+node_modules/
+dist/
+out/
+*.vsix
+package-lock.json
+
+# Operating System files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs & temporary files
+*.log
+tmp/
+scratch/
+prompt.md
+
+# Raw upstream icon downloads (catalog is generated into src/catalog/)
+crates/yav-icons/lucide/
+crates/yav-icons/mynaui-icons-main/
+crates/yav-icons/phosphor-icons/

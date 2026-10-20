@@ -1,0 +1,14 @@
+---
+use yav::prelude::*;
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Props {
+    pub username: String,
+    pub is_admin: bool,
+}
+---
+
+<div class="user-badge flex items-center gap-2">
+    <span class="font-bold">{props.username.clone()}</span>
+    <span class="badge">{if props.is_admin { "Admin" } else { "User" }}</span>
+</div>

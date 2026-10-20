@@ -1,0 +1,10 @@
+[package]
+name = "yav-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Core types, rendering engine, and HTML escaping for the Yav web framework"
+
+[dependencies]
+
+[dev-dependencies]

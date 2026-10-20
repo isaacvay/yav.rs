@@ -1,0 +1,34 @@
+[package]
+name = "yav-dashboard-example"
+version = "0.1.0"
+description = "Modern SaaS Dashboard built with Yav web framework"
+authors = []
+license = "MIT"
+
+[server]
+port = 3000
+host = "127.0.0.1"
+
+[tailwind]
+enabled = true
+version = "3.4.17"
+input = "src/styles/app.css"
+output = "public/styles.css"
+
+[motion]
+enabled = true
+reduced_motion = "user"
+
+[build]
+out_dir = "dist"
+public_dir = "public"
+minify = true
+fingerprint = true
+
+[scripts]
+dev = "yav dev"
+build = "yav build"
+test = "cargo test"
+
+[assets]
+favicon = "public/favicon.svg"

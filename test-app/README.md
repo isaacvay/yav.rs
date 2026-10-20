@@ -1,0 +1,22 @@
+# test-app
+
+A web application built with the [Yav](https://github.com/user/yav) web framework.
+
+## Getting Started
+
+### Development
+Start the development server with live reload:
+```bash
+yav dev
+```
+
+### Production Build
+Build optimized assets and binary:
+```bash
+yav build
+```
+
+### Run Tests
+```bash
+yav test
+```

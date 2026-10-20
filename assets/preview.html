@@ -1,0 +1,571 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Yav Framework — Brand Assets & Logos Vectoriels</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-dark: #0c0e14;
+      --card-bg: rgba(22, 26, 38, 0.75);
+      --card-border: rgba(255, 255, 255, 0.08);
+      --primary: #f59e0b;
+      --primary-glow: rgba(245, 158, 11, 0.35);
+      --accent: #ef4444;
+      --text: #f3f4f6;
+      --text-muted: #9ca3af;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: 'Outfit', sans-serif;
+      background: var(--bg-dark);
+      color: var(--text);
+      min-height: 100vh;
+      padding: 2.5rem 1.5rem 4rem;
+      background-image: 
+        radial-gradient(ellipse at 20% 0%, rgba(245, 158, 11, 0.12) 0%, transparent 60%),
+        radial-gradient(ellipse at 80% 10%, rgba(239, 68, 68, 0.08) 0%, transparent 50%),
+        radial-gradient(circle at 50% 100%, rgba(30, 41, 59, 0.5) 0%, transparent 70%);
+      background-attachment: fixed;
+    }
+
+    .container {
+      max-width: 1280px;
+      margin: 0 auto;
+    }
+
+    header {
+      text-align: center;
+      margin-bottom: 3rem;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.4rem 1rem;
+      border-radius: 9999px;
+      background: rgba(245, 158, 11, 0.12);
+      border: 1px solid rgba(245, 158, 11, 0.3);
+      color: var(--primary);
+      font-size: 0.85rem;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      margin-bottom: 1.25rem;
+    }
+
+    h1 {
+      font-size: 3rem;
+      font-weight: 800;
+      letter-spacing: -0.03em;
+      background: linear-gradient(135deg, #ffffff 30%, #fcd34d 70%, #f59e0b 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      margin-bottom: 0.75rem;
+    }
+
+    header p {
+      color: var(--text-muted);
+      font-size: 1.15rem;
+      max-width: 650px;
+      margin: 0 auto 1.5rem;
+    }
+
+    /* Controls: Background switcher */
+    .controls {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 0.75rem;
+      background: rgba(18, 21, 31, 0.8);
+      border: 1px solid var(--card-border);
+      padding: 0.5rem 0.75rem;
+      border-radius: 9999px;
+      width: fit-content;
+      margin: 0 auto 2.5rem;
+      backdrop-filter: blur(12px);
+    }
+
+    .controls span {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      font-weight: 500;
+      padding-left: 0.5rem;
+    }
+
+    .bg-btn {
+      padding: 0.4rem 0.85rem;
+      border-radius: 9999px;
+      border: 1px solid transparent;
+      background: transparent;
+      color: var(--text-muted);
+      font-size: 0.82rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .bg-btn:hover {
+      color: var(--text);
+      background: rgba(255, 255, 255, 0.05);
+    }
+
+    .bg-btn.active {
+      color: #000;
+      background: var(--primary);
+      font-weight: 600;
+      box-shadow: 0 0 16px var(--primary-glow);
+    }
+
+    /* Cards Grid */
+    .cards-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(560px, 1fr));
+      gap: 2rem;
+    }
+
+    @media (max-width: 640px) {
+      .cards-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 1.5rem;
+      padding: 2rem;
+      backdrop-filter: blur(16px);
+      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+      transition: transform 0.25s ease, border-color 0.25s ease;
+    }
+
+    .card:hover {
+      border-color: rgba(245, 158, 11, 0.3);
+      transform: translateY(-4px);
+    }
+
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+      padding-bottom: 1rem;
+    }
+
+    .card-title {
+      font-size: 1.4rem;
+      font-weight: 700;
+      color: #fff;
+    }
+
+    .card-meta {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      margin-top: 0.25rem;
+    }
+
+    .card-tag {
+      font-size: 0.75rem;
+      padding: 0.25rem 0.65rem;
+      border-radius: 0.5rem;
+      background: rgba(255, 255, 255, 0.06);
+      color: #fcd34d;
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    /* Visual preview panels */
+    .preview-box {
+      border-radius: 1rem;
+      min-height: 280px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+      overflow: hidden;
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      transition: background 0.3s ease;
+    }
+
+    /* Checkerboard pattern for transparency check */
+    .theme-checker {
+      background-color: #1e2029;
+      background-image: 
+        linear-gradient(45deg, #15171f 25%, transparent 25%), 
+        linear-gradient(-45deg, #15171f 25%, transparent 25%), 
+        linear-gradient(45deg, transparent 75%, #15171f 75%), 
+        linear-gradient(-45deg, transparent 75%, #15171f 75%);
+      background-size: 24px 24px;
+      background-position: 0 0, 0 12px, 12px -12px, -12px 0px;
+    }
+
+    .theme-dark {
+      background: #0d1117;
+    }
+
+    .theme-slate {
+      background: #1e293b;
+    }
+
+    .theme-light {
+      background: #f8fafc;
+    }
+
+    .preview-box svg {
+      width: 200px;
+      height: 200px;
+      max-width: 80%;
+      max-height: 80%;
+      transition: transform 0.3s ease;
+    }
+
+    .preview-box svg:hover {
+      transform: scale(1.05);
+    }
+
+    /* View modes: SVG vs PNG vs Original */
+    .view-tabs {
+      display: flex;
+      gap: 0.5rem;
+      background: rgba(0, 0, 0, 0.25);
+      padding: 0.35rem;
+      border-radius: 0.75rem;
+      width: fit-content;
+    }
+
+    .tab-btn {
+      padding: 0.35rem 0.75rem;
+      border-radius: 0.5rem;
+      border: none;
+      background: transparent;
+      color: var(--text-muted);
+      font-size: 0.8rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .tab-btn.active {
+      background: rgba(255, 255, 255, 0.1);
+      color: #fff;
+      font-weight: 600;
+    }
+
+    .view-target img {
+      max-width: 200px;
+      max-height: 200px;
+      object-fit: contain;
+    }
+
+    /* Actions and Code */
+    .card-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.6rem 1.1rem;
+      border-radius: 0.75rem;
+      font-size: 0.85rem;
+      font-weight: 600;
+      text-decoration: none;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      border: 1px solid transparent;
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, #f59e0b, #d97706);
+      color: #000;
+      box-shadow: 0 4px 12px rgba(245, 158, 11, 0.3);
+    }
+
+    .btn-primary:hover {
+      box-shadow: 0 6px 18px rgba(245, 158, 11, 0.45);
+      transform: translateY(-1px);
+    }
+
+    .btn-secondary {
+      background: rgba(255, 255, 255, 0.05);
+      border-color: rgba(255, 255, 255, 0.1);
+      color: var(--text);
+    }
+
+    .btn-secondary:hover {
+      background: rgba(255, 255, 255, 0.1);
+      border-color: rgba(255, 255, 255, 0.2);
+    }
+
+    /* Code block */
+    .code-box {
+      background: #080a0f;
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      border-radius: 0.75rem;
+      padding: 0.85rem 1rem;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.8rem;
+      color: #cbd5e1;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      overflow-x: auto;
+    }
+
+    .copy-btn {
+      background: transparent;
+      border: none;
+      color: var(--primary);
+      cursor: pointer;
+      font-size: 0.8rem;
+      font-weight: 600;
+      padding: 0.2rem 0.5rem;
+    }
+
+    .copy-btn:hover {
+      text-decoration: underline;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="badge">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+        Logos Vectoriels & Assets
+      </div>
+      <h1>Yav Framework Brand Assets</h1>
+      <p>Extraction haute fidélité avec détourage transparent (anti-aliasing de précision) et conversion en tracés vectoriels SVG purs et scalables.</p>
+      
+      <!-- Theme Switcher -->
+      <div class="controls">
+        <span>Fond de test :</span>
+        <button class="bg-btn active" onclick="setTheme('theme-checker', this)">Damier PNG</button>
+        <button class="bg-btn" onclick="setTheme('theme-dark', this)">Dark (#0d1117)</button>
+        <button class="bg-btn" onclick="setTheme('theme-slate', this)">Slate (#1e293b)</button>
+        <button class="bg-btn" onclick="setTheme('theme-light', this)">Light (#ffffff)</button>
+      </div>
+    </header>
+
+    <div class="cards-grid">
+      <!-- 1. Hexagon Badge -->
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">1. Badge Hexagonal 3D</div>
+            <div class="card-meta">Emblème officiel avec tracé circuit "Y" & invite terminal <code>&gt; _</code></div>
+          </div>
+          <span class="card-tag">yav-hex-badge</span>
+        </div>
+
+        <div class="view-tabs">
+          <button class="tab-btn active" onclick="switchView('card-1', 'svg', this)">Vectoriel SVG</button>
+          <button class="tab-btn" onclick="switchView('card-1', 'png', this)">PNG Détouré</button>
+          <button class="tab-btn" onclick="switchView('card-1', 'original', this)">Original JPG</button>
+        </div>
+
+        <div id="card-1" class="preview-box theme-checker">
+          <div class="view-target svg-view">
+            <!-- Inline SVG -->
+            <img src="svg/yav-hex-badge.svg" alt="Yav Hexagon Badge SVG" width="220">
+          </div>
+          <div class="view-target png-view" style="display: none;">
+            <img src="png/yav-hex-badge.png" alt="Yav Hexagon Badge PNG" width="220">
+          </div>
+          <div class="view-target orig-view" style="display: none;">
+            <img src="Only_the_icon._2K_20261019122215.jpg" alt="Yav Hexagon Original JPG" width="220">
+          </div>
+        </div>
+
+        <div class="card-actions">
+          <a href="svg/yav-hex-badge.svg" download class="btn btn-primary">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Télécharger SVG
+          </a>
+          <a href="png/yav-hex-badge.png" download class="btn btn-secondary">
+            Télécharger PNG (Transparent)
+          </a>
+        </div>
+
+        <div class="code-box">
+          <code>&lt;img src="assets/svg/yav-hex-badge.svg" width="64" /&gt;</code>
+          <button class="copy-btn" onclick="navigator.clipboard.writeText('<img src=\"assets/svg/yav-hex-badge.svg\" width=\"64\" />')">Copier</button>
+        </div>
+      </div>
+
+      <!-- 2. Monogram Gradient -->
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">2. Monogramme "Y" Dégradé Feu</div>
+            <div class="card-meta">Tracé aérodynamique 3 ailes avec dégradé ambre/corail lumineux</div>
+          </div>
+          <span class="card-tag">yav-monogram-gradient</span>
+        </div>
+
+        <div class="view-tabs">
+          <button class="tab-btn active" onclick="switchView('card-2', 'svg', this)">Vectoriel SVG</button>
+          <button class="tab-btn" onclick="switchView('card-2', 'png', this)">PNG Détouré</button>
+          <button class="tab-btn" onclick="switchView('card-2', 'original', this)">Original JPG</button>
+        </div>
+
+        <div id="card-2" class="preview-box theme-checker">
+          <div class="view-target svg-view">
+            <img src="svg/yav-monogram-gradient.svg" alt="Yav Monogram Gradient SVG" width="220">
+          </div>
+          <div class="view-target png-view" style="display: none;">
+            <img src="png/yav-monogram-gradient.png" alt="Yav Monogram Gradient PNG" width="220">
+          </div>
+          <div class="view-target orig-view" style="display: none;">
+            <img src="solid_color_2K_20261019121252.jpg" alt="Yav Monogram Gradient Original" width="220">
+          </div>
+        </div>
+
+        <div class="card-actions">
+          <a href="svg/yav-monogram-gradient.svg" download class="btn btn-primary">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Télécharger SVG
+          </a>
+          <a href="png/yav-monogram-gradient.png" download class="btn btn-secondary">
+            Télécharger PNG (Transparent)
+          </a>
+        </div>
+
+        <div class="code-box">
+          <code>&lt;img src="assets/svg/yav-monogram-gradient.svg" width="64" /&gt;</code>
+          <button class="copy-btn" onclick="navigator.clipboard.writeText('<img src=\"assets/svg/yav-monogram-gradient.svg\" width=\"64\" />')">Copier</button>
+        </div>
+      </div>
+
+      <!-- 3. Monogram Flat -->
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">3. Monogramme "Y" Flat Gold</div>
+            <div class="card-meta">Logo plat minimaliste monochrome <code>#F5A623</code> pour UI & favicons</div>
+          </div>
+          <span class="card-tag">yav-monogram-flat</span>
+        </div>
+
+        <div class="view-tabs">
+          <button class="tab-btn active" onclick="switchView('card-3', 'svg', this)">Vectoriel SVG</button>
+          <button class="tab-btn" onclick="switchView('card-3', 'png', this)">PNG Détouré</button>
+          <button class="tab-btn" onclick="switchView('card-3', 'original', this)">Original JPG</button>
+        </div>
+
+        <div id="card-3" class="preview-box theme-checker">
+          <div class="view-target svg-view">
+            <img src="svg/yav-monogram-flat.svg" alt="Yav Monogram Flat SVG" width="220">
+          </div>
+          <div class="view-target png-view" style="display: none;">
+            <img src="png/yav-monogram-flat.png" alt="Yav Monogram Flat PNG" width="220">
+          </div>
+          <div class="view-target orig-view" style="display: none;">
+            <img src="icon_only_2K_20261019122037.jpg" alt="Yav Monogram Flat Original" width="220">
+          </div>
+        </div>
+
+        <div class="card-actions">
+          <a href="svg/yav-monogram-flat.svg" download class="btn btn-primary">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Télécharger SVG
+          </a>
+          <a href="png/yav-monogram-flat.png" download class="btn btn-secondary">
+            Télécharger PNG (Transparent)
+          </a>
+        </div>
+
+        <div class="code-box">
+          <code>&lt;img src="assets/svg/yav-monogram-flat.svg" width="64" /&gt;</code>
+          <button class="copy-btn" onclick="navigator.clipboard.writeText('<img src=\"assets/svg/yav-monogram-flat.svg\" width=\"64\" />')">Copier</button>
+        </div>
+      </div>
+
+      <!-- 4. Document Logo -->
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">4. Icône Document Développeur</div>
+            <div class="card-meta">Fichier d'ardoise avec signet doré, coin plié et emblème "Y"</div>
+          </div>
+          <span class="card-tag">yav-document</span>
+        </div>
+
+        <div class="view-tabs">
+          <button class="tab-btn active" onclick="switchView('card-4', 'svg', this)">Vectoriel SVG</button>
+          <button class="tab-btn" onclick="switchView('card-4', 'png', this)">PNG Détouré</button>
+          <button class="tab-btn" onclick="switchView('card-4', 'original', this)">Original JPG</button>
+        </div>
+
+        <div id="card-4" class="preview-box theme-checker">
+          <div class="view-target svg-view">
+            <img src="svg/yav-document.svg" alt="Yav Document SVG" width="220">
+          </div>
+          <div class="view-target png-view" style="display: none;">
+            <img src="png/yav-document.png" alt="Yav Document PNG" width="220">
+          </div>
+          <div class="view-target orig-view" style="display: none;">
+            <img src="only_the_icon_2K_20261019122144.jpg" alt="Yav Document Original" width="220">
+          </div>
+        </div>
+
+        <div class="card-actions">
+          <a href="svg/yav-document.svg" download class="btn btn-primary">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Télécharger SVG
+          </a>
+          <a href="png/yav-document.png" download class="btn btn-secondary">
+            Télécharger PNG (Transparent)
+          </a>
+        </div>
+
+        <div class="code-box">
+          <code>&lt;img src="assets/svg/yav-document.svg" width="64" /&gt;</code>
+          <button class="copy-btn" onclick="navigator.clipboard.writeText('<img src=\"assets/svg/yav-document.svg\" width=\"64\" />')">Copier</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    function setTheme(themeClass, btn) {
+      document.querySelectorAll('.preview-box').forEach(box => {
+        box.className = 'preview-box ' + themeClass;
+      });
+      document.querySelectorAll('.bg-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+    }
+
+    function switchView(cardId, viewType, btn) {
+      const card = document.getElementById(cardId);
+      const svgView = card.querySelector('.svg-view');
+      const pngView = card.querySelector('.png-view');
+      const origView = card.querySelector('.orig-view');
+
+      svgView.style.display = viewType === 'svg' ? 'block' : 'none';
+      pngView.style.display = viewType === 'png' ? 'block' : 'none';
+      origView.style.display = viewType === 'original' ? 'block' : 'none';
+
+      const parentTabs = btn.closest('.view-tabs');
+      parentTabs.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+    }
+  </script>
+</body>
+</html>

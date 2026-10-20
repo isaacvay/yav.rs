@@ -1,0 +1,49 @@
+use yav::prelude::*;
+
+#[derive(Clone, Default)]
+pub struct NavItem {
+    pub label: String,
+    pub href: String,
+    pub is_active: bool,
+}
+
+#[component]
+pub fn Navbar(brand: String, items: Vec<NavItem>) -> Node {
+    let links = items.into_iter().map(|item| {
+        let active_class = if item.is_active {
+            "text-foreground font-semibold"
+        } else {
+            "text-muted-foreground hover:text-foreground"
+        };
+
+        rsx! {
+            <a href={item.href} class={format!("text-sm transition duration-150 {}", active_class)}>
+                {item.label}
+            </a>
+        }
+    }).collect::<Vec<Node>>();
+
+    rsx! {
+        <header class="sticky top-0 z-50 w-full border-b border-border bg-background/95 backdrop-blur">
+            <div class="max-w-7xl mx-auto flex h-16 items-center justify-between px-4 sm:px-6">
+                <div class="flex items-center gap-8">
+                    <a href="/" class="text-xl font-bold tracking-tight text-primary flex items-center gap-2">
+                        <span>⚡</span>
+                        <span>{brand}</span>
+                    </a>
+                    <nav class="hidden md:flex items-center gap-6">
+                        {links}
+                    </nav>
+                </div>
+                <div class="flex items-center gap-4">
+                    <a href="/login" class="text-sm font-medium hover:underline text-muted-foreground">
+                        Connexion
+                    </a>
+                    <a href="/register" class="text-sm font-medium py-2 px-4 rounded-lg bg-primary text-primary-foreground hover:opacity-90 transition">
+                        Démarrer
+                    </a>
+                </div>
+            </div>
+        </header>
+    }
+}

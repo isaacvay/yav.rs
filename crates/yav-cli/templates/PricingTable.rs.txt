@@ -1,0 +1,71 @@
+use yav::prelude::*;
+
+#[component]
+pub fn PricingTable() -> Node {
+    rsx! {
+        <div class="py-12 max-w-6xl mx-auto px-4">
+            <div class="text-center mb-12">
+                <h2 class="text-3xl font-extrabold tracking-tight">Tarifs simples et transparents</h2>
+                <p class="mt-2 text-muted-foreground">Choisissez le plan adapté à la croissance de votre projet.</p>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
+                // Free Tier
+                <div class="border border-border rounded-2xl p-6 bg-card flex flex-col justify-between">
+                    <div>
+                        <h3 class="font-bold text-xl">Démarrage</h3>
+                        <p class="text-xs text-muted-foreground mt-1">Pour les projets personnels</p>
+                        <div class="mt-4 text-4xl font-extrabold">0 €<span class="text-sm font-normal text-muted-foreground"> / mois</span></div>
+                        <ul class="mt-6 space-y-2 text-sm text-muted-foreground">
+                            <li>✔ 1 Projet</li>
+                            <li>✔ 10 000 requêtes / mois</li>
+                            <li>✔ Hébergement standard</li>
+                        </ul>
+                    </div>
+                    <button class="mt-8 w-full py-2 border border-border rounded-lg font-semibold hover:bg-muted transition">
+                        Commencer gratuitement
+                    </button>
+                </div>
+
+                // Pro Tier (Popular)
+                <div class="border-2 border-primary rounded-2xl p-6 bg-card flex flex-col justify-between shadow-lg relative">
+                    <span class="absolute -top-3 left-1/2 -translate-x-1/2 bg-primary text-primary-foreground text-xs font-bold px-3 py-1 rounded-full uppercase">
+                        Populaire
+                    </span>
+                    <div>
+                        <h3 class="font-bold text-xl">Professionnel</h3>
+                        <p class="text-xs text-muted-foreground mt-1">Pour les startups et équipes en croissance</p>
+                        <div class="mt-4 text-4xl font-extrabold">29 €<span class="text-sm font-normal text-muted-foreground"> / mois</span></div>
+                        <ul class="mt-6 space-y-2 text-sm">
+                            <li>✔ Projets illimités</li>
+                            <li>✔ 1 000 000 requêtes / mois</li>
+                            <li>✔ CDN Edge mondial</li>
+                            <li>✔ Support prioritaire 24/7</li>
+                        </ul>
+                    </div>
+                    <button class="mt-8 w-full py-2 bg-primary text-primary-foreground rounded-lg font-semibold hover:opacity-90 transition">
+                        Essayer Pro
+                    </button>
+                </div>
+
+                // Enterprise Tier
+                <div class="border border-border rounded-2xl p-6 bg-card flex flex-col justify-between">
+                    <div>
+                        <h3 class="font-bold text-xl">Entreprise</h3>
+                        <p class="text-xs text-muted-foreground mt-1">Pour les charges de travail critiques</p>
+                        <div class="mt-4 text-4xl font-extrabold">99 €<span class="text-sm font-normal text-muted-foreground"> / mois</span></div>
+                        <ul class="mt-6 space-y-2 text-sm text-muted-foreground">
+                            <li>✔ SLA garanti 99.99%</li>
+                            <li>✔ Infrastructure dédiée</li>
+                            <li>✔ Audit de sécurité & SSO</li>
+                            <li>✔ Account Manager dédié</li>
+                        </ul>
+                    </div>
+                    <button class="mt-8 w-full py-2 border border-border rounded-lg font-semibold hover:bg-muted transition">
+                        Contacter les ventes
+                    </button>
+                </div>
+            </div>
+        </div>
+    }
+}

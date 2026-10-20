@@ -1,0 +1,16 @@
+---
+import { Button } from "yav/ui"
+
+props {
+    title: String,
+    count: u32 = 10,
+    is_hot: bool = true
+}
+---
+
+<div class="modern-card p-4 rounded-xl border">
+    <h3 class="text-xl font-bold">{props.title.clone()}</h3>
+    <p class="text-sm">Compteur: {props.count}</p>
+    <span class="badge">{if props.is_hot { "Populaire" } else { "Standard" }}</span>
+    <button class="btn">Voir détails</button>
+</div>

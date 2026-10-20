@@ -1,0 +1,63 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/yav",
+    "crates/yav-core",
+    "crates/yav-macros",
+    "crates/yav-router",
+    "crates/yav-server",
+    "crates/yav-cli",
+    "crates/yav-ui",
+    "crates/yav-icons",
+    "crates/yav-build",
+]
+exclude = [
+    "examples/dashboard",
+    "examples/*",
+    "demo-app",
+    "test-app",
+    "test-*",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/user/yav"
+
+[workspace.dependencies]
+# Internal crates
+yav-core = { path = "crates/yav-core", version = "0.1.0" }
+yav-macros = { path = "crates/yav-macros", version = "0.1.0" }
+yav-router = { path = "crates/yav-router", version = "0.1.0" }
+yav-server = { path = "crates/yav-server", version = "0.1.0" }
+yav-ui = { path = "crates/yav-ui", version = "0.1.0" }
+yav-icons = { path = "crates/yav-icons", version = "0.1.0" }
+yav-build = { path = "crates/yav-build", version = "0.1.0" }
+
+# External dependencies
+axum = "0.8"
+clap = { version = "4", features = ["derive"] }
+hyper = "1"
+notify = "7"
+notify-debouncer-mini = "0.5"
+proc-macro2 = "1"
+quote = "1"
+reqwest = { version = "0.12", features = ["rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+syn = { version = "2", features = ["full", "extra-traits"] }
+tokio = { version = "1", features = ["full"] }
+toml = "0.8"
+tower = "0.5"
+tower-http = { version = "0.6", features = ["fs", "cors", "trace"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[profile.dev]
+incremental = false
+
+[profile.test]
+incremental = false
+

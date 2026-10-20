@@ -1,0 +1,68 @@
+{
+  "Yav Web Component": {
+    "prefix": "ycomp",
+    "body": [
+      "---",
+      "import { Button } from \"yav/ui\"",
+      "",
+      "props {",
+      "    title: String,",
+      "    is_active: bool = true,",
+      "}",
+      "---",
+      "<div class=\"${1:p-4 rounded-lg border bg-card}\">",
+      "    <h2 class=\"text-lg font-semibold\">{props.title}</h2>",
+      "    $0",
+      "</div>"
+    ],
+    "description": "Create a new Yav component with ESM imports and props block"
+  },
+  "Yav Pure Rust Component": {
+    "prefix": "ycomprust",
+    "body": [
+      "---",
+      "use yav::prelude::*;",
+      "",
+      "#[derive(Default, Clone)]",
+      "pub struct Props {",
+      "    pub title: String,",
+      "    pub count: u32,",
+      "}",
+      "---",
+      "<div class=\"${1:container}\">",
+      "    <h3>{props.title}</h3>",
+      "    <p>Count: {props.count}</p>",
+      "    $0",
+      "</div>"
+    ],
+    "description": "Create a new Yav component with pure Rust frontmatter"
+  },
+  "Props Block": {
+    "prefix": "props",
+    "body": [
+      "props {",
+      "    ${1:name}: ${2:String}${3: = \"\"},",
+      "    $0",
+      "}"
+    ],
+    "description": "Define a props schema block"
+  },
+  "Import Component": {
+    "prefix": "imp",
+    "body": [
+      "import { ${1:Component} } from \"${2:yav/ui}\""
+    ],
+    "description": "Import a Yav component"
+  },
+  "Conditional RSX": {
+    "prefix": "yif",
+    "body": [
+      "{if ${1:condition} {",
+      "    rsx! { <${2:div}>$0</${2:div}> }",
+      "} else {",
+      "    rsx! { <span></span> }",
+      "}}"
+    ],
+    "description": "Conditional template block"
+  }
+}
