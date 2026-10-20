@@ -139,3 +139,7 @@ at your option.
 - [Phosphor Icons](https://phosphoricons.com/) — MIT License
 - [Tailwind CSS](https://tailwindcss.com/) — MIT License
 - [Axum](https://github.com/tokio-rs/axum) — MIT License
+
+## Author
+
+Crafted by **[Isaac Yav](https://github.com/isaacvay)**.

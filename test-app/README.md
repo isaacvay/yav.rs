@@ -1,6 +1,6 @@
 # test-app
 
-A web application built with the [Yav](https://github.com/user/yav) web framework.
+A web application built with the [Yav](https://github.com/isaacvay/yav.rs) web framework.
 
 ## Getting Started
 

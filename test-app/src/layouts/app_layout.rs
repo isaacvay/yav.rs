@@ -49,7 +49,7 @@ pub fn AppLayout(props: AppLayoutProps) -> Node {
                         </button>
 
                         <a
-                            href="https://github.com/user/yav"
+                            href="https://github.com/isaacvay/yav.rs"
                             target="_blank"
                             rel="noreferrer"
                             class="inline-flex items-center gap-1.5 text-xs text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white transition-colors font-mono"
@@ -78,7 +78,7 @@ pub fn AppLayout(props: AppLayoutProps) -> Node {
                         <span>"High-Velocity Rust Web Framework"</span>
                     </div>
                     <div class="flex items-center gap-5 font-mono">
-                        <a href="https://github.com/user/yav" target="_blank" rel="noreferrer" class="hover:underline flex items-center gap-1">
+                        <a href="https://github.com/isaacvay/yav.rs" target="_blank" rel="noreferrer" class="hover:underline flex items-center gap-1">
                             {render_icon("minimal:github", IconSize::Sm, Some("w-3 h-3 opacity-70"), None)}
                             <span>"GitHub"</span>
                         </a>
