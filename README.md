@@ -1,6 +1,20 @@
-# Yav.rs — A Rust-first Web Framework
+<p align="center">
+  <img src="assets/svg/yav-monogram-gradient.svg" alt="Yav.rs Logo" width="140" height="140" />
+</p>
 
-> Write Rust. Keep HTML and CSS. Build modern interfaces without unnecessary tooling friction.
+<h1 align="center">Yav.rs</h1>
+
+<p align="center">
+  <strong>A Rust-first Web Framework with a modern developer experience</strong><br>
+  <em>Write Rust. Keep HTML and CSS. Build modern interfaces without unnecessary tooling friction.</em>
+</p>
+
+<p align="center">
+  <a href="LICENSE-MIT"><img src="https://img.shields.io/badge/license-MIT%20%2F%20Apache--2.0-blue?style=flat-square" alt="License"></a>
+  <a href="https://github.com/isaacvay/yav.rs"><img src="https://img.shields.io/badge/rust-2021%20edition-black?style=flat-square&logo=rust" alt="Rust Edition"></a>
+</p>
+
+---
 
 Yav.rs is a complete web framework that brings the developer experience of Next.js and the integrated UI philosophy of Flutter to Rust. Server-side rendering, file-based routing, a JSX-like component syntax, built-in UI components, and Tailwind CSS integration — all without requiring Node.js.
 
