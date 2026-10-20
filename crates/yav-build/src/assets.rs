@@ -215,17 +215,17 @@ impl AssetPipeline {
                         std::fs::create_dir_all(parent)?;
                     }
                     std::fs::write(&dest_fp_path, &data)?;
+                    let _ = precompress_asset(&dest_fp_path);
                     manifest.insert(original_key.clone(), key);
 
-                    // For well-known root assets (favicon, robots, sitemap, sw, manifest),
-                    // also always preserve the canonical un-fingerprinted file at destination root.
-                    if is_well_known_root_asset(rel) {
-                        let canonical_path = base_dst.join(rel);
-                        if let Some(parent) = canonical_path.parent() {
-                            std::fs::create_dir_all(parent)?;
-                        }
-                        std::fs::write(&canonical_path, &data)?;
+                    // Always also preserve the canonical un-fingerprinted file at destination
+                    // so that pages referencing the original paths do not receive 404s.
+                    let canonical_path = base_dst.join(rel);
+                    if let Some(parent) = canonical_path.parent() {
+                        std::fs::create_dir_all(parent)?;
                     }
+                    std::fs::write(&canonical_path, &data)?;
+                    let _ = precompress_asset(&canonical_path);
                 } else {
                     let dest_full_path = base_dst.join(rel);
                     if let Some(parent) = dest_full_path.parent() {
@@ -244,6 +244,10 @@ impl AssetPipeline {
 
 /// Pre-compresses text files (.css, .js, .html, .svg, .json, .xml) generating a companion `.gz` file.
 pub fn precompress_asset(path: &Path) -> Result<Option<PathBuf>, AssetError> {
+    use flate2::write::GzEncoder;
+    use flate2::Compression;
+    use std::io::Write;
+
     let ext = path
         .extension()
         .and_then(|e| e.to_str())
@@ -252,9 +256,14 @@ pub fn precompress_asset(path: &Path) -> Result<Option<PathBuf>, AssetError> {
 
     if matches!(ext.as_str(), "css" | "js" | "html" | "svg" | "json" | "xml") {
         let content = std::fs::read(path)?;
-        let gz_path = PathBuf::from(format!("{}.gz", path.display()));
-        let mut gz_data = vec![0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03];
-        gz_data.extend_from_slice(&content);
+        let mut gz_os = path.as_os_str().to_os_string();
+        gz_os.push(".gz");
+        let gz_path = PathBuf::from(gz_os);
+
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(&content).map_err(AssetError::Io)?;
+        let gz_data = encoder.finish().map_err(AssetError::Io)?;
+
         std::fs::write(&gz_path, gz_data)?;
         Ok(Some(gz_path))
     } else {

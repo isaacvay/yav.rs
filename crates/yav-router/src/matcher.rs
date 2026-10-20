@@ -55,6 +55,51 @@ pub fn percent_decode(input: &str) -> String {
     String::from_utf8(bytes).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned())
 }
 
+/// Decode a percent-encoded URL path segment.
+///
+/// Unlike query string decoding, `+` is preserved as a literal `+` (not converted to space),
+/// and encoded slashes (`%2F`, `%5C`) are NOT decoded into path separators or directory traversals.
+pub fn percent_decode_path_segment(input: &str) -> String {
+    let mut bytes = Vec::with_capacity(input.len());
+    let mut chars = input.bytes();
+
+    while let Some(b) = chars.next() {
+        match b {
+            b'%' => {
+                let h1 = chars.next();
+                let h2 = chars.next();
+                if let (Some(h1), Some(h2)) = (h1, h2) {
+                    if let Ok(hex_str) = std::str::from_utf8(&[h1, h2]) {
+                        if let Ok(byte) = u8::from_str_radix(hex_str, 16) {
+                            // Do not decode encoded '/' (0x2F) or '\' (0x5C) to prevent directory traversal
+                            if byte == b'/' || byte == b'\\' {
+                                bytes.push(b'%');
+                                bytes.push(h1);
+                                bytes.push(h2);
+                                continue;
+                            }
+                            bytes.push(byte);
+                            continue;
+                        }
+                    }
+                    bytes.push(b'%');
+                    bytes.push(h1);
+                    bytes.push(h2);
+                } else {
+                    bytes.push(b'%');
+                    if let Some(h1) = h1 {
+                        bytes.push(h1);
+                    }
+                }
+            }
+            // In path segments, '+' is literal '+', not space
+            _ => bytes.push(b),
+        }
+    }
+
+    String::from_utf8(bytes).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned())
+}
+
 /// Parse a raw query string into a [`HashMap`].
 ///
 /// Leading `?` is stripped if present. Keys and values are percent-decoded.

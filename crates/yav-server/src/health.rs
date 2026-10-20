@@ -24,6 +24,7 @@ pub struct ServerMetrics {
     total_requests: Arc<AtomicU64>,
     total_errors: Arc<AtomicU64>,
     total_render_ms: Arc<AtomicU64>,
+    total_renders: Arc<AtomicU64>,
 }
 
 impl Default for ServerMetrics {
@@ -40,6 +41,7 @@ impl ServerMetrics {
             total_requests: Arc::new(AtomicU64::new(0)),
             total_errors: Arc::new(AtomicU64::new(0)),
             total_render_ms: Arc::new(AtomicU64::new(0)),
+            total_renders: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -57,6 +59,7 @@ impl ServerMetrics {
     pub fn record_render(&self, duration_ms: u64) {
         self.total_render_ms
             .fetch_add(duration_ms, Ordering::Relaxed);
+        self.total_renders.fetch_add(1, Ordering::Relaxed);
     }
 
     /// Return a point-in-time metrics snapshot.
@@ -64,8 +67,9 @@ impl ServerMetrics {
         let reqs = self.total_requests.load(Ordering::Relaxed);
         let errs = self.total_errors.load(Ordering::Relaxed);
         let ms = self.total_render_ms.load(Ordering::Relaxed);
-        let avg_render_ms = if reqs > 0 {
-            (ms as f64) / (reqs as f64)
+        let renders = self.total_renders.load(Ordering::Relaxed);
+        let avg_render_ms = if renders > 0 {
+            (ms as f64) / (renders as f64)
         } else {
             0.0
         };

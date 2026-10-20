@@ -88,8 +88,9 @@ fn xss_prevention_in_attributes() {
             .attr("title", r#"" onclick="alert(1)"#),
     );
     let html = render_to_string(&malicious);
-    assert!(!html.contains(r#"onclick"#));
+    assert!(!html.contains(r#" onclick="alert(1)""#));
     assert!(html.contains("&quot;"));
+    assert_eq!(html, r#"<div title="&quot; onclick=&quot;alert(1)"></div>"#);
 }
 
 #[test]
@@ -114,7 +115,7 @@ fn conditional_rendering() {
 
 #[test]
 fn iteration_rendering() {
-    let items = vec!["Apple", "Banana", "Cherry"];
+    let items = ["Apple", "Banana", "Cherry"];
     let list = Node::Element(
         Element::new("ul").children(
             items
@@ -285,7 +286,7 @@ fn deeply_nested_tree() {
     for i in (0..depth).rev() {
         node = Node::Element(
             Element::new("div")
-                .attr("data-level", &i.to_string())
+                .attr("data-level", i.to_string())
                 .child(node),
         );
     }

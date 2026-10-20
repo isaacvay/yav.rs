@@ -14,9 +14,9 @@ pub enum StepStatus {
     /// Step has been completed successfully.
     Complete,
     /// Step is currently active.
-    #[default]
     Current,
     /// Step has not yet been started.
+    #[default]
     Upcoming,
 }
 
@@ -26,7 +26,7 @@ pub struct StepItem {
     pub title: String,
     pub description: Option<String>,
     pub status: StepStatus,
-    pub icon: Option<String>,
+    pub icon: Option<Node>,
     pub class: String,
 }
 
@@ -51,9 +51,9 @@ impl StepItem {
         self
     }
 
-    /// Set an optional custom icon string or SVG.
-    pub fn icon(mut self, icon: impl Into<String>) -> Self {
-        self.icon = Some(icon.into());
+    /// Set an optional custom icon string, node, or SVG.
+    pub fn icon(mut self, icon: impl IntoNode) -> Self {
+        self.icon = Some(icon.into_node());
         self
     }
 
@@ -201,7 +201,7 @@ impl Stepper {
             let mut indicator = Element::new("span").attr("class", indicator_class);
 
             if let Some(icon) = step.icon {
-                indicator = indicator.child(Node::raw(icon));
+                indicator = indicator.child(icon);
             } else if step.status == StepStatus::Complete {
                 // Checkmark SVG
                 indicator = indicator.child(Node::raw(

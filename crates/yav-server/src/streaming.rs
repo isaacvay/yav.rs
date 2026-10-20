@@ -41,16 +41,34 @@ impl StreamingHtml {
             sent_initial: false,
         }
     }
+}
 
+fn escape_template_tag(html: &str) -> String {
+    let lower = html.to_lowercase();
+    let needle = "</template>";
+    if !lower.contains(needle) {
+        return html.to_string();
+    }
+    let mut out = String::with_capacity(html.len() + 16);
+    let mut last_idx = 0;
+    for (match_start, _) in lower.match_indices(needle) {
+        out.push_str(&html[last_idx..match_start]);
+        out.push_str("<\\/");
+        out.push_str(&html[match_start + 2..match_start + needle.len()]);
+        last_idx = match_start + needle.len();
+    }
+    out.push_str(&html[last_idx..]);
+    out
+}
+
+impl StreamingHtml {
     /// Helper to produce a replacement chunk that swaps a placeholder element by ID.
     pub fn swap_placeholder(target_id: &str, html: &str) -> String {
         let id_num = CHUNK_COUNTER.fetch_add(1, Ordering::Relaxed);
         let temp_id = format!("yav-chunk-{id_num}");
         let safe_target_id =
             serde_json::to_string(target_id).unwrap_or_else(|_| "\"\"".to_string());
-        let safe_html = html
-            .replace("</template>", "<\\/template>")
-            .replace("</TEMPLATE>", "<\\/TEMPLATE>");
+        let safe_html = escape_template_tag(html);
         format!(
             r#"<template id="{temp_id}">{safe_html}</template><script>(function(){{var t=document.getElementById('{temp_id}');var target=document.getElementById({safe_target_id});if(t&&target){{target.replaceWith(t.content.cloneNode(true));t.remove();}}}})();</script>"#
         )

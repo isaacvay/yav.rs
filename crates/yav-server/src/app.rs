@@ -549,8 +549,10 @@ impl YavApp {
                         async move {
                             let mut params_map = std::collections::HashMap::new();
                             for (k, v) in raw_params.iter() {
-                                params_map
-                                    .insert(k.to_string(), yav_router::matcher::percent_decode(v));
+                                params_map.insert(
+                                    k.to_string(),
+                                    yav_router::matcher::percent_decode_path_segment(v),
+                                );
                             }
                             req.extensions_mut()
                                 .insert(crate::action::RouteParams(params_map));
@@ -636,6 +638,9 @@ impl YavApp {
 
         // Apply SessionSecret and session_middleware so FromRequestParts and handlers automatically commit cookies
         let secret = self.session_secret.unwrap_or_else(|| {
+            if crate::session::is_production_mode() {
+                panic!("FATAL: SESSION_SECRET must be explicitly set when running in production mode! Refusing to start with the default development secret.");
+            }
             crate::session::SessionSecret::new(crate::session::DEFAULT_DEV_SESSION_SECRET)
         });
         router = router
@@ -672,7 +677,11 @@ impl YavApp {
     where
         F: Future<Output = ()> + Send + 'static,
     {
-        let addr = format!("{}:{}", self.host, self.port);
+        let addr = if self.host.contains(':') && !self.host.starts_with('[') {
+            format!("[{}]:{}", self.host, self.port)
+        } else {
+            format!("{}:{}", self.host, self.port)
+        };
         let app = self.into_router();
 
         tracing::info!("Starting Yav server on http://{}", addr);

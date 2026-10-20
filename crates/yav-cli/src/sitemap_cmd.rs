@@ -59,6 +59,9 @@ fn scan_routes_recursive(dir: &Path, prefix: &str, urls: &mut Vec<String>, base_
             let path = entry.path();
             if path.is_dir() {
                 let dir_name = path.file_name().unwrap_or_default().to_string_lossy();
+                if dir_name.starts_with('_') || dir_name.starts_with('.') {
+                    continue;
+                }
                 let new_prefix = if prefix.is_empty() {
                     dir_name.to_string()
                 } else {
@@ -70,19 +73,22 @@ fn scan_routes_recursive(dir: &Path, prefix: &str, urls: &mut Vec<String>, base_
                 .is_some_and(|ext| ext == "rs" || ext == "yav" || ext == "rsx")
             {
                 let stem = path.file_stem().unwrap_or_default().to_string_lossy();
-                if stem == "layout"
+                if stem == "mod"
+                    || stem == "layout"
                     || stem == "loading"
                     || stem == "error"
                     || stem == "template"
                     || stem == "not_found"
+                    || stem.starts_with('_')
+                    || stem.starts_with('.')
                 {
                     continue;
                 }
-                if stem == "mod" || stem == "index" || stem == "page" {
+                if stem == "index" || stem == "page" {
                     if !prefix.is_empty() {
                         urls.push(format!("{base_url}/{prefix}"));
                     }
-                } else if !stem.starts_with('_') && !stem.starts_with('[') {
+                } else if !stem.starts_with('[') {
                     let route_path = if prefix.is_empty() {
                         stem.to_string()
                     } else {

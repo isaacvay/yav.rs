@@ -58,9 +58,14 @@ pub fn run(target: &GenerateTarget) -> Result<(), Box<dyn std::error::Error>> {
 
 fn generate_route(root: &Path, raw_path: &str) -> Result<(), Box<dyn std::error::Error>> {
     let clean_path = raw_path.trim_matches('/').replace('\\', "/");
+    let segments: Vec<&str> = clean_path.split('/').filter(|s| !s.is_empty()).collect();
+    if segments.is_empty() || segments.iter().any(|&s| s == ".." || s == ".") {
+        return Err(
+            "Invalid route path: path traversal segments ('.' or '..') are not allowed".into(),
+        );
+    }
     let mut file_path = root.join("src").join("routes");
 
-    let segments: Vec<&str> = clean_path.split('/').collect();
     for &seg in &segments[..segments.len() - 1] {
         file_path.push(seg);
     }
@@ -120,7 +125,7 @@ pub async fn handler(_req: Request) -> HtmlPage {{
 
     let route_pattern = yav_router::fs_router::file_path_to_route_pattern(&clean_path);
     let mod_ident = if stem.contains('[') || stem.contains(']') {
-        stem.replace('[', "").replace(']', "")
+        stem.replace(['[', ']'], "")
     } else {
         stem.to_string()
     };
@@ -252,7 +257,7 @@ fn ensure_mod_registered(
     // Handle parameter syntax like [slug] or [...path] using #[path = "..."] attribute
     let (mod_ident, path_attr) =
         if mod_name.contains('[') || mod_name.contains(']') || mod_name.contains('.') {
-            let clean = mod_name.replace('[', "").replace(']', "").replace('.', "_");
+            let clean = mod_name.replace(['[', ']'], "").replace('.', "_");
             let ident = if clean.is_empty() {
                 "param".to_string()
             } else if clean.chars().next().is_some_and(|c| c.is_ascii_digit()) {

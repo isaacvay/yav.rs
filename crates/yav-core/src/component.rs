@@ -202,11 +202,12 @@ impl PageMeta {
             ));
         }
 
-        // JSON-LD
+        // JSON-LD (sanitize </ to <\/ to prevent script breakout XSS)
         if let Some(ref ld) = self.json_ld {
+            let safe_ld = ld.replace("</", "<\\/");
             out.push_str(&format!(
                 r#"<script type="application/ld+json">{}</script>"#,
-                ld
+                safe_ld
             ));
         }
 

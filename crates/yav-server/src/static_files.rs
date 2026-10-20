@@ -168,6 +168,27 @@ pub async fn serve_static_file_with_range(
     serve_static_file_with_encoding(base_dir, request_path, range_header, None).await
 }
 
+fn client_accepts_encoding(accept_encoding: &str, encoding: &str) -> bool {
+    for part in accept_encoding.split(',') {
+        let mut subparts = part.split(';');
+        let enc_name = subparts.next().unwrap_or("").trim();
+        if enc_name.eq_ignore_ascii_case(encoding) || enc_name == "*" {
+            if let Some(param) = subparts.next() {
+                let trimmed = param.trim();
+                if let Some(val) = trimmed.strip_prefix("q=") {
+                    if let Ok(q) = val.trim().parse::<f32>() {
+                        if q <= 0.0 {
+                            return false;
+                        }
+                    }
+                }
+            }
+            return true;
+        }
+    }
+    false
+}
+
 /// Asynchronously serve a static file with optional HTTP `Range` header and `Accept-Encoding` pre-compressed support.
 ///
 /// If the client accepts `br` or `gzip` encoding and a corresponding `.br` or `.gz` pre-compressed file exists,
@@ -189,11 +210,17 @@ pub async fn serve_static_file_with_encoding(
     // Check for pre-compressed assets (.br or .gz) if no byte-range is requested
     let (actual_file, content_encoding) = if range_header.is_none() {
         if let Some(enc) = accept_encoding {
-            let br_path = PathBuf::from(format!("{}.br", file_path.display()));
-            let gz_path = PathBuf::from(format!("{}.gz", file_path.display()));
-            if enc.contains("br") && br_path.is_file() {
+            let mut br_os = file_path.as_os_str().to_os_string();
+            br_os.push(".br");
+            let br_path = PathBuf::from(br_os);
+
+            let mut gz_os = file_path.as_os_str().to_os_string();
+            gz_os.push(".gz");
+            let gz_path = PathBuf::from(gz_os);
+
+            if client_accepts_encoding(enc, "br") && br_path.is_file() {
                 (br_path, Some("br"))
-            } else if enc.contains("gzip") && gz_path.is_file() {
+            } else if client_accepts_encoding(enc, "gzip") && gz_path.is_file() {
                 (gz_path, Some("gzip"))
             } else {
                 (file_path.clone(), None)
@@ -255,7 +282,8 @@ pub async fn serve_static_file_with_encoding(
         .header(header::CONTENT_TYPE, mime)
         .header(header::CONTENT_LENGTH, content_len.to_string())
         .header(header::ACCEPT_RANGES, "bytes")
-        .header(header::CACHE_CONTROL, cache_control);
+        .header(header::CACHE_CONTROL, cache_control)
+        .header(header::VARY, "Accept-Encoding");
 
     if let Some(enc) = content_encoding {
         builder = builder.header(header::CONTENT_ENCODING, enc);
@@ -278,6 +306,18 @@ pub fn static_router(base_dir: PathBuf) -> axum::Router {
         move |method: Method, headers: axum::http::HeaderMap, uri: axum::http::Uri| {
             let base = base_dir.clone();
             async move {
+                if method == Method::OPTIONS {
+                    return (
+                        StatusCode::NO_CONTENT,
+                        [
+                            (header::ALLOW, "GET, HEAD, OPTIONS"),
+                            (header::ACCESS_CONTROL_ALLOW_METHODS, "GET, HEAD, OPTIONS"),
+                            (header::ACCESS_CONTROL_ALLOW_ORIGIN, "*"),
+                        ],
+                        "",
+                    )
+                        .into_response();
+                }
                 if method != Method::GET && method != Method::HEAD {
                     return (
                         StatusCode::METHOD_NOT_ALLOWED,

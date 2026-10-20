@@ -234,7 +234,14 @@ impl Motion {
 
     /// Set the HTML tag name (e.g. `"div"`, `"button"`, `"section"`, `"span"`).
     pub fn tag(mut self, tag: impl Into<String>) -> Self {
-        self.tag = tag.into();
+        let t = tag.into();
+        if !t.is_empty()
+            && t.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
+            && t.chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        {
+            self.tag = t;
+        }
         self
     }
 

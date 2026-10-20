@@ -249,14 +249,14 @@ impl TailwindManager {
             let patterns: Vec<String> = content_paths
                 .iter()
                 .map(|p| {
-                    let s = p.as_ref().to_string_lossy().to_string();
+                    let s = p.as_ref().to_string_lossy().replace('\\', "/");
                     if s == "src" || s == "./src" {
                         "./src/**/*.{rs,html,yav,rsx,yavml}".to_string()
                     } else if s == "public" || s == "./public" {
                         "./public/**/*.{html,js}".to_string()
-                    } else if s.ends_with("/src") || s.ends_with("\\src") {
+                    } else if s.ends_with("/src") {
                         format!("{s}/**/*.{{rs,html,yav,rsx,yavml}}")
-                    } else if s.ends_with("/public") || s.ends_with("\\public") {
+                    } else if s.ends_with("/public") {
                         format!("{s}/**/*.{{html,js}}")
                     } else {
                         s

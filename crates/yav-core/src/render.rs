@@ -29,20 +29,29 @@ pub fn render_to_string(node: &Node) -> String {
     buf
 }
 
+const MAX_RENDER_DEPTH: usize = 512;
+
 /// Render a [`Node`] tree into an existing buffer.
 pub fn render_to_buf(node: &Node, buf: &mut String) {
-    render_node(node, buf);
+    render_node_depth(node, buf, 0);
 }
 
 fn render_node(node: &Node, buf: &mut String) {
+    render_node_depth(node, buf, 0);
+}
+
+fn render_node_depth(node: &Node, buf: &mut String, depth: usize) {
+    if depth > MAX_RENDER_DEPTH {
+        return;
+    }
     match node {
-        Node::Element(el) => render_element(el, buf),
+        Node::Element(el) => render_element_depth(el, buf, depth + 1),
         Node::Text(text) => buf.push_str(&escape_html(text)),
         Node::Raw(html) => buf.push_str(html),
         Node::Static(s) => buf.push_str(s),
         Node::Fragment(children) => {
             for child in children {
-                render_node(child, buf);
+                render_node_depth(child, buf, depth + 1);
             }
         }
         Node::Empty => {}
@@ -54,6 +63,21 @@ fn is_url_attribute(name: &str) -> bool {
         name,
         "href" | "src" | "action" | "formaction" | "xlink:href" | "poster" | "data"
     )
+}
+
+fn is_valid_tag_name(name: &str) -> bool {
+    if name.is_empty() {
+        return false;
+    }
+    let mut chars = name.chars();
+    let first = match chars.next() {
+        Some(c) => c,
+        None => return false,
+    };
+    if !first.is_ascii_alphabetic() {
+        return false;
+    }
+    chars.all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == ':')
 }
 
 fn is_valid_attribute_name(name: &str) -> bool {
@@ -69,10 +93,16 @@ fn is_valid_attribute_name(name: &str) -> bool {
         })
 }
 
-fn render_element(el: &crate::node::Element, buf: &mut String) {
+fn render_element_depth(el: &crate::node::Element, buf: &mut String, depth: usize) {
+    let safe_tag = if is_valid_tag_name(&el.tag) {
+        el.tag.as_ref()
+    } else {
+        "div"
+    };
+
     // Opening tag
     buf.push('<');
-    buf.push_str(&el.tag);
+    buf.push_str(safe_tag);
 
     // Attributes
     for attr in &el.attributes {
@@ -120,7 +150,7 @@ fn render_element(el: &crate::node::Element, buf: &mut String) {
         }
     }
 
-    if el.self_closing && crate::node::is_void_element(&el.tag) {
+    if el.self_closing && crate::node::is_void_element(safe_tag) {
         buf.push_str(" />");
         return;
     }
@@ -129,12 +159,12 @@ fn render_element(el: &crate::node::Element, buf: &mut String) {
 
     // Children
     for child in &el.children {
-        render_node(child, buf);
+        render_node_depth(child, buf, depth + 1);
     }
 
     // Closing tag
     buf.push_str("</");
-    buf.push_str(&el.tag);
+    buf.push_str(safe_tag);
     buf.push('>');
 }
 
@@ -422,5 +452,12 @@ mod tests {
             Node::Element(Element::new("div").attr("foo\" onfocus=\"alert(1)", "bar"));
         let html4 = render_to_string(&injected_attr);
         assert_eq!(html4, "<div></div>");
+
+        // Invalid tag names with injection attempts must fall back to <div>
+        let injected_tag = Node::Element(
+            Element::new("\"><script>alert(1)</script><div foo=\"").child(Node::text("test")),
+        );
+        let html5 = render_to_string(&injected_tag);
+        assert_eq!(html5, "<div>test</div>");
     }
 }

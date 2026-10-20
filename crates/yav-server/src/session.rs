@@ -442,7 +442,12 @@ pub async fn session_middleware(
                 .ok()
                 .map(|s| SessionSecret::new(s.into_bytes()))
         })
-        .unwrap_or_else(|| SessionSecret::new(DEFAULT_DEV_SESSION_SECRET));
+        .unwrap_or_else(|| {
+            if is_production_mode() {
+                panic!("FATAL: SESSION_SECRET must be explicitly set when running in production mode! Refusing to use default dev secret.");
+            }
+            SessionSecret::new(DEFAULT_DEV_SESSION_SECRET)
+        });
 
     let config = req
         .extensions()

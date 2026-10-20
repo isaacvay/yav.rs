@@ -12,7 +12,7 @@
 
 mod component;
 pub mod context;
-mod escape;
+pub mod escape;
 pub mod i18n;
 mod node;
 mod render;

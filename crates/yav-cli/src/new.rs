@@ -41,7 +41,7 @@ pub fn scaffold_project(target_dir: &Path, name: &str) -> Result<(), Box<dyn std
     let yav_dep = if target_dir.join("../crates/yav").exists() {
         r#"yav = { path = "../crates/yav" }"#
     } else {
-        r#"yav = "0.1.0""#
+        r#"yav = { git = "https://github.com/isaacvay/yav.rs" }"#
     };
 
     let cargo_toml = format!(

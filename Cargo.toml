@@ -39,6 +39,7 @@ yav-build = { path = "crates/yav-build", version = "0.1.0" }
 # External dependencies
 axum = "0.8"
 clap = { version = "4", features = ["derive"] }
+flate2 = "1.0"
 hyper = "1"
 notify = "7"
 notify-debouncer-mini = "0.5"

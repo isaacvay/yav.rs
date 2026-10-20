@@ -36,6 +36,7 @@ pub fn run(force: bool) -> Result<(), Box<dyn std::error::Error>> {
     ports:
       - "3000:3000"
     environment:
+      - HOST=0.0.0.0
       - PORT=3000
       - RUST_LOG=info
     restart: unless-stopped
@@ -124,6 +125,7 @@ COPY --from=builder /app/target/release/{app_name} /app/server
 RUN chown -R appuser:appgroup /app
 USER appuser
 
+ENV HOST=0.0.0.0
 ENV PORT=3000
 ENV RUST_LOG=info
 EXPOSE 3000

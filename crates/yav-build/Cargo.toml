@@ -6,6 +6,7 @@ license.workspace = true
 description = "Build pipeline and Tailwind CSS integration for the Yav web framework"
 
 [dependencies]
+flate2.workspace = true
 tokio.workspace = true
 reqwest.workspace = true
 sha2.workspace = true

@@ -33,35 +33,31 @@ pub fn run(force: bool) -> Result<(), Box<dyn std::error::Error>> {
     let manifest_path = public_dir.join("manifest.json");
     if manifest_path.exists() && !force {
         println!("ℹ️  `public/manifest.json` already exists (use --force to overwrite).");
-    } else {
-        let manifest_json = format!(
-            r#"{{
-  "name": "{app_name}",
-  "short_name": "{short_name}",
-  "description": "{description}",
-  "start_url": "{start_url}",
-  "display": "{display}",
-  "background_color": "{bg_color}",
-  "theme_color": "{theme_color}",
-  "orientation": "any",
-  "icons": [
-    {{
-      "src": "/public/icon-192.svg",
-      "sizes": "192x192",
-      "type": "image/svg+xml",
-      "purpose": "any maskable"
-    }},
-    {{
-      "src": "/public/icon-512.svg",
-      "sizes": "512x512",
-      "type": "image/svg+xml",
-      "purpose": "any maskable"
-    }}
-  ]
-}}
-"#,
-            description = manifest.package.description
-        );
+        let manifest_value = serde_json::json!({
+            "name": app_name,
+            "short_name": short_name,
+            "description": manifest.package.description,
+            "start_url": start_url,
+            "display": display,
+            "background_color": bg_color,
+            "theme_color": theme_color,
+            "orientation": "any",
+            "icons": [
+                {
+                    "src": "/public/icon-192.svg",
+                    "sizes": "192x192",
+                    "type": "image/svg+xml",
+                    "purpose": "any maskable"
+                },
+                {
+                    "src": "/public/icon-512.svg",
+                    "sizes": "512x512",
+                    "type": "image/svg+xml",
+                    "purpose": "any maskable"
+                }
+            ]
+        });
+        let manifest_json = serde_json::to_string_pretty(&manifest_value)?;
         fs::write(&manifest_path, manifest_json)?;
         println!("✔ Generated \x1b[1;32mpublic/manifest.json\x1b[0m");
     }
@@ -138,13 +134,14 @@ self.addEventListener('fetch', (event) => {
     if offline_path.exists() && !force {
         println!("ℹ️  `public/offline.html` already exists (use --force to overwrite).");
     } else {
+        let escaped_app_name = yav_core::escape_html(&app_name);
         let offline_html = format!(
             r#"<!DOCTYPE html>
 <html lang="fr" class="dark">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Mode Hors-Ligne - {app_name}</title>
+  <title>Mode Hors-Ligne - {escaped_app_name}</title>
   <style>
     body {{
       margin: 0;
@@ -219,9 +216,10 @@ self.addEventListener('fetch', (event) => {
     // 4. Generate public/icon-192.svg and public/icon-512.svg
     let icon_192_path = public_dir.join("icon-192.svg");
     let icon_512_path = public_dir.join("icon-512.svg");
+    let safe_bg_color = yav_core::escape_attribute(&bg_color);
     let svg_icon = format!(
         r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <rect width="512" height="512" rx="108" fill="{bg_color}"/>
+  <rect width="512" height="512" rx="108" fill="{safe_bg_color}"/>
   <path d="M140 160 L256 340 L372 160" stroke="#60a5fa" stroke-width="48" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
   <circle cx="256" cy="380" r="24" fill="#38bdf8"/>
 </svg>"##
@@ -250,7 +248,7 @@ self.addEventListener('fetch', (event) => {
     println!("  \x1b[36m<script>\x1b[0m");
     println!("  \x1b[36m  if ('serviceWorker' in navigator) {{\x1b[0m");
     println!("  \x1b[36m    window.addEventListener('load', () => {{\x1b[0m");
-    println!("  \x1b[36m      navigator.serviceWorker.register('/sw.js');\x1b[0m");
+    println!("  \x1b[36m      navigator.serviceWorker.register('/public/sw.js');\x1b[0m");
     println!("  \x1b[36m    }});\x1b[0m");
     println!("  \x1b[36m  }}\x1b[0m");
     println!("  \x1b[36m</script>\x1b[0m");

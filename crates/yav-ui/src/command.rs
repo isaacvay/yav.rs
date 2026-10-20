@@ -12,7 +12,7 @@ use crate::utils::merge_classes;
 pub struct CommandItem {
     pub id: Option<String>,
     pub label: String,
-    pub icon: Option<String>,
+    pub icon: Option<Node>,
     pub shortcut: Option<String>,
     pub href: Option<String>,
     pub action: Option<String>,
@@ -36,8 +36,8 @@ impl CommandItem {
     }
 
     /// Set an optional SVG or text icon.
-    pub fn icon(mut self, icon: impl Into<String>) -> Self {
-        self.icon = Some(icon.into());
+    pub fn icon(mut self, icon: impl IntoNode) -> Self {
+        self.icon = Some(icon.into_node());
         self
     }
 
@@ -109,7 +109,7 @@ impl CommandItem {
         // Left side: icon + label
         let mut left = Element::new("div").attr("class", "flex items-center space-x-2.5 truncate");
         if let Some(icon) = self.icon {
-            left = left.child(Node::raw(icon));
+            left = left.child(icon);
         }
         left = left.child(Node::text(self.label));
         element = element.child(Node::Element(left));

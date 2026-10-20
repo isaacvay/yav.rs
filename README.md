@@ -21,8 +21,8 @@ Yav.rs is a complete web framework that brings the developer experience of Next.
 ## Quick Start
 
 ```bash
-# Install the CLI
-cargo install yav-cli
+# Install the CLI from GitHub repository
+cargo install --git https://github.com/isaacvay/yav.rs yav-cli
 
 # Create a new project
 yav new my-app

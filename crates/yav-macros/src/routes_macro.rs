@@ -101,14 +101,24 @@ pub fn auto_routes_impl(input: AutoRoutesInput) -> syn::Result<TokenStream> {
                     .trim_end_matches(".rs")
                     .split('/')
                     .map(|seg| {
-                        let clean = seg.replace('[', "").replace(']', "").replace('.', "_");
-                        syn::Ident::new(&clean, proc_macro2::Span::call_site())
+                        let clean = seg.replace(['[', ']'], "").replace('.', "_");
+                        let safe_ident = if clean.chars().next().is_some_and(|c| c.is_ascii_digit())
+                        {
+                            format!("route_{clean}")
+                        } else if clean.is_empty() {
+                            "param".to_string()
+                        } else {
+                            clean
+                        };
+                        syn::parse_str::<syn::Ident>(&safe_ident).unwrap_or_else(|_| {
+                            syn::Ident::new("param", proc_macro2::Span::call_site())
+                        })
                     })
                     .collect();
 
                 let stem = rel_path_str
                     .split('/')
-                    .last()
+                    .next_back()
                     .unwrap_or("")
                     .trim_end_matches(".rs");
 

@@ -47,7 +47,24 @@ pub fn escape_attribute(input: &str) -> String {
 
 /// Escape a URL for use in `href` or `src` attributes.
 ///
-/// Rejects `javascript:` and `data:` URLs (case-insensitive) to prevent XSS.
+fn is_allowed_data_url(lower: &str) -> bool {
+    if !lower.starts_with("data:") {
+        return false;
+    }
+    // Disallow SVG as it can contain script tags or active event handlers
+    if lower.starts_with("data:image/svg") {
+        return false;
+    }
+    lower.starts_with("data:image/png")
+        || lower.starts_with("data:image/jpeg")
+        || lower.starts_with("data:image/jpg")
+        || lower.starts_with("data:image/gif")
+        || lower.starts_with("data:image/webp")
+        || lower.starts_with("data:image/avif")
+        || lower.starts_with("data:font/")
+}
+
+/// Rejects `javascript:` and dangerous `data:` URLs (case-insensitive) to prevent XSS.
 /// Returns `None` for dangerous URLs.
 ///
 /// # Examples
@@ -69,9 +86,7 @@ pub fn escape_url(url: &str) -> Option<String> {
         let lower_scheme = sanitized_scheme.to_lowercase();
         if lower_scheme.starts_with("javascript:")
             || lower_scheme.starts_with("vbscript:")
-            || (lower_scheme.starts_with("data:")
-                && !lower_scheme.starts_with("data:image/")
-                && !lower_scheme.starts_with("data:font/"))
+            || (lower_scheme.starts_with("data:") && !is_allowed_data_url(&lower_scheme))
         {
             return None;
         }
@@ -79,12 +94,10 @@ pub fn escape_url(url: &str) -> Option<String> {
 
     let lower = trimmed.to_lowercase();
 
-    // Block dangerous URL schemes (javascript:, vbscript:, and non-media data: URLs)
+    // Block dangerous URL schemes (javascript:, vbscript:, and non-media/SVG data: URLs)
     if lower.starts_with("javascript:")
         || lower.starts_with("vbscript:")
-        || (lower.starts_with("data:")
-            && !lower.starts_with("data:image/")
-            && !lower.starts_with("data:font/"))
+        || (lower.starts_with("data:") && !is_allowed_data_url(&lower))
     {
         return None;
     }
@@ -144,6 +157,7 @@ mod tests {
         assert_eq!(escape_url("java\tscript:alert(1)"), None);
         assert_eq!(escape_url("java\nscript:alert(1)"), None);
         assert_eq!(escape_url("data:text/html,<h1>Hi</h1>"), None);
+        assert_eq!(escape_url("data:image/svg+xml,<svg onload=alert(1)>"), None);
         assert_eq!(escape_url("vbscript:msgbox"), None);
     }
 

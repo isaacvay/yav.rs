@@ -23,6 +23,10 @@ pub struct RateLimitConfig {
     pub window: Duration,
     /// Specific override thresholds for sensitive paths (e.g. `"/login"` => 5).
     pub path_limits: HashMap<String, u32>,
+    /// Whether to trust proxy headers (X-Forwarded-For, X-Real-IP). Default: false.
+    pub trust_proxy: bool,
+    /// Optional whitelist of trusted proxy IP addresses.
+    pub trusted_proxies: Vec<String>,
 }
 
 impl Default for RateLimitConfig {
@@ -31,6 +35,8 @@ impl Default for RateLimitConfig {
             default_limit: 60,
             window: Duration::from_secs(60),
             path_limits: HashMap::new(),
+            trust_proxy: false,
+            trusted_proxies: Vec::new(),
         }
     }
 }
@@ -56,6 +62,19 @@ impl RateLimitConfig {
     /// Set a custom limit for a sensitive route (e.g. `"/api/auth/login"`, 5).
     pub fn path_limit(mut self, path: impl Into<String>, limit: u32) -> Self {
         self.path_limits.insert(path.into(), limit);
+        self
+    }
+
+    /// Enable or disable trusting proxy headers (`X-Forwarded-For`, `X-Real-IP`).
+    pub fn trust_proxy(mut self, trust: bool) -> Self {
+        self.trust_proxy = trust;
+        self
+    }
+
+    /// Set an explicit list of trusted proxy IP addresses.
+    pub fn trusted_proxies(mut self, proxies: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.trusted_proxies = proxies.into_iter().map(Into::into).collect();
+        self.trust_proxy = true;
         self
     }
 }
@@ -110,7 +129,11 @@ impl RateLimiter {
             .unwrap_or(self.config.default_limit);
 
         let sanitized_client = if client_id.len() > 64 {
-            &client_id[..64]
+            let mut end = 64;
+            while end > 0 && !client_id.is_char_boundary(end) {
+                end -= 1;
+            }
+            &client_id[..end]
         } else {
             client_id
         };
@@ -134,8 +157,12 @@ impl RateLimiter {
                 !ts.is_empty()
             });
             if lock.len() >= MAX_RATE_LIMITER_CLIENTS {
-                if let Some(first_key) = lock.keys().next().cloned() {
-                    lock.remove(&first_key);
+                let oldest_key = lock
+                    .iter()
+                    .min_by_key(|(_, ts)| ts.first().copied())
+                    .map(|(k, _)| k.clone());
+                if let Some(key_to_remove) = oldest_key {
+                    lock.remove(&key_to_remove);
                 }
             }
         }
@@ -241,19 +268,22 @@ pub async fn rate_limit_middleware(
         return next.run(req).await;
     };
 
-    let client_id = req
-        .headers()
-        .get("x-forwarded-for")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.split(',').next())
-        .map(|s| s.trim().to_string())
-        .or_else(|| {
-            req.headers()
-                .get("x-real-ip")
-                .and_then(|v| v.to_str().ok())
-                .map(|s| s.trim().to_string())
-        })
-        .unwrap_or_else(|| "127.0.0.1".to_string());
+    let client_id = if limiter.config.trust_proxy {
+        req.headers()
+            .get("x-forwarded-for")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.split(',').next())
+            .map(|s| s.trim().to_string())
+            .or_else(|| {
+                req.headers()
+                    .get("x-real-ip")
+                    .and_then(|v| v.to_str().ok())
+                    .map(|s| s.trim().to_string())
+            })
+            .unwrap_or_else(|| "127.0.0.1".to_string())
+    } else {
+        "127.0.0.1".to_string()
+    };
 
     let path = req.uri().path().to_string();
 

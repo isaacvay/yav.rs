@@ -8,7 +8,7 @@
 ## Installation
 
 ```bash
-cargo install yav-cli
+cargo install --git https://github.com/isaacvay/yav.rs yav-cli
 ```
 
 ## Create a New Project
