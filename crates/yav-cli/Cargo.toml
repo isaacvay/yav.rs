@@ -4,6 +4,13 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "Command-line interface for the Yav web framework"
+readme = "../../README.md"
+homepage.workspace = true
+documentation.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+keywords = ["web", "framework", "cli", "scaffold", "ssr"]
+categories = ["command-line-utilities", "web-programming"]
 
 [[bin]]
 name = "yav"

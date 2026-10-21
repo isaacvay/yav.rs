@@ -16,7 +16,8 @@ use axum::{
     http::{header, request::Parts, HeaderValue, StatusCode},
     response::Response,
 };
-use sha2::{Digest, Sha256};
+use sha2::Sha256;
+use hmac::{Hmac, Mac};
 
 /// Standard cookie name for Yav sessions.
 pub const SESSION_COOKIE_NAME: &str = "_yav_session";
@@ -184,36 +185,15 @@ impl Session {
     }
 }
 
-/// Compute standard HMAC-SHA256 signature.
+/// Compute standard HMAC-SHA256 signature using the `hmac` crate.
 pub fn compute_hmac_sha256(data: &[u8], key: &[u8]) -> String {
-    let block_size = 64;
-    let mut k = [0u8; 64];
+    type HmacSha256 = Hmac<Sha256>;
 
-    if key.len() > block_size {
-        let hash = Sha256::digest(key);
-        k[..hash.len()].copy_from_slice(&hash);
-    } else {
-        k[..key.len()].copy_from_slice(key);
-    }
-
-    let mut ipad = [0x36u8; 64];
-    let mut opad = [0x5cu8; 64];
-    for i in 0..block_size {
-        ipad[i] ^= k[i];
-        opad[i] ^= k[i];
-    }
-
-    let mut inner_hasher = Sha256::new();
-    inner_hasher.update(ipad);
-    inner_hasher.update(data);
-    let inner_hash = inner_hasher.finalize();
-
-    let mut outer_hasher = Sha256::new();
-    outer_hasher.update(opad);
-    outer_hasher.update(inner_hash);
-    let outer_hash = outer_hasher.finalize();
-
-    hex_encode(&outer_hash)
+    let mut mac =
+        HmacSha256::new_from_slice(key).expect("HMAC can accept key of any length");
+    mac.update(data);
+    let result = mac.finalize();
+    hex_encode(&result.into_bytes())
 }
 
 fn hex_encode(bytes: &[u8]) -> String {
@@ -225,7 +205,7 @@ fn hex_encode(bytes: &[u8]) -> String {
 }
 
 fn hex_decode(s: &str) -> Option<Vec<u8>> {
-    if !s.len().is_multiple_of(2) {
+    if s.len() % 2 != 0 {
         return None;
     }
     let mut bytes = Vec::with_capacity(s.len() / 2);
@@ -278,6 +258,27 @@ pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     result == 0
 }
 
+/// SameSite cookie policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SameSite {
+    /// Cookies are sent with top-level navigations and GET requests from third-party sites.
+    Lax,
+    /// Cookies are only sent in a first-party context.
+    Strict,
+    /// Cookies are sent in all contexts (requires `Secure`).
+    None,
+}
+
+impl std::fmt::Display for SameSite {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SameSite::Lax => write!(f, "Lax"),
+            SameSite::Strict => write!(f, "Strict"),
+            SameSite::None => write!(f, "None"),
+        }
+    }
+}
+
 /// Configuration for HTTP session cookies and behavior.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SessionConfig {
@@ -287,8 +288,8 @@ pub struct SessionConfig {
     pub path: String,
     /// Domain attribute for the cookie (optional).
     pub domain: Option<String>,
-    /// SameSite policy (default: `"Lax"`). Options: `"Lax"`, `"Strict"`, `"None"`.
-    pub same_site: String,
+    /// SameSite policy (default: [`SameSite::Lax`]).
+    pub same_site: SameSite,
     /// HttpOnly flag (default: `true`).
     pub http_only: bool,
     /// Explicit secure flag override (default: `None`, which auto-detects based on `YAV_ENV=production`).
@@ -303,7 +304,7 @@ impl Default for SessionConfig {
             cookie_name: SESSION_COOKIE_NAME.to_string(),
             path: "/".to_string(),
             domain: None,
-            same_site: "Lax".to_string(),
+            same_site: SameSite::Lax,
             http_only: true,
             secure: None,
             default_ttl: None,
@@ -313,47 +314,55 @@ impl Default for SessionConfig {
 
 impl SessionConfig {
     /// Create a new session configuration with standard defaults.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Set the session cookie name.
+    #[must_use]
     pub fn cookie_name(mut self, name: impl Into<String>) -> Self {
         self.cookie_name = name.into();
         self
     }
 
     /// Set the cookie path attribute.
+    #[must_use]
     pub fn path(mut self, path: impl Into<String>) -> Self {
         self.path = path.into();
         self
     }
 
     /// Set the cookie domain attribute.
+    #[must_use]
     pub fn domain(mut self, domain: impl Into<String>) -> Self {
         self.domain = Some(domain.into());
         self
     }
 
-    /// Set the SameSite policy (`"Lax"`, `"Strict"`, or `"None"`).
-    pub fn same_site(mut self, same_site: impl Into<String>) -> Self {
-        self.same_site = same_site.into();
+    /// Set the SameSite policy.
+    #[must_use]
+    pub fn same_site(mut self, same_site: SameSite) -> Self {
+        self.same_site = same_site;
         self
     }
 
     /// Set whether the cookie has the HttpOnly attribute.
+    #[must_use]
     pub fn http_only(mut self, http_only: bool) -> Self {
         self.http_only = http_only;
         self
     }
 
     /// Explicitly enable or disable the Secure cookie attribute.
+    #[must_use]
     pub fn secure(mut self, secure: bool) -> Self {
         self.secure = Some(secure);
         self
     }
 
     /// Set a default expiration TTL (in seconds) for sessions.
+    #[must_use]
     pub fn ttl(mut self, ttl_seconds: u64) -> Self {
         self.default_ttl = Some(ttl_seconds);
         self
@@ -496,7 +505,12 @@ where
                     .ok()
                     .map(|s| s.into_bytes())
             })
-            .unwrap_or_else(|| DEFAULT_DEV_SESSION_SECRET.to_vec());
+            .unwrap_or_else(|| {
+                if is_production_mode() {
+                    panic!("FATAL: SESSION_SECRET must be explicitly set when running in production mode! Refusing to use default dev secret.");
+                }
+                DEFAULT_DEV_SESSION_SECRET.to_vec()
+            });
 
         let config = parts
             .extensions
@@ -626,14 +640,14 @@ mod tests {
         let config = SessionConfig::new()
             .cookie_name("custom_sid")
             .path("/app")
-            .same_site("Strict")
+            .same_site(SameSite::Strict)
             .http_only(false)
             .secure(true)
             .ttl(7200);
 
         assert_eq!(config.cookie_name, "custom_sid");
         assert_eq!(config.path, "/app");
-        assert_eq!(config.same_site, "Strict");
+        assert_eq!(config.same_site, SameSite::Strict);
         assert!(!config.http_only);
         assert_eq!(config.secure, Some(true));
         assert_eq!(config.default_ttl, Some(7200));

@@ -105,12 +105,20 @@ impl Node {
 
     /// Returns `true` if this node produces no visible output.
     pub fn is_empty(&self) -> bool {
-        matches!(self, Node::Empty)
+        match self {
+            Node::Empty => true,
+            Node::Text(s) => s.is_empty(),
+            Node::Raw(s) => s.is_empty(),
+            Node::Static(s) => s.is_empty(),
+            Node::Fragment(children) => children.iter().all(|c| c.is_empty()),
+            Node::Element(_) => false,
+        }
     }
 }
 
 impl Element {
     /// Create a new element with the given tag name. Accepts either static `&'static str` (zero allocation) or `String`.
+    #[must_use]
     pub fn new(tag: impl Into<Cow<'static, str>>) -> Self {
         let tag = tag.into();
         let self_closing = is_void_element(&tag);
@@ -123,6 +131,7 @@ impl Element {
     }
 
     /// Add an attribute with a string value.
+    #[must_use]
     pub fn attr(mut self, name: impl Into<Cow<'static, str>>, value: impl Into<String>) -> Self {
         self.attributes.push(Attribute {
             name: name.into(),
@@ -132,6 +141,7 @@ impl Element {
     }
 
     /// Add an attribute with a compile-time static string literal (zero heap allocation).
+    #[must_use]
     pub fn attr_static(mut self, name: impl Into<Cow<'static, str>>, value: &'static str) -> Self {
         self.attributes.push(Attribute {
             name: name.into(),
@@ -141,6 +151,7 @@ impl Element {
     }
 
     /// Add a boolean attribute.
+    #[must_use]
     pub fn bool_attr(mut self, name: impl Into<Cow<'static, str>>, value: bool) -> Self {
         self.attributes.push(Attribute {
             name: name.into(),
@@ -150,12 +161,14 @@ impl Element {
     }
 
     /// Add a child node.
+    #[must_use]
     pub fn child(mut self, node: Node) -> Self {
         self.children.push(node);
         self
     }
 
     /// Add multiple children.
+    #[must_use]
     pub fn children(mut self, nodes: impl IntoIterator<Item = Node>) -> Self {
         self.children.extend(nodes);
         self

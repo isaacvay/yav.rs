@@ -24,9 +24,31 @@ use crate::node::{AttributeValue, Node};
 /// assert_eq!(render_to_string(&node), r#"<div class="container">Hello, world!</div>"#);
 /// ```
 pub fn render_to_string(node: &Node) -> String {
-    let mut buf = String::with_capacity(1024);
+    let capacity = estimate_node_size(node).min(1024 * 1024);
+    let mut buf = String::with_capacity(capacity);
     render_node(node, &mut buf);
     buf
+}
+
+/// Estimate the rendered byte size of a node tree for pre-allocation.
+fn estimate_node_size(node: &Node) -> usize {
+    match node {
+        Node::Text(t) => t.len() + 8, // possible escaping overhead
+        Node::Raw(r) => r.len(),
+        Node::Static(s) => s.len(),
+        Node::Element(el) => {
+            let tag_overhead = el.tag.len() * 2 + 5; // <tag></tag>
+            let attr_size: usize = el
+                .attributes
+                .iter()
+                .map(|a| a.name.len() + 10) // name="value" estimate
+                .sum();
+            let children_size: usize = el.children.iter().map(estimate_node_size).sum();
+            tag_overhead + attr_size + children_size
+        }
+        Node::Fragment(children) => children.iter().map(estimate_node_size).sum(),
+        Node::Empty => 0,
+    }
 }
 
 const MAX_RENDER_DEPTH: usize = 512;
@@ -42,6 +64,7 @@ fn render_node(node: &Node, buf: &mut String) {
 
 fn render_node_depth(node: &Node, buf: &mut String, depth: usize) {
     if depth > MAX_RENDER_DEPTH {
+        buf.push_str("<!-- yav: render depth limit exceeded -->");
         return;
     }
     match node {
@@ -111,30 +134,40 @@ fn render_element_depth(el: &crate::node::Element, buf: &mut String, depth: usiz
         }
         match &attr.value {
             AttributeValue::String(val) => {
-                buf.push(' ');
-                buf.push_str(&attr.name);
-                buf.push_str("=\"");
                 if is_url_attribute(&attr.name) {
                     if let Some(safe_url) = crate::escape::escape_url(val) {
+                        buf.push(' ');
+                        buf.push_str(&attr.name);
+                        buf.push_str("=\"");
                         buf.push_str(&safe_url);
+                        buf.push('"');
                     }
+                    // Dangerous URLs: omit the attribute entirely
                 } else {
+                    buf.push(' ');
+                    buf.push_str(&attr.name);
+                    buf.push_str("=\"");
                     buf.push_str(&escape_attribute(val));
+                    buf.push('"');
                 }
-                buf.push('"');
             }
             AttributeValue::Static(val) => {
-                buf.push(' ');
-                buf.push_str(&attr.name);
-                buf.push_str("=\"");
                 if is_url_attribute(&attr.name) {
                     if let Some(safe_url) = crate::escape::escape_url(val) {
+                        buf.push(' ');
+                        buf.push_str(&attr.name);
+                        buf.push_str("=\"");
                         buf.push_str(&safe_url);
+                        buf.push('"');
                     }
+                    // Dangerous URLs: omit the attribute entirely
                 } else {
+                    buf.push(' ');
+                    buf.push_str(&attr.name);
+                    buf.push_str("=\"");
                     buf.push_str(&escape_attribute(val));
+                    buf.push('"');
                 }
-                buf.push('"');
             }
             AttributeValue::Bool(true) => {
                 buf.push(' ');
@@ -411,7 +444,7 @@ mod tests {
     fn test_render_src_xss_protection() {
         let node = Node::Element(Element::new("iframe").attr("src", "javascript:alert(1)"));
         let html = render_to_string(&node);
-        assert_eq!(html, r#"<iframe src=""></iframe>"#);
+        assert_eq!(html, r#"<iframe></iframe>"#);
 
         let safe_img = Node::Element(
             Element::new("img")
@@ -434,18 +467,18 @@ mod tests {
                 .child(Node::text("SVG link")),
         );
         let html1 = render_to_string(&svg_link);
-        assert_eq!(html1, r#"<a xlink:href="">SVG link</a>"#);
+        assert_eq!(html1, r#"<a>SVG link</a>"#);
 
         // video poster
         let video =
             Node::Element(Element::new("video").attr("poster", "javascript:alert('poster')"));
         let html2 = render_to_string(&video);
-        assert_eq!(html2, r#"<video poster=""></video>"#);
+        assert_eq!(html2, r#"<video></video>"#);
 
         // object data
         let obj = Node::Element(Element::new("object").attr("data", "javascript:alert('data')"));
         let html3 = render_to_string(&obj);
-        assert_eq!(html3, r#"<object data=""></object>"#);
+        assert_eq!(html3, r#"<object></object>"#);
 
         // Invalid attribute names with injection attempts must be dropped
         let injected_attr =

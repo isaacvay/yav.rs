@@ -69,35 +69,41 @@ pub struct PageMeta {
 
 impl PageMeta {
     /// Create a new `PageMeta` with default values.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Set page title.
+    #[must_use]
     pub fn title(mut self, title: impl Into<String>) -> Self {
         self.title = Some(title.into());
         self
     }
 
     /// Set meta description.
+    #[must_use]
     pub fn description(mut self, description: impl Into<String>) -> Self {
         self.description = Some(description.into());
         self
     }
 
     /// Set canonical URL.
+    #[must_use]
     pub fn canonical(mut self, url: impl Into<String>) -> Self {
         self.canonical_url = Some(url.into());
         self
     }
 
     /// Set favicon URL.
+    #[must_use]
     pub fn favicon(mut self, url: impl Into<String>) -> Self {
         self.favicon = Some(url.into());
         self
     }
 
     /// Set OpenGraph metadata.
+    #[must_use]
     pub fn open_graph(
         mut self,
         title: impl Into<String>,
@@ -114,30 +120,35 @@ impl PageMeta {
     }
 
     /// Set Twitter card type (e.g. "summary_large_image").
+    #[must_use]
     pub fn twitter_card(mut self, card_type: impl Into<String>) -> Self {
         self.twitter_card = Some(card_type.into());
         self
     }
 
     /// Set JSON-LD structured data (Schema.org).
+    #[must_use]
     pub fn json_ld(mut self, json: impl Into<String>) -> Self {
         self.json_ld = Some(json.into());
         self
     }
 
     /// Add a CSS stylesheet path.
+    #[must_use]
     pub fn css(mut self, path: impl Into<String>) -> Self {
         self.css.push(path.into());
         self
     }
 
     /// Add a JavaScript script path.
+    #[must_use]
     pub fn script(mut self, path: impl Into<String>) -> Self {
         self.scripts.push(path.into());
         self
     }
 
     /// Set HTTP status code override.
+    #[must_use]
     pub fn status(mut self, status: u16) -> Self {
         self.status = Some(status);
         self
@@ -236,11 +247,13 @@ pub struct Sitemap {
 
 impl Sitemap {
     /// Create a new empty sitemap.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Add a simple URL to the sitemap.
+    #[must_use]
     pub fn add_url(mut self, loc: impl Into<String>) -> Self {
         self.entries.push(SitemapEntry {
             loc: loc.into(),
@@ -250,6 +263,7 @@ impl Sitemap {
     }
 
     /// Add an entry with full metadata.
+    #[must_use]
     pub fn add_entry(mut self, entry: SitemapEntry) -> Self {
         self.entries.push(entry);
         self
@@ -311,17 +325,20 @@ impl Default for RobotsTxt {
 
 impl RobotsTxt {
     /// Create a new robots.txt allowing all crawlers.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Disallow paths.
+    #[must_use]
     pub fn disallow(mut self, path: impl Into<String>) -> Self {
         self.disallow.push(path.into());
         self
     }
 
     /// Set sitemap URL.
+    #[must_use]
     pub fn sitemap(mut self, url: impl Into<String>) -> Self {
         self.sitemap = Some(url.into());
         self

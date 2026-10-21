@@ -71,7 +71,40 @@ impl I18n {
     }
 
     /// Look up a translation key and interpolate parameters formatted as `{param_name}`.
+    ///
+    /// All interpolated values are **HTML-escaped** by default to prevent XSS.
+    /// Use [`translate_raw`] if you need to inject pre-escaped or trusted HTML.
     pub fn translate(&self, locale: &str, key: &str, params: &[(&str, &str)]) -> String {
+        let raw = self
+            .dictionary
+            .get(locale)
+            .and_then(|m| m.get(key))
+            .or_else(|| {
+                self.dictionary
+                    .get(&self.default_locale)
+                    .and_then(|m| m.get(key))
+            })
+            .map(|s| s.as_str())
+            .unwrap_or(key);
+
+        if params.is_empty() {
+            return raw.to_string();
+        }
+
+        let mut out = raw.to_string();
+        for (k, v) in params {
+            let placeholder = format!("{{{k}}}");
+            let escaped = crate::escape::escape_html(v);
+            out = out.replace(&placeholder, &escaped);
+        }
+        out
+    }
+
+    /// Look up a translation key and interpolate parameters **without HTML escaping**.
+    ///
+    /// **⚠️ Security Warning**: Only use this with trusted content. Never pass user input
+    /// directly — use [`translate`] instead, which escapes values automatically.
+    pub fn translate_raw(&self, locale: &str, key: &str, params: &[(&str, &str)]) -> String {
         let raw = self
             .dictionary
             .get(locale)

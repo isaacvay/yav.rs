@@ -4,6 +4,11 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "HTTP server, SSR engine, and middleware for the Yav web framework"
+readme = "../../README.md"
+homepage.workspace = true
+documentation.workspace = true
+repository.workspace = true
+rust-version.workspace = true
 
 [dependencies]
 yav-core.workspace = true
@@ -18,5 +23,6 @@ tracing-subscriber.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 hyper.workspace = true
+hmac.workspace = true
 sha2.workspace = true
 futures-util = "0.3"

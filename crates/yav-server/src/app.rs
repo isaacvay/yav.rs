@@ -179,6 +179,7 @@ impl YavApp {
     /// directory exists on disk.
     /// Falls back to default settings (host: `127.0.0.1`, port: `3000`) if
     /// no config file is found.
+    #[must_use]
     pub fn new() -> Self {
         let manifest = match PackageYav::discover() {
             Ok(m) => m,
@@ -235,66 +236,77 @@ impl YavApp {
     }
 
     /// Set whether automatic ETag generation and 304 Not Modified caching is enabled.
+    #[must_use]
     pub fn etag(mut self, enabled: bool) -> Self {
         self.etag = enabled;
         self
     }
 
     /// Enable or disable CORS headers.
+    #[must_use]
     pub fn cors(mut self, enabled: bool) -> Self {
         self.cors = enabled;
         self
     }
 
     /// Set custom session signing secret key.
+    #[must_use]
     pub fn session_secret(mut self, secret: impl Into<Vec<u8>>) -> Self {
         self.session_secret = Some(crate::session::SessionSecret::new(secret));
         self
     }
 
     /// Configure session settings (cookie name, TTL, path, SameSite, etc.).
+    #[must_use]
     pub fn session(mut self, config: crate::session::SessionConfig) -> Self {
         self.session_config = config;
         self
     }
 
     /// Set the port number.
+    #[must_use]
     pub fn port(mut self, port: u16) -> Self {
         self.port = port;
         self
     }
 
     /// Set the host address.
+    #[must_use]
     pub fn host(mut self, host: impl Into<String>) -> Self {
         self.host = host.into();
         self
     }
 
     /// Configure the directory to serve static files from at `/public`.
+    #[must_use]
     pub fn static_dir(mut self, dir: impl Into<PathBuf>) -> Self {
         self.static_dir = Some(dir.into());
         self
     }
 
     /// Configure in-memory sliding window rate limiting.
+    #[must_use]
     pub fn rate_limit(mut self, config: crate::rate_limit::RateLimitConfig) -> Self {
         self.rate_limiter = Some(crate::rate_limit::RateLimiter::new(config));
         self
     }
 
     /// Attach an existing [`RateLimiter`](crate::rate_limit::RateLimiter) instance.
+    #[must_use]
     pub fn rate_limiter(mut self, limiter: crate::rate_limit::RateLimiter) -> Self {
         self.rate_limiter = Some(limiter);
         self
     }
 
     /// Provide a custom [`ServerMetrics`](crate::health::ServerMetrics) telemetry tracker.
+    #[must_use]
     pub fn metrics(mut self, metrics: crate::health::ServerMetrics) -> Self {
         self.metrics = metrics;
         self
     }
 
     /// Register shared application state or database pool accessible to all handlers via `axum::extract::Extension<T>`.
+    #[must_use]
     pub fn state<T: Clone + Send + Sync + 'static>(mut self, state: T) -> Self {
         self.extensions.push(Arc::new(move |router| {
             router.layer(axum::Extension(state.clone()))
@@ -303,11 +315,13 @@ impl YavApp {
     }
 
     /// Register a custom extension or service layer on the router.
+    #[must_use]
     pub fn extension<T: Clone + Send + Sync + 'static>(self, ext: T) -> Self {
         self.state(ext)
     }
 
     /// Register a custom middleware function (e.g. `|req, next| async { next.run(req).await }`).
+    #[must_use]
     pub fn middleware<F, Fut>(mut self, middleware_fn: F) -> Self
     where
         F: Fn(axum::extract::Request, axum::middleware::Next) -> Fut
@@ -324,18 +338,21 @@ impl YavApp {
     }
 
     /// Configure a custom 404 Not Found fallback handler.
+    #[must_use]
     pub fn not_found_handler(mut self, handler: impl IntoBoxedHandler) -> Self {
         self.not_found_handler = Some(handler.into_boxed_handler());
         self
     }
 
     /// Attach a [`FileSystemRouter`](yav_router::fs_router::FileSystemRouter) to the application for route reflection and discovery.
+    #[must_use]
     pub fn with_fs_router(mut self, fs_router: yav_router::fs_router::FileSystemRouter) -> Self {
         self.fs_router = Some(fs_router);
         self
     }
 
     /// Attach an [`I18n`](yav_core::I18n) catalog for request locale resolution and translations.
+    #[must_use]
     pub fn i18n(mut self, i18n: yav_core::I18n) -> Self {
         self.i18n = Some(Arc::new(i18n));
         self
@@ -413,6 +430,7 @@ impl YavApp {
     }
 
     /// Add a route with a custom path, HTTP method, and asynchronous handler.
+    #[must_use]
     pub fn route(
         mut self,
         path: impl Into<String>,
@@ -424,26 +442,31 @@ impl YavApp {
     }
 
     /// Register a `GET` route.
+    #[must_use]
     pub fn get(self, path: impl Into<String>, handler: impl IntoBoxedHandler) -> Self {
         self.route(path, Method::GET, handler)
     }
 
     /// Register a `POST` route.
+    #[must_use]
     pub fn post(self, path: impl Into<String>, handler: impl IntoBoxedHandler) -> Self {
         self.route(path, Method::POST, handler)
     }
 
     /// Register a `PUT` route.
+    #[must_use]
     pub fn put(self, path: impl Into<String>, handler: impl IntoBoxedHandler) -> Self {
         self.route(path, Method::PUT, handler)
     }
 
     /// Register a `DELETE` route.
+    #[must_use]
     pub fn delete(self, path: impl Into<String>, handler: impl IntoBoxedHandler) -> Self {
         self.route(path, Method::DELETE, handler)
     }
 
     /// Register a `PATCH` route.
+    #[must_use]
     pub fn patch(self, path: impl Into<String>, handler: impl IntoBoxedHandler) -> Self {
         self.route(path, Method::PATCH, handler)
     }
@@ -464,6 +487,7 @@ impl YavApp {
     ///
     /// let app = YavApp::new().openapi("/docs", spec);
     /// ```
+    #[must_use]
     pub fn openapi(mut self, path: impl AsRef<str>, spec: crate::openapi::OpenApiSpec) -> Self {
         let base_path = path.as_ref().trim_end_matches('/').to_string();
         let json_path = format!("{base_path}/openapi.json");

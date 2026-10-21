@@ -5,6 +5,12 @@ edition.workspace = true
 license.workspace = true
 description = "A Rust-first web framework with a modern frontend developer experience"
 readme = "../../README.md"
+homepage.workspace = true
+documentation.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+keywords = ["web", "framework", "ssr", "rust", "axum"]
+categories = ["web-programming::http-server", "web-programming"]
 
 [dependencies]
 yav-core.workspace = true

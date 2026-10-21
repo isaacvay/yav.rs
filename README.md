@@ -10,6 +10,8 @@
 </p>
 
 <p align="center">
+  <a href="https://crates.io/crates/yav"><img src="https://img.shields.io/crates/v/yav.svg?style=flat-square" alt="Crates.io"></a>
+  <a href="https://docs.rs/yav"><img src="https://img.shields.io/docsrs/yav?style=flat-square" alt="docs.rs"></a>
   <a href="LICENSE-MIT"><img src="https://img.shields.io/badge/license-MIT%20%2F%20Apache--2.0-blue?style=flat-square" alt="License"></a>
   <a href="https://github.com/isaacvay/yav.rs"><img src="https://img.shields.io/badge/rust-2021%20edition-black?style=flat-square&logo=rust" alt="Rust Edition"></a>
 </p>
@@ -21,8 +23,8 @@ Yav.rs is a complete web framework that brings the developer experience of Next.
 ## Quick Start
 
 ```bash
-# Install the CLI from GitHub repository
-cargo install --git https://github.com/isaacvay/yav.rs yav-cli
+# Install the CLI
+cargo install yav-cli
 
 # Create a new project
 yav new my-app
