@@ -73,7 +73,7 @@ impl I18n {
     /// Look up a translation key and interpolate parameters formatted as `{param_name}`.
     ///
     /// All interpolated values are **HTML-escaped** by default to prevent XSS.
-    /// Use [`translate_raw`] if you need to inject pre-escaped or trusted HTML.
+    /// Use [`Self::translate_raw`] if you need to inject pre-escaped or trusted HTML.
     pub fn translate(&self, locale: &str, key: &str, params: &[(&str, &str)]) -> String {
         let raw = self
             .dictionary
@@ -103,7 +103,7 @@ impl I18n {
     /// Look up a translation key and interpolate parameters **without HTML escaping**.
     ///
     /// **⚠️ Security Warning**: Only use this with trusted content. Never pass user input
-    /// directly — use [`translate`] instead, which escapes values automatically.
+    /// directly — use [`Self::translate`] instead, which escapes values automatically.
     pub fn translate_raw(&self, locale: &str, key: &str, params: &[(&str, &str)]) -> String {
         let raw = self
             .dictionary

@@ -93,8 +93,8 @@ pub use seo::{RobotsTxt, Sitemap, SitemapEntry};
 
 // Cryptographically signed sessions
 pub use session::{
-    compute_hmac_sha256, extract_session_from_cookie, session_middleware, Session, SessionConfig,
-    SessionSecret, SESSION_COOKIE_NAME,
+    compute_hmac_sha256, extract_session_from_cookie, session_middleware, SameSite, Session,
+    SessionConfig, SessionSecret, SESSION_COOKIE_NAME,
 };
 
 // Server-Sent Events (SSE)
@@ -133,7 +133,7 @@ pub mod prelude {
     pub use crate::openapi::{scalar_ui_handler, swagger_ui_handler, OpenApiSpec};
     pub use crate::rate_limit::{RateLimitConfig, RateLimiter};
     pub use crate::seo::{RobotsTxt, Sitemap, SitemapEntry};
-    pub use crate::session::{Session, SessionSecret};
+    pub use crate::session::{SameSite, Session, SessionConfig, SessionSecret};
     pub use crate::sse::{sse_channel, sse_response, SseMsg};
     pub use crate::static_files::{mime_type_for_path, resolve_static_path, serve_static_file};
     pub use crate::streaming::{streaming_html, StreamingHtml};

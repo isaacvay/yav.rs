@@ -21,5 +21,9 @@ yav-ui.workspace = true
 yav-icons.workspace = true
 yav-build.workspace = true
 
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
 [dev-dependencies]
 tokio.workspace = true
