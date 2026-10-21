@@ -23,13 +23,23 @@ mod run_cmd;
 mod sitemap_cmd;
 mod test_cmd;
 
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "yav", version, about = "The Yav web framework CLI")]
+#[command(
+    name = "yav",
+    version,
+    disable_version_flag = true,
+    about = "The Yav web framework CLI — High-performance full-stack web framework for Rust",
+    long_about = "The Yav web framework CLI.\nFast, type-safe full-stack web development with compiled Rust, built-in Tailwind CSS, and zero Node.js dependencies."
+)]
 struct Cli {
+    /// Print version information (-v, -V, or --version)
+    #[arg(short = 'v', short_alias = 'V', long = "version", action = clap::ArgAction::Version)]
+    _version: Option<bool>,
+
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
 }
 
 #[derive(Subcommand)]
@@ -120,7 +130,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt::init();
     let cli = Cli::parse();
 
-    match cli.command {
+    let command = match cli.command {
+        Some(cmd) => cmd,
+        None => {
+            let _ = Cli::command().print_help();
+            println!();
+            return Ok(());
+        }
+    };
+
+    match command {
         Commands::New { name } => {
             new::run(&name)?;
         }
