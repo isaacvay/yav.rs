@@ -997,7 +997,7 @@ Allow: /
 "##;
     std::fs::write(target_dir.join("public/yav-document.svg"), yav_document_svg)?;
 
-    let yav_document_png = include_bytes!("../../../assets/png/yav-document-256.png");
+    let yav_document_png = include_bytes!("../assets/png/yav-document-256.png");
     std::fs::write(target_dir.join("public/yav-document.png"), yav_document_png)?;
 
     // 11. Generate README.md

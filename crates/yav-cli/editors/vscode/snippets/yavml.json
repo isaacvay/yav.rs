@@ -1,0 +1,96 @@
+{
+  "Yav Motion Section": {
+    "prefix": "sec-motion",
+    "body": [
+      "[motion]",
+      "enabled = ${1|true,false|}",
+      "reduced_motion = \"${2|user,always,never|}\""
+    ],
+    "description": "Add Yav Motion & Animation configuration section"
+  },
+  "Yav PWA Section": {
+    "prefix": "sec-pwa",
+    "body": [
+      "[pwa]",
+      "enabled = true",
+      "name = \"${1:My App}\"",
+      "short_name = \"${2:App}\"",
+      "theme_color = \"${3:#0f172a}\"",
+      "background_color = \"${4:#0f172a}\"",
+      "display = \"standalone\"",
+      "start_url = \"/\""
+    ],
+    "description": "Add Progressive Web App (PWA) configuration section"
+  },
+  "Yav Server Section": {
+    "prefix": "sec-server",
+    "body": [
+      "[server]",
+      "port = ${1:3000}",
+      "host = \"${2:127.0.0.1}\"",
+      "cors = ${3:false}"
+    ],
+    "description": "Add Yav HTTP server runtime section"
+  },
+  "Yav Tailwind Section": {
+    "prefix": "sec-tailwind",
+    "body": [
+      "[tailwind]",
+      "enabled = true",
+      "version = \"3.4.17\"",
+      "input = \"src/styles/app.css\"",
+      "output = \"public/styles.css\""
+    ],
+    "description": "Add Tailwind CSS standalone compiler configuration"
+  },
+  "Yav Build Section": {
+    "prefix": "sec-build",
+    "body": [
+      "[build]",
+      "out_dir = \"dist\"",
+      "public_dir = \"public\"",
+      "minify = true",
+      "fingerprint = true"
+    ],
+    "description": "Add production build and asset distribution section"
+  },
+  "Full package.yavml Template": {
+    "prefix": "yavml-full",
+    "body": [
+      "[package]",
+      "name = \"${1:my-app}\"",
+      "version = \"0.1.0\"",
+      "description = \"${2:A modern web application built with Yav}\"",
+      "license = \"MIT\"",
+      "",
+      "[server]",
+      "port = 3000",
+      "host = \"127.0.0.1\"",
+      "",
+      "[tailwind]",
+      "enabled = true",
+      "version = \"3.4.17\"",
+      "input = \"src/styles/app.css\"",
+      "output = \"public/styles.css\"",
+      "",
+      "[motion]",
+      "enabled = true",
+      "reduced_motion = \"user\"",
+      "",
+      "[build]",
+      "out_dir = \"dist\"",
+      "public_dir = \"public\"",
+      "minify = true",
+      "fingerprint = true",
+      "",
+      "[scripts]",
+      "dev = \"yav dev\"",
+      "build = \"yav build\"",
+      "test = \"cargo test\"",
+      "",
+      "[assets]",
+      "favicon = \"public/favicon.ico\""
+    ],
+    "description": "Scaffold a complete package.yavml manifest"
+  }
+}

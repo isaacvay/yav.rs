@@ -1,0 +1,293 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Yav",
+  "scopeName": "source.yav",
+  "patterns": [
+    {
+      "include": "#frontmatter"
+    },
+    {
+      "include": "#template"
+    }
+  ],
+  "repository": {
+    "frontmatter": {
+      "begin": "\\A(---)\\s*$",
+      "beginCaptures": {
+        "1": { "name": "punctuation.definition.frontmatter.yav" }
+      },
+      "end": "^(---)\\s*$",
+      "endCaptures": {
+        "1": { "name": "punctuation.definition.frontmatter.yav" }
+      },
+      "name": "meta.frontmatter.yav",
+      "patterns": [
+        {
+          "include": "#comments"
+        },
+        {
+          "include": "#strings"
+        },
+        {
+          "include": "#imports"
+        },
+        {
+          "include": "#props-block"
+        },
+        {
+          "include": "#rust-keywords"
+        },
+        {
+          "include": "#types"
+        },
+        {
+          "include": "#literals"
+        }
+      ]
+    },
+    "imports": {
+      "patterns": [
+        {
+          "match": "\\b(import)\\b\\s+([^\\{\\n;]+?)\\s+\\b(from)\\b\\s+(\"[^\"]*\")",
+          "captures": {
+            "1": { "name": "keyword.control.import.yav" },
+            "2": { "name": "variable.other.readwrite.yav" },
+            "3": { "name": "keyword.control.from.yav" },
+            "4": { "name": "string.quoted.double.yav" }
+          }
+        },
+        {
+          "match": "\\b(import)\\b\\s*\\{([\\s\\S]*?)\\}\\s*\\b(from)\\b\\s*(\"[^\"]*\")",
+          "captures": {
+            "1": { "name": "keyword.control.import.yav" },
+            "2": { "name": "entity.name.type.import.yav" },
+            "3": { "name": "keyword.control.from.yav" },
+            "4": { "name": "string.quoted.double.yav" }
+          }
+        },
+        {
+          "match": "\\b(use)\\b\\s+([a-zA-Z0-9_:]+)(?:\\s*::\\s*(\\{[^\\}]+\\}|\\*|[a-zA-Z0-9_]+))?",
+          "captures": {
+            "1": { "name": "keyword.control.use.rust" },
+            "2": { "name": "entity.name.namespace.rust" },
+            "3": { "name": "entity.name.type.rust" }
+          }
+        }
+      ]
+    },
+    "props-block": {
+      "begin": "\\b(props)\\s*(\\{)",
+      "beginCaptures": {
+        "1": { "name": "keyword.declaration.props.yav" },
+        "2": { "name": "punctuation.section.block.begin.yav" }
+      },
+      "end": "\\}",
+      "endCaptures": {
+        "0": { "name": "punctuation.section.block.end.yav" }
+      },
+      "name": "meta.props.declaration.yav",
+      "patterns": [
+        {
+          "include": "#comments"
+        },
+        {
+          "match": "\\b([a-zA-Z_][a-zA-Z0-9_]*)\\s*(:)",
+          "captures": {
+            "1": { "name": "variable.parameter.prop.yav" },
+            "2": { "name": "punctuation.separator.key-value.yav" }
+          }
+        },
+        {
+          "include": "#types"
+        },
+        {
+          "include": "#literals"
+        },
+        {
+          "include": "#strings"
+        }
+      ]
+    },
+    "rust-keywords": {
+      "patterns": [
+        {
+          "match": "\\b(pub|struct|enum|fn|let|mut|impl|for|trait|type|const|static|match|if|else|return)\\b",
+          "name": "keyword.control.rust"
+        }
+      ]
+    },
+    "types": {
+      "patterns": [
+        {
+          "match": "\\b(String|str|bool|u8|u16|u32|u64|u128|usize|i8|i16|i32|i64|i128|isize|f32|f64|char|Option|Vec|Result|Node|Component)\\b",
+          "name": "support.type.builtin.yav"
+        },
+        {
+          "match": "\\b([A-Z][a-zA-Z0-9_]*)\\b",
+          "name": "entity.name.type.yav"
+        }
+      ]
+    },
+    "literals": {
+      "patterns": [
+        {
+          "match": "\\b(true|false)\\b",
+          "name": "constant.language.boolean.yav"
+        },
+        {
+          "match": "\\b(Some|None|Ok|Err)\\b",
+          "name": "constant.language.rust"
+        },
+        {
+          "match": "\\b\\d+(\\.\\d+)?\\b",
+          "name": "constant.numeric.yav"
+        }
+      ]
+    },
+    "comments": {
+      "patterns": [
+        {
+          "match": "//.*$",
+          "name": "comment.line.double-slash.yav"
+        },
+        {
+          "begin": "/\\*",
+          "end": "\\*/",
+          "name": "comment.block.yav"
+        },
+        {
+          "begin": "<!--",
+          "end": "-->",
+          "name": "comment.block.html.yav"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "begin": "\"",
+          "end": "\"",
+          "name": "string.quoted.double.yav",
+          "patterns": [
+            {
+              "match": "\\\\.",
+              "name": "constant.character.escape.yav"
+            }
+          ]
+        },
+        {
+          "begin": "'",
+          "end": "'",
+          "name": "string.quoted.single.yav"
+        }
+      ]
+    },
+    "template": {
+      "patterns": [
+        {
+          "include": "#comments"
+        },
+        {
+          "include": "#tag-component"
+        },
+        {
+          "include": "#tag-html"
+        },
+        {
+          "include": "#expression"
+        }
+      ]
+    },
+    "tag-component": {
+      "begin": "(<)([A-Z][a-zA-Z0-9_.]*)",
+      "beginCaptures": {
+        "1": { "name": "punctuation.definition.tag.begin.yav" },
+        "2": { "name": "entity.name.tag.component.yav" }
+      },
+      "end": "(/?>)",
+      "endCaptures": {
+        "1": { "name": "punctuation.definition.tag.end.yav" }
+      },
+      "patterns": [
+        {
+          "include": "#tag-attributes"
+        }
+      ]
+    },
+    "tag-html": {
+      "begin": "(</?)([a-z][a-zA-Z0-9_-]*)",
+      "beginCaptures": {
+        "1": { "name": "punctuation.definition.tag.begin.yav" },
+        "2": { "name": "entity.name.tag.html.yav" }
+      },
+      "end": "(/?>)",
+      "endCaptures": {
+        "1": { "name": "punctuation.definition.tag.end.yav" }
+      },
+      "patterns": [
+        {
+          "include": "#tag-attributes"
+        }
+      ]
+    },
+    "tag-attributes": {
+      "patterns": [
+        {
+          "include": "#comments"
+        },
+        {
+          "match": "\\b([a-zA-Z_:][-a-zA-Z0-9_:.]*)\\s*=",
+          "captures": {
+            "1": { "name": "entity.other.attribute-name.yav" }
+          }
+        },
+        {
+          "match": "\\b([a-zA-Z_:][-a-zA-Z0-9_:.]*)\\b",
+          "captures": {
+            "1": { "name": "entity.other.attribute-name.boolean.yav" }
+          }
+        },
+        {
+          "include": "#strings"
+        },
+        {
+          "include": "#expression"
+        }
+      ]
+    },
+    "expression": {
+      "begin": "\\{",
+      "beginCaptures": {
+        "0": { "name": "punctuation.definition.expression.begin.yav" }
+      },
+      "end": "\\}",
+      "endCaptures": {
+        "0": { "name": "punctuation.definition.expression.end.yav" }
+      },
+      "name": "meta.embedded.expression.yav",
+      "patterns": [
+        {
+          "match": "\\b(props)\\b",
+          "name": "variable.language.props.yav"
+        },
+        {
+          "match": "\\b(if|else|match|for|in|let|mut)\\b",
+          "name": "keyword.control.rust"
+        },
+        {
+          "match": "\\b([a-zA-Z_][a-zA-Z0-9_]*)\\b",
+          "name": "variable.other.readwrite.yav"
+        },
+        {
+          "include": "#literals"
+        },
+        {
+          "include": "#strings"
+        },
+        {
+          "include": "#template"
+        }
+      ]
+    }
+  }
+}

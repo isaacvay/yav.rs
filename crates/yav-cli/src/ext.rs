@@ -10,22 +10,22 @@ use std::path::{Path, PathBuf};
 const EXTENSION_DIR_NAME: &str = "yav-framework.yav-vscode-0.1.0";
 
 // Embedded extension files from editors/vscode
-const PKG_JSON: &str = include_str!("../../../editors/vscode/package.json");
-const README_MD: &str = include_str!("../../../editors/vscode/README.md");
-const LANG_CONFIG_YAV: &str = include_str!("../../../editors/vscode/language-configuration.json");
+const PKG_JSON: &str = include_str!("../editors/vscode/package.json");
+const README_MD: &str = include_str!("../editors/vscode/README.md");
+const LANG_CONFIG_YAV: &str = include_str!("../editors/vscode/language-configuration.json");
 const LANG_CONFIG_YAVML: &str =
-    include_str!("../../../editors/vscode/language-configuration-yavml.json");
-const SYNTAX_YAV: &str = include_str!("../../../editors/vscode/syntaxes/yav.tmLanguage.json");
-const SYNTAX_YAVML: &str = include_str!("../../../editors/vscode/syntaxes/yavml.tmLanguage.json");
-const SCHEMA_YAVML: &str = include_str!("../../../editors/vscode/schemas/package.yavml.json");
-const SNIPPETS_YAV: &str = include_str!("../../../editors/vscode/snippets/yav.json");
-const SNIPPETS_YAVML: &str = include_str!("../../../editors/vscode/snippets/yavml.json");
+    include_str!("../editors/vscode/language-configuration-yavml.json");
+const SYNTAX_YAV: &str = include_str!("../editors/vscode/syntaxes/yav.tmLanguage.json");
+const SYNTAX_YAVML: &str = include_str!("../editors/vscode/syntaxes/yavml.tmLanguage.json");
+const SCHEMA_YAVML: &str = include_str!("../editors/vscode/schemas/package.yavml.json");
+const SNIPPETS_YAV: &str = include_str!("../editors/vscode/snippets/yav.json");
+const SNIPPETS_YAVML: &str = include_str!("../editors/vscode/snippets/yavml.json");
 
-const ICON_SVG: &[u8] = include_bytes!("../../../editors/vscode/icons/icon.svg");
-const ICON_LIGHT_SVG: &[u8] = include_bytes!("../../../editors/vscode/icons/icon-light.svg");
-const ICON_PNG: &[u8] = include_bytes!("../../../editors/vscode/icons/icon.png");
-const YAVML_SVG: &[u8] = include_bytes!("../../../editors/vscode/icons/yavml.svg");
-const YAVML_PNG: &[u8] = include_bytes!("../../../editors/vscode/icons/yavml.png");
+const ICON_SVG: &[u8] = include_bytes!("../editors/vscode/icons/icon.svg");
+const ICON_LIGHT_SVG: &[u8] = include_bytes!("../editors/vscode/icons/icon-light.svg");
+const ICON_PNG: &[u8] = include_bytes!("../editors/vscode/icons/icon.png");
+const YAVML_SVG: &[u8] = include_bytes!("../editors/vscode/icons/yavml.svg");
+const YAVML_PNG: &[u8] = include_bytes!("../editors/vscode/icons/yavml.png");
 
 /// Subcommands for `yav ext`.
 #[derive(Subcommand, Debug)]

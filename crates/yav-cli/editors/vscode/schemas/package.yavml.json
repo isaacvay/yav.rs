@@ -1,0 +1,223 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Yav Package Manifest (package.yavml)",
+  "description": "Central project configuration manifest for the Yav web framework",
+  "type": "object",
+  "properties": {
+    "package": {
+      "type": "object",
+      "description": "Project identity, versioning, and package metadata",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Application package name (must be a valid identifier)"
+        },
+        "version": {
+          "type": "string",
+          "description": "SemVer package version (e.g. \"0.1.0\")",
+          "default": "0.1.0"
+        },
+        "description": {
+          "type": "string",
+          "description": "Short one-line description of the application"
+        },
+        "authors": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "List of project authors in 'Name <email>' format"
+        },
+        "license": {
+          "type": "string",
+          "description": "SPDX license identifier (e.g. \"MIT\", \"Apache-2.0\")",
+          "default": "MIT"
+        },
+        "repository": {
+          "type": "string",
+          "description": "URL to the source code repository (e.g. GitHub)"
+        },
+        "homepage": {
+          "type": "string",
+          "description": "Project website or documentation URL"
+        },
+        "keywords": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "List of search tags and keywords"
+        }
+      },
+      "required": ["name"]
+    },
+    "server": {
+      "type": "object",
+      "description": "HTTP runtime server settings loaded automatically by YavApp::new()",
+      "properties": {
+        "port": {
+          "type": "integer",
+          "description": "Port to bind the HTTP server to (default: 3000)",
+          "default": 3000
+        },
+        "host": {
+          "type": "string",
+          "description": "Host address to bind to (e.g. \"127.0.0.1\" or \"0.0.0.0\")",
+          "default": "127.0.0.1"
+        },
+        "cors": {
+          "type": "boolean",
+          "description": "Enable Cross-Origin Resource Sharing (CORS)",
+          "default": false
+        },
+        "https": {
+          "type": "boolean",
+          "description": "Enable TLS / HTTPS server listener",
+          "default": false
+        },
+        "tls_cert": {
+          "type": "string",
+          "description": "Path to TLS certificate PEM file"
+        },
+        "tls_key": {
+          "type": "string",
+          "description": "Path to TLS private key PEM file"
+        }
+      }
+    },
+    "tailwind": {
+      "type": "object",
+      "description": "Tailwind CSS standalone CLI integration (no Node.js required)",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Enable automated Tailwind CSS compilation and watching",
+          "default": true
+        },
+        "version": {
+          "type": "string",
+          "description": "Tailwind standalone CLI binary version (default: \"3.4.17\")",
+          "default": "3.4.17"
+        },
+        "input": {
+          "type": "string",
+          "description": "Source CSS file containing @tailwind directives",
+          "default": "src/styles/app.css"
+        },
+        "output": {
+          "type": "string",
+          "description": "Compiled and purged CSS file destination",
+          "default": "public/styles.css"
+        }
+      }
+    },
+    "motion": {
+      "type": "object",
+      "description": "Motion & Animation engine configuration (yav-motion with native WAAPI)",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Enable hardware-accelerated WAAPI motion runtime (<2KB)",
+          "default": true
+        },
+        "reduced_motion": {
+          "type": "string",
+          "enum": ["user", "always", "never"],
+          "description": "Accessibility policy for animations: \"user\" respects OS settings, \"always\" disables motions, \"never\" forces motions",
+          "default": "user"
+        }
+      }
+    },
+    "pwa": {
+      "type": "object",
+      "description": "Progressive Web App (PWA) configuration for installable apps and offline support",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Enable PWA manifest and service worker capabilities",
+          "default": false
+        },
+        "name": {
+          "type": "string",
+          "description": "Full application name shown on install prompts"
+        },
+        "short_name": {
+          "type": "string",
+          "description": "Short app name for mobile launcher tiles"
+        },
+        "theme_color": {
+          "type": "string",
+          "description": "Browser address bar and title bar theme color",
+          "default": "#0f172a"
+        },
+        "background_color": {
+          "type": "string",
+          "description": "Splash screen background color",
+          "default": "#0f172a"
+        },
+        "display": {
+          "type": "string",
+          "enum": ["standalone", "fullscreen", "minimal-ui", "browser"],
+          "description": "PWA window display mode (standalone hides browser chrome)",
+          "default": "standalone"
+        },
+        "start_url": {
+          "type": "string",
+          "description": "Entry point URL when launched from app icon",
+          "default": "/"
+        }
+      }
+    },
+    "build": {
+      "type": "object",
+      "description": "Production compilation and asset distribution options",
+      "properties": {
+        "out_dir": {
+          "type": "string",
+          "description": "Output directory for build artifacts (default: \"dist\")",
+          "default": "dist"
+        },
+        "public_dir": {
+          "type": "string",
+          "description": "Static assets source directory (default: \"public\")",
+          "default": "public"
+        },
+        "minify": {
+          "type": "boolean",
+          "description": "Minify CSS and static templates in release mode",
+          "default": true
+        },
+        "fingerprint": {
+          "type": "boolean",
+          "description": "Append content hashes (styles.a1b2c3d4.css) for immutable caching",
+          "default": true
+        }
+      }
+    },
+    "dependencies": {
+      "type": "object",
+      "description": "Yav plugins, components, and feature packages"
+    },
+    "scripts": {
+      "type": "object",
+      "description": "Named project command shortcuts (e.g. dev, build, test)"
+    },
+    "assets": {
+      "type": "object",
+      "description": "Static assets and font resources",
+      "properties": {
+        "favicon": {
+          "type": "string",
+          "description": "Path to favicon file",
+          "default": "public/favicon.ico"
+        },
+        "fonts": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "External Google Fonts or local font stylesheet URLs"
+        },
+        "static_dirs": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Additional static directories copied to production dist"
+        }
+      }
+    }
+  }
+}
