@@ -2307,7 +2307,7 @@ checksum = "3ad82d2a33cdc9674dc7465672f271e096168fcdbe0f799d9e6db8c5892679dc"
 
 [[package]]
 name = "yav"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "tokio",
  "yav-build",
@@ -2321,7 +2321,7 @@ dependencies = [
 
 [[package]]
 name = "yav-build"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "flate2",
  "reqwest",
@@ -2335,7 +2335,7 @@ dependencies = [
 
 [[package]]
 name = "yav-cli"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "clap",
  "notify",
@@ -2355,18 +2355,18 @@ dependencies = [
 
 [[package]]
 name = "yav-core"
-version = "0.1.0"
+version = "0.1.1"
 
 [[package]]
 name = "yav-icons"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "yav-core",
 ]
 
 [[package]]
 name = "yav-macros"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2375,7 +2375,7 @@ dependencies = [
 
 [[package]]
 name = "yav-router"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde",
  "tracing",
@@ -2384,7 +2384,7 @@ dependencies = [
 
 [[package]]
 name = "yav-server"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "axum",
  "futures-util",
@@ -2405,7 +2405,7 @@ dependencies = [
 
 [[package]]
 name = "yav-ui"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "yav-core",
  "yav-icons",
