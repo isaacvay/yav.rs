@@ -114,6 +114,50 @@ pub fn with_context_map<R>(map: ContextMap, f: impl FnOnce() -> R) -> R {
     f()
 }
 
+/// A [`Future`](std::future::Future) adapter that restores a [`ContextMap`] on every `poll`,
+/// ensuring [`use_context`] works across `.await` points and multi-threaded executor steals.
+pub struct ContextFuture<Fut> {
+    context: ContextMap,
+    inner: std::pin::Pin<Box<Fut>>,
+}
+
+impl<Fut: std::future::Future> std::future::Future for ContextFuture<Fut> {
+    type Output = Fut::Output;
+
+    fn poll(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        let map = self.context.clone();
+        with_context_map(map, || self.inner.as_mut().poll(cx))
+    }
+}
+
+/// Wrap an asynchronous future so that `value` is available via [`use_context`] across `.await` points.
+pub fn provide_context_async<T, Fut>(value: T, fut: Fut) -> ContextFuture<Fut>
+where
+    T: Clone + Send + Sync + 'static,
+    Fut: std::future::Future,
+{
+    let mut map = current_context();
+    map.insert(value);
+    ContextFuture {
+        context: map,
+        inner: Box::pin(fut),
+    }
+}
+
+/// Wrap an asynchronous future so that the given [`ContextMap`] is active on every poll across `.await` points.
+pub fn with_context_map_async<Fut>(map: ContextMap, fut: Fut) -> ContextFuture<Fut>
+where
+    Fut: std::future::Future,
+{
+    ContextFuture {
+        context: map,
+        inner: Box::pin(fut),
+    }
+}
+
 /// Retrieve a value of type `T`, or return a fallback default if absent.
 pub fn use_context_or_default<T: Clone + Default + 'static>() -> T {
     use_context::<T>().unwrap_or_default()

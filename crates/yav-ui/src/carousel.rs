@@ -311,6 +311,46 @@ pub fn carousel() -> Carousel {
     Carousel::new()
 }
 
+/// Properties for constructing a [`Carousel`] via `rsx!`.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct CarouselProps {
+    pub id: Option<String>,
+    pub slides: Vec<CarouselSlide>,
+    pub autoplay: bool,
+    pub interval_ms: Option<u32>,
+    pub show_arrows: Option<bool>,
+    pub show_dots: Option<bool>,
+    pub aspect_ratio: Option<String>,
+    pub class: String,
+}
+
+/// Functional component adapter for [`Carousel`], enabling `<Carousel slides={...} autoplay=true />` in `rsx!`.
+#[allow(non_snake_case)]
+pub fn Carousel(props: CarouselProps) -> Node {
+    let mut c = Carousel::new()
+        .slides(props.slides)
+        .autoplay(props.autoplay);
+    if let Some(id) = props.id {
+        c = c.id(id);
+    }
+    if let Some(ms) = props.interval_ms {
+        c = c.interval_ms(ms);
+    }
+    if let Some(arrows) = props.show_arrows {
+        c = c.show_arrows(arrows);
+    }
+    if let Some(dots) = props.show_dots {
+        c = c.show_dots(dots);
+    }
+    if let Some(ar) = props.aspect_ratio {
+        c = c.aspect_ratio(ar);
+    }
+    if !props.class.is_empty() {
+        c = c.class(props.class);
+    }
+    c.render()
+}
+
 /// Helper script that drives carousel navigation, indicators, and autoplay.
 pub fn carousel_script() -> Node {
     let script = r#"<script>

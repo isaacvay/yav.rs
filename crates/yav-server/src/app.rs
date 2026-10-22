@@ -30,8 +30,13 @@ impl BoxedHandler {
         R: IntoResponse + 'static,
     {
         BoxedHandler(Arc::new(move |req| {
-            let fut = f(req);
-            Box::pin(async move { fut.await.into_response() })
+            let ctx_map = crate::action::RouteContext::from_request(&req).ssr_context_map();
+            let fut = yav_core::with_context_map(ctx_map.clone(), || f(req));
+            Box::pin(async move {
+                yav_core::with_context_map_async(ctx_map, fut)
+                    .await
+                    .into_response()
+            })
         }))
     }
 
@@ -42,9 +47,14 @@ impl BoxedHandler {
         Fut: Future<Output = R> + Send + 'static,
         R: IntoResponse + 'static,
     {
-        BoxedHandler(Arc::new(move |_req| {
-            let fut = f();
-            Box::pin(async move { fut.await.into_response() })
+        BoxedHandler(Arc::new(move |req| {
+            let ctx_map = crate::action::RouteContext::from_request(&req).ssr_context_map();
+            let fut = yav_core::with_context_map(ctx_map.clone(), &f);
+            Box::pin(async move {
+                yav_core::with_context_map_async(ctx_map, fut)
+                    .await
+                    .into_response()
+            })
         }))
     }
 
@@ -57,8 +67,13 @@ impl BoxedHandler {
     {
         BoxedHandler(Arc::new(move |req| {
             let ctx = crate::action::RouteContext::from_request(&req);
-            let fut = f(ctx);
-            Box::pin(async move { fut.await.into_response() })
+            let ctx_map = ctx.ssr_context_map();
+            let fut = yav_core::with_context_map(ctx_map.clone(), || f(ctx));
+            Box::pin(async move {
+                yav_core::with_context_map_async(ctx_map, fut)
+                    .await
+                    .into_response()
+            })
         }))
     }
 

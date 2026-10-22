@@ -44,10 +44,13 @@ pub use card::{
     card, card_content, card_description, card_footer, card_header, card_title, stat_card, Card,
     CardContent, CardContentProps, CardDescription, CardDescriptionProps, CardFooter,
     CardFooterProps, CardHeader, CardHeaderProps, CardProps, CardTitle, CardTitleProps, StatCard,
-    StatTrend, StatTrendDirection,
+    StatCardProps, StatTrend, StatTrendDirection,
 };
-pub use carousel::{carousel, carousel_script, Carousel, CarouselSlide};
-pub use command::{command_menu, command_palette_script, CommandGroup, CommandItem, CommandMenu};
+pub use carousel::{carousel, carousel_script, Carousel, CarouselProps, CarouselSlide};
+pub use command::{
+    command_menu, command_palette_script, CommandGroup, CommandGroupProps, CommandItem,
+    CommandItemProps, CommandMenu, CommandMenuProps,
+};
 pub use data::{
     avatar, pagination, table, table_cell, table_header_cell, table_row, Avatar, AvatarProps,
     AvatarStatus, CellAlign, Pagination, PaginationProps, Table, TableCell, TableProps, TableRow,
@@ -81,8 +84,9 @@ pub use layout::{
 };
 pub use meta::{MetaTags, MetaTagsProps, Metadata, TwitterCard};
 pub use motion::{
-    motion, motion_group, motion_script, scroll_progress_bar, Motion, MotionGroup, MotionState,
-    ScrollProgressBar, Transition,
+    motion, motion_group, motion_script, scroll_progress_bar, Motion, MotionGroup,
+    MotionGroupProps, MotionProps, MotionState, ScrollProgressBar, ScrollProgressBarProps,
+    Transition,
 };
 pub use navigation::{
     breadcrumbs, client_router_script, link, nav_item, navbar, navbar_brand, sidebar, sidebar_item,
@@ -94,7 +98,7 @@ pub use overlay::{
     dialog, drawer, dropdown, dropdown_item, Dialog, DialogProps, Drawer, DrawerPlacement,
     DrawerProps, Dropdown, DropdownItem, DropdownProps,
 };
-pub use stepper::{stepper, StepItem, StepStatus, Stepper};
+pub use stepper::{stepper, StepItem, StepStatus, Stepper, StepperProps};
 pub use theme::{
     anti_fouc_script, reduced_motion_style, theme_toggle, BorderRadii, ColorPalette, SpacingScale,
     Theme, ThemeToggle, ThemeToggleProps, Typography,
@@ -133,11 +137,12 @@ pub mod prelude {
     pub use crate::card::{
         card, stat_card, Card, CardContent, CardContentProps, CardDescription,
         CardDescriptionProps, CardFooter, CardFooterProps, CardHeader, CardHeaderProps, CardProps,
-        CardTitle, CardTitleProps, StatCard, StatTrend, StatTrendDirection,
+        CardTitle, CardTitleProps, StatCard, StatCardProps, StatTrend, StatTrendDirection,
     };
-    pub use crate::carousel::{carousel, carousel_script, Carousel, CarouselSlide};
+    pub use crate::carousel::{carousel, carousel_script, Carousel, CarouselProps, CarouselSlide};
     pub use crate::command::{
-        command_menu, command_palette_script, CommandGroup, CommandItem, CommandMenu,
+        command_menu, command_palette_script, CommandGroup, CommandGroupProps, CommandItem,
+        CommandItemProps, CommandMenu, CommandMenuProps,
     };
     pub use crate::data::{
         avatar, pagination, table, Avatar, AvatarProps, Pagination, PaginationProps, Table,
@@ -173,8 +178,9 @@ pub mod prelude {
     };
     pub use crate::meta::{MetaTags, MetaTagsProps, Metadata, TwitterCard};
     pub use crate::motion::{
-        motion, motion_group, motion_script, scroll_progress_bar, Motion, MotionGroup, MotionState,
-        ScrollProgressBar, Transition,
+        motion, motion_group, motion_script, scroll_progress_bar, Motion, MotionGroup,
+        MotionGroupProps, MotionProps, MotionState, ScrollProgressBar, ScrollProgressBarProps,
+        Transition,
     };
     pub use crate::navigation::{
         breadcrumbs, client_router_script, link, navbar, sidebar, tabs, Breadcrumbs,
@@ -185,7 +191,7 @@ pub mod prelude {
         dialog, drawer, dropdown, Dialog, DialogProps, Drawer, DrawerPlacement, DrawerProps,
         Dropdown, DropdownItem, DropdownProps,
     };
-    pub use crate::stepper::{stepper, StepItem, StepStatus, Stepper};
+    pub use crate::stepper::{stepper, StepItem, StepStatus, Stepper, StepperProps};
     pub use crate::theme::{
         anti_fouc_script, reduced_motion_style, theme_toggle, Theme, ThemeToggle, ThemeToggleProps,
     };

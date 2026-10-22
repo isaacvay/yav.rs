@@ -526,6 +526,90 @@ pub fn scroll_progress_bar() -> ScrollProgressBar {
     ScrollProgressBar::new()
 }
 
+/// Properties for constructing a [`Motion`] component via `rsx!`.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct MotionProps {
+    pub tag: Option<String>,
+    pub initial: Option<MotionState>,
+    pub animate: Option<MotionState>,
+    pub while_hover: Option<MotionState>,
+    pub while_tap: Option<MotionState>,
+    pub transition: Option<Transition>,
+    pub in_view: bool,
+    pub once: Option<bool>,
+    pub class: String,
+    pub children: Vec<Node>,
+}
+
+/// Functional component adapter for [`Motion`], enabling `<Motion in_view=true>...</Motion>` in `rsx!`.
+#[allow(non_snake_case)]
+pub fn Motion(props: MotionProps) -> Node {
+    let mut m = Motion::new()
+        .in_view(props.in_view)
+        .once(props.once.unwrap_or(true))
+        .children(props.children);
+    if let Some(tag) = props.tag {
+        m = m.tag(tag);
+    }
+    if let Some(init) = props.initial {
+        m = m.initial(init);
+    }
+    if let Some(anim) = props.animate {
+        m = m.animate(anim);
+    }
+    if let Some(hover) = props.while_hover {
+        m = m.while_hover(hover);
+    }
+    if let Some(tap) = props.while_tap {
+        m = m.while_tap(tap);
+    }
+    if let Some(trans) = props.transition {
+        m = m.transition(trans);
+    }
+    if !props.class.is_empty() {
+        m = m.class(props.class);
+    }
+    m.render()
+}
+
+/// Properties for constructing a [`MotionGroup`] via `rsx!`.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct MotionGroupProps {
+    pub stagger_ms: Option<u32>,
+    pub in_view: Option<bool>,
+    pub class: String,
+    pub children: Vec<Node>,
+}
+
+/// Functional component adapter for [`MotionGroup`], enabling `<MotionGroup stagger_ms={80}>...</MotionGroup>` in `rsx!`.
+#[allow(non_snake_case)]
+pub fn MotionGroup(props: MotionGroupProps) -> Node {
+    let mut g = MotionGroup::new()
+        .stagger_ms(props.stagger_ms.unwrap_or(60))
+        .in_view(props.in_view.unwrap_or(true))
+        .children(props.children);
+    if !props.class.is_empty() {
+        g = g.class(props.class);
+    }
+    g.render()
+}
+
+/// Properties for constructing a [`ScrollProgressBar`] via `rsx!`.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ScrollProgressBarProps {
+    pub class: String,
+}
+
+/// Functional component adapter for [`ScrollProgressBar`], enabling `<ScrollProgressBar />` in `rsx!`.
+#[allow(non_snake_case)]
+pub fn ScrollProgressBar(props: ScrollProgressBarProps) -> Node {
+    let mut bar = ScrollProgressBar::new();
+    if !props.class.is_empty() {
+        bar = bar.class(props.class);
+    }
+    bar.render()
+}
+
 /// Returns the zero-dependency client script powering Yav Motion's spring physics,
 /// scroll reveal, gesture animations, and scroll progress tracking.
 pub fn motion_script() -> Node {

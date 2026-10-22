@@ -96,7 +96,34 @@ pub fn auto_routes_impl(input: AutoRoutesInput) -> syn::Result<TokenStream> {
     for (url_pattern, rel_path_str) in route_entries {
         let file_path = routes_dir.join(&rel_path_str);
         if let Ok(content) = fs::read_to_string(&file_path) {
-            if let Ok(syntax_file) = syn::parse_file(&content) {
+            if rel_path_str.ends_with(".yav") || rel_path_str.ends_with(".rsx") {
+                let abs_str = file_path
+                    .canonicalize()
+                    .unwrap_or_else(|_| file_path.clone())
+                    .to_string_lossy()
+                    .to_string();
+                let (fm, template) = crate::file_component::split_frontmatter(&content);
+                let fm_tokens: TokenStream = if let Some(fm_str) = fm {
+                    let transpiled = crate::file_component::transpile_frontmatter(fm_str);
+                    transpiled.parse().unwrap_or_default()
+                } else {
+                    TokenStream::new()
+                };
+                if let Ok(tpl_tokens) = template.parse::<TokenStream>() {
+                    if let Ok(rsx_node) = crate::parser::parse_rsx(tpl_tokens) {
+                        let generated = crate::codegen::generate(rsx_node);
+                        let pattern = url_pattern.as_str();
+                        registrations.push(quote! {
+                            .get(#pattern, |_req: ::axum::extract::Request| async move {
+                                const _: &[u8] = include_bytes!(#abs_str);
+                                #fm_tokens
+                                let __node = #generated;
+                                ::yav::server::HtmlPage::new(__node)
+                            })
+                        });
+                    }
+                }
+            } else if let Ok(syntax_file) = syn::parse_file(&content) {
                 let mod_path_segments: Vec<syn::Ident> = rel_path_str
                     .trim_end_matches(".rs")
                     .split('/')

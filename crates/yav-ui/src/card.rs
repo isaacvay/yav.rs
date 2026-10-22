@@ -812,6 +812,34 @@ pub fn stat_card(title: impl Into<String>, value: impl Into<String>) -> StatCard
     StatCard::new(title, value)
 }
 
+/// Properties for constructing a [`StatCard`] via `rsx!`.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct StatCardProps {
+    pub title: String,
+    pub value: String,
+    pub description: Option<String>,
+    pub trend: Option<StatTrend>,
+    pub icon: Option<Node>,
+    pub class: String,
+}
+
+/// Functional component adapter for [`StatCard`], enabling `<StatCard title="Revenue" value="$12k" />` in `rsx!`.
+#[allow(non_snake_case)]
+pub fn StatCard(props: StatCardProps) -> Node {
+    let mut s = StatCard::new(props.title, props.value);
+    if let Some(d) = props.description {
+        s = s.description(d);
+    }
+    s.trend = props.trend;
+    if let Some(i) = props.icon {
+        s = s.icon(i);
+    }
+    if !props.class.is_empty() {
+        s = s.class(props.class);
+    }
+    s.render()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

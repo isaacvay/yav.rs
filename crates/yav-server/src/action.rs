@@ -174,6 +174,27 @@ impl RouteContext {
             self.t_with(key_prefix, &all_vars)
         }
     }
+
+    /// Construct a [`ContextMap`](yav_core::ContextMap) populated with this [`RouteContext`],
+    /// its [`I18n`](yav_core::I18n) catalog, and [`Session`](crate::session::Session) if present.
+    pub fn ssr_context_map(&self) -> yav_core::ContextMap {
+        let mut map = yav_core::current_context();
+        map.insert(self.clone());
+        if let Some(ref i18n) = self.i18n {
+            map.insert(i18n.clone());
+            map.insert((**i18n).clone());
+        }
+        if let Some(ref session) = self.session {
+            map.insert(session.clone());
+        }
+        map
+    }
+
+    /// Execute a closure with this route context, its [`I18n`](yav_core::I18n), and [`Session`](crate::session::Session)
+    /// injected into the SSR [`use_context`](yav_core::use_context) scope.
+    pub fn with_ssr_context<R>(&self, f: impl FnOnce() -> R) -> R {
+        yav_core::with_context_map(self.ssr_context_map(), f)
+    }
 }
 
 /// A pinned, boxed async function for route data loading.
@@ -215,8 +236,8 @@ impl<T: Send + Sync + 'static> Loader<T> {
     where
         T: Clone + Send + Sync + 'static,
     {
-        let data = self.load(ctx).await?;
-        Ok(provide_context(data, render))
+        let data = self.load(ctx.clone()).await?;
+        Ok(ctx.with_ssr_context(|| provide_context(data, render)))
     }
 }
 

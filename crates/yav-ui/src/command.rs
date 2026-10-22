@@ -377,6 +377,104 @@ pub fn command_menu() -> CommandMenu {
     CommandMenu::new()
 }
 
+/// Properties for constructing a [`CommandItem`] via `rsx!`.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct CommandItemProps {
+    pub id: Option<String>,
+    pub label: String,
+    pub icon: Option<Node>,
+    pub shortcut: Option<String>,
+    pub href: Option<String>,
+    pub action: Option<String>,
+    pub disabled: bool,
+    pub class: String,
+}
+
+/// Functional component adapter for [`CommandItem`], enabling `<CommandItem label="Search" shortcut="⌘K" />` in `rsx!`.
+#[allow(non_snake_case)]
+pub fn CommandItem(props: CommandItemProps) -> Node {
+    let mut item = CommandItem::new(props.label).disabled(props.disabled);
+    if let Some(id) = props.id {
+        item = item.id(id);
+    }
+    if let Some(icon) = props.icon {
+        item = item.icon(icon);
+    }
+    if let Some(sc) = props.shortcut {
+        item = item.shortcut(sc);
+    }
+    if let Some(href) = props.href {
+        item = item.href(href);
+    }
+    if let Some(act) = props.action {
+        item = item.action(act);
+    }
+    if !props.class.is_empty() {
+        item = item.class(props.class);
+    }
+    item.render()
+}
+
+/// Properties for constructing a [`CommandGroup`] via `rsx!`.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct CommandGroupProps {
+    pub title: Option<String>,
+    pub items: Vec<CommandItem>,
+    pub class: String,
+    pub children: Vec<Node>,
+}
+
+/// Functional component adapter for [`CommandGroup`], enabling `<CommandGroup title="Actions">...</CommandGroup>` in `rsx!`.
+#[allow(non_snake_case)]
+pub fn CommandGroup(props: CommandGroupProps) -> Node {
+    let group = CommandGroup {
+        title: props.title,
+        items: props.items,
+        class: props.class,
+    };
+    let mut node = group.render();
+    if !props.children.is_empty() {
+        if let Node::Element(ref mut el) = node {
+            if let Some(Node::Element(ref mut list_el)) = el.children.last_mut() {
+                for child in props.children {
+                    list_el.children.push(child);
+                }
+            }
+        }
+    }
+    node
+}
+
+/// Properties for constructing a [`CommandMenu`] via `rsx!`.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct CommandMenuProps {
+    pub id: Option<String>,
+    pub placeholder: Option<String>,
+    pub shortcut: Option<String>,
+    pub groups: Vec<CommandGroup>,
+    pub open: bool,
+    pub class: String,
+}
+
+/// Functional component adapter for [`CommandMenu`], enabling `<CommandMenu placeholder="Type a command..." />` in `rsx!`.
+#[allow(non_snake_case)]
+pub fn CommandMenu(props: CommandMenuProps) -> Node {
+    let mut m = CommandMenu::new().groups(props.groups).open(props.open);
+    if let Some(id) = props.id {
+        m = m.id(id);
+    }
+    if let Some(ph) = props.placeholder {
+        m = m.placeholder(ph);
+    }
+    if let Some(sc) = props.shortcut {
+        m = m.shortcut(sc);
+    }
+    if !props.class.is_empty() {
+        m = m.class(props.class);
+    }
+    m.render()
+}
+
 /// Helper script that binds `Cmd+K` / `Ctrl+K`, search filtering, and keyboard navigation to command palettes.
 pub fn command_palette_script() -> Node {
     let script = r#"<script>

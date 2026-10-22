@@ -272,6 +272,31 @@ pub fn stepper() -> Stepper {
     Stepper::new()
 }
 
+/// Properties for constructing a [`Stepper`] via `rsx!`.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct StepperProps {
+    pub steps: Vec<StepItem>,
+    pub orientation: Option<Orientation>,
+    pub current_step: Option<usize>,
+    pub class: String,
+}
+
+/// Functional component adapter for [`Stepper`], enabling `<Stepper steps={...} current_step={1} />` in `rsx!`.
+#[allow(non_snake_case)]
+pub fn Stepper(props: StepperProps) -> Node {
+    let mut s = Stepper::new().steps(props.steps);
+    if let Some(Orientation::Vertical) = props.orientation {
+        s = s.vertical();
+    }
+    if let Some(curr) = props.current_step {
+        s = s.current_step(curr);
+    }
+    if !props.class.is_empty() {
+        s = s.class(props.class);
+    }
+    s.render()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
