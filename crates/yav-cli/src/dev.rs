@@ -25,6 +25,7 @@ pub fn classify_changes<'a>(paths: impl IntoIterator<Item = &'a Path>) -> Change
     for path in paths {
         let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("");
         let file_name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+        let in_public = path.components().any(|c| c.as_os_str() == "public");
 
         if ext == "rs"
             || ext == "yavml"
@@ -36,9 +37,9 @@ pub fn classify_changes<'a>(paths: impl IntoIterator<Item = &'a Path>) -> Change
             || file_name == "yav.toml"
         {
             set.rust_changed = true;
-        } else if ext == "css" {
+        } else if ext == "css" && (!in_public || file_name == "input.css") {
             set.css_changed = true;
-        } else if path.components().any(|c| c.as_os_str() == "public") {
+        } else if in_public && ext != "css" {
             set.public_changed = true;
         }
     }
@@ -242,8 +243,8 @@ pub async fn run(cli_port: u16) -> Result<(), Box<dyn std::error::Error>> {
         tokio::select! {
             _ = tokio::signal::ctrl_c() => {
                 println!("\n\x1b[33m🛑 Shutting down dev server...\x1b[0m");
-                if let Some(mut child) = server_child.take() {
-                    let _ = child.kill().await;
+                if let Some(child) = server_child.take() {
+                    kill_server_child(child).await;
                 }
                 break;
             }
@@ -384,5 +385,11 @@ mod tests {
 
         let c4 = classify_changes([toml_path]);
         assert!(c4.rust_changed);
+
+        // Generated Tailwind output in public/styles.css must NOT trigger css_changed loop
+        let generated_css = Path::new("public/styles.css");
+        let c5 = classify_changes([generated_css]);
+        assert!(!c5.css_changed);
+        assert!(!c5.public_changed);
     }
 }

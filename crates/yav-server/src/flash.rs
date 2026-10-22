@@ -5,7 +5,7 @@
 
 use crate::session::{
     compute_hmac_sha256, constant_time_eq, is_production_mode, SessionSecret,
-    DEFAULT_DEV_SESSION_SECRET,
+    DEFAULT_DEV_SESSION_SECRET, MAX_COOKIE_VALUE_LEN,
 };
 use axum::{
     extract::FromRequestParts,
@@ -13,10 +13,22 @@ use axum::{
     response::Response,
 };
 use serde::{Deserialize, Serialize};
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, Mutex,
+};
 
 /// Cookie name used to store serialized flash messages.
 pub const FLASH_COOKIE_NAME: &str = "_yav_flash";
+
+/// Default Time-To-Live for signed flash cookies (5 minutes) to prevent replay attacks.
+pub const DEFAULT_FLASH_TTL_SECS: u64 = 300;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SignedFlashEnvelope {
+    messages: Vec<FlashMessage>,
+    expires_at: u64,
+}
 
 /// Severity level for flash messages.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -67,6 +79,7 @@ fn resolve_flash_secret(custom: Option<&[u8]>) -> Vec<u8> {
 pub struct Flash {
     incoming: Vec<FlashMessage>,
     outgoing: Arc<Mutex<Vec<FlashMessage>>>,
+    committed: Arc<AtomicBool>,
     secret: Option<Vec<u8>>,
 }
 
@@ -81,6 +94,7 @@ impl Flash {
         Self {
             incoming: Vec::new(),
             outgoing: Arc::new(Mutex::new(Vec::new())),
+            committed: Arc::new(AtomicBool::new(false)),
             secret: Some(secret.into()),
         }
     }
@@ -88,6 +102,22 @@ impl Flash {
     /// Messages delivered by the previous request.
     pub fn incoming(&self) -> &[FlashMessage] {
         &self.incoming
+    }
+
+    /// Check if this flash manager has outgoing messages or incoming messages that need to be cleared.
+    pub fn should_commit(&self) -> bool {
+        let has_outgoing = self.outgoing.lock().map(|l| !l.is_empty()).unwrap_or(false);
+        has_outgoing || !self.incoming.is_empty()
+    }
+
+    /// Check whether this flash manager's cookie header has already been attached to a response.
+    pub fn is_committed(&self) -> bool {
+        self.committed.load(Ordering::Relaxed)
+    }
+
+    /// Mark this flash manager as committed.
+    pub fn mark_committed(&self) {
+        self.committed.store(true, Ordering::Relaxed);
     }
 
     /// Add a success flash message for the next request.
@@ -127,11 +157,26 @@ impl Flash {
         let outgoing = self.outgoing.lock().ok()?.clone();
         let secure_flag = if is_production_mode() { "; Secure" } else { "" };
         if !outgoing.is_empty() {
-            if let Ok(json) = serde_json::to_string(&outgoing) {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            let envelope = SignedFlashEnvelope {
+                messages: outgoing,
+                expires_at: now + DEFAULT_FLASH_TTL_SECS,
+            };
+            if let Ok(json) = serde_json::to_string(&envelope) {
                 let encoded = urlencoding_simple(&json);
+                if encoded.len() > MAX_COOKIE_VALUE_LEN {
+                    tracing::warn!(
+                        "Flash cookie payload exceeds {} bytes limit; dropping flash cookie",
+                        MAX_COOKIE_VALUE_LEN
+                    );
+                    return None;
+                }
                 let signature = compute_hmac_sha256(encoded.as_bytes(), secret);
                 let val = format!(
-                    "{FLASH_COOKIE_NAME}={encoded}.{signature}; Path=/; HttpOnly; SameSite=Lax{secure_flag}"
+                    "{FLASH_COOKIE_NAME}={encoded}.{signature}; Path=/; Max-Age={DEFAULT_FLASH_TTL_SECS}; HttpOnly; SameSite=Lax{secure_flag}"
                 );
                 return HeaderValue::from_str(&val).ok();
             }
@@ -147,8 +192,11 @@ impl Flash {
 
     /// Attach this flash manager's `Set-Cookie` header to an existing Axum [`Response`].
     pub fn attach_to_response(&self, mut response: Response) -> Response {
-        if let Some(cookie) = self.cookie_header() {
-            response.headers_mut().append(header::SET_COOKIE, cookie);
+        if !self.is_committed() {
+            if let Some(cookie) = self.cookie_header() {
+                response.headers_mut().append(header::SET_COOKIE, cookie);
+                self.mark_committed();
+            }
         }
         response
     }
@@ -186,6 +234,61 @@ fn urldecoding_simple(s: &str) -> Option<String> {
     String::from_utf8(bytes).ok()
 }
 
+/// Extract a signed [`Flash`] container from a `Cookie` header.
+pub fn extract_flash_from_cookie(cookie_hdr: Option<&HeaderValue>, secret: &[u8]) -> Flash {
+    let mut incoming = Vec::new();
+    if let Some(cookie_hdr) = cookie_hdr {
+        if let Ok(cookie_str) = cookie_hdr.to_str() {
+            for pair in cookie_str.split(';') {
+                let mut parts_iter = pair.trim().splitn(2, '=');
+                if let (Some(name), Some(val)) = (parts_iter.next(), parts_iter.next()) {
+                    if name == FLASH_COOKIE_NAME {
+                        if let Some((payload, sig)) = val.rsplit_once('.') {
+                            if payload.len() > MAX_COOKIE_VALUE_LEN {
+                                tracing::warn!("Rejected oversized flash cookie");
+                                continue;
+                            }
+                            let expected_sig = compute_hmac_sha256(payload.as_bytes(), secret);
+                            if constant_time_eq(sig.as_bytes(), expected_sig.as_bytes()) {
+                                if let Some(decoded) = urldecoding_simple(payload) {
+                                    if let Ok(env) =
+                                        serde_json::from_str::<SignedFlashEnvelope>(&decoded)
+                                    {
+                                        let now = std::time::SystemTime::now()
+                                            .duration_since(std::time::UNIX_EPOCH)
+                                            .map(|d| d.as_secs())
+                                            .unwrap_or(0);
+                                        if now <= env.expires_at {
+                                            incoming = env.messages;
+                                        } else {
+                                            tracing::debug!("Rejected expired flash cookie");
+                                        }
+                                    } else if let Ok(msgs) =
+                                        serde_json::from_str::<Vec<FlashMessage>>(&decoded)
+                                    {
+                                        incoming = msgs;
+                                    }
+                                }
+                            } else {
+                                tracing::warn!(
+                                    "Rejected flash cookie with invalid HMAC-SHA256 signature"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Flash {
+        incoming,
+        outgoing: Arc::new(Mutex::new(Vec::new())),
+        committed: Arc::new(AtomicBool::new(false)),
+        secret: Some(secret.to_vec()),
+    }
+}
+
 impl<S> FromRequestParts<S> for Flash
 where
     S: Send + Sync,
@@ -193,43 +296,16 @@ where
     type Rejection = (StatusCode, &'static str);
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
+        if let Some(existing) = parts.extensions.get::<Flash>() {
+            return Ok(existing.clone());
+        }
+
         let ext_secret = parts.extensions.get::<SessionSecret>().map(|s| s.0.clone());
         let secret = resolve_flash_secret(ext_secret.as_deref());
 
-        let mut incoming = Vec::new();
-        if let Some(cookie_hdr) = parts.headers.get(header::COOKIE) {
-            if let Ok(cookie_str) = cookie_hdr.to_str() {
-                for pair in cookie_str.split(';') {
-                    let mut parts_iter = pair.trim().splitn(2, '=');
-                    if let (Some(name), Some(val)) = (parts_iter.next(), parts_iter.next()) {
-                        if name == FLASH_COOKIE_NAME {
-                            if let Some((payload, sig)) = val.rsplit_once('.') {
-                                let expected_sig = compute_hmac_sha256(payload.as_bytes(), &secret);
-                                if constant_time_eq(sig.as_bytes(), expected_sig.as_bytes()) {
-                                    if let Some(decoded) = urldecoding_simple(payload) {
-                                        if let Ok(msgs) =
-                                            serde_json::from_str::<Vec<FlashMessage>>(&decoded)
-                                        {
-                                            incoming = msgs;
-                                        }
-                                    }
-                                } else {
-                                    tracing::warn!(
-                                        "Rejected flash cookie with invalid HMAC-SHA256 signature"
-                                    );
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        Ok(Flash {
-            incoming,
-            outgoing: Arc::new(Mutex::new(Vec::new())),
-            secret: Some(secret),
-        })
+        let flash = extract_flash_from_cookie(parts.headers.get(header::COOKIE), &secret);
+        parts.extensions.insert(flash.clone());
+        Ok(flash)
     }
 }
 

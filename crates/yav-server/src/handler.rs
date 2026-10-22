@@ -297,7 +297,8 @@ impl HtmlPage {
 
         let mut head = meta.render_head_tags();
         for css in &meta.css {
-            if let Some(escaped) = yav_core::escape_url(css) {
+            let resolved = resolve_asset_path(css);
+            if let Some(escaped) = yav_core::escape_url(&resolved) {
                 head.push_str(&format!(r#"<link rel="stylesheet" href="{escaped}" />"#));
             }
         }
@@ -305,7 +306,8 @@ impl HtmlPage {
 
         let mut end = String::new();
         for script in &meta.scripts {
-            if let Some(escaped) = yav_core::escape_url(script) {
+            let resolved = resolve_asset_path(script);
+            if let Some(escaped) = yav_core::escape_url(&resolved) {
                 end.push_str(&format!(r#"<script src="{escaped}"></script>"#));
             }
         }

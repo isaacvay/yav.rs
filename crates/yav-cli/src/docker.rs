@@ -40,6 +40,7 @@ pub fn run(force: bool) -> Result<(), Box<dyn std::error::Error>> {
       - HOST=0.0.0.0
       - PORT=3000
       - RUST_LOG=info
+      - SESSION_SECRET=${{SESSION_SECRET:-change_me_in_production_at_least_32_bytes_long}}
     restart: unless-stopped
 "#
     );
@@ -113,12 +114,16 @@ COPY Cargo.toml Cargo.lock* package.yavml* ./
 # Build application in release mode and compile Tailwind CSS if present
 ENV CARGO_INCREMENTAL=0
 RUN cargo build --release && \
-    if [ -f "public/input.css" ]; then \
+    TW_IN=""; \
+    if [ -f "src/styles/app.css" ]; then TW_IN="src/styles/app.css"; \
+    elif [ -f "public/input.css" ]; then TW_IN="public/input.css"; fi; \
+    if [ -n "$TW_IN" ]; then \
+      mkdir -p public && \
       ARCH=$(uname -m); \
       if [ "$ARCH" = "aarch64" ]; then TW_ARCH="linux-arm64-musl"; else TW_ARCH="linux-x64-musl"; fi; \
       curl -sSL "https://github.com/tailwindlabs/tailwindcss/releases/download/v3.4.17/tailwindcss-${{TW_ARCH}}" -o /tmp/tailwindcss && \
       chmod +x /tmp/tailwindcss && \
-      /tmp/tailwindcss -i public/input.css -o public/styles.css --content "./src/**/*.{{rs,yav,rsx,html}},./public/**/*.html" --minify; \
+      /tmp/tailwindcss -i "$TW_IN" -o public/styles.css --content "./src/**/*.{{rs,yavml,yav,rsx,html}},./public/**/*.html" --minify; \
     fi
 
 # 2. Runtime Stage

@@ -31,9 +31,13 @@ use std::{
 };
 
 /// A thread-safe container storing heterogeneous context values keyed by type.
+///
+/// Internally uses an `Arc`-wrapped map with Copy-on-Write (`Arc::make_mut`) so that
+/// cloning a `ContextMap` on every `poll()` of a [`ContextFuture`] or across nested
+/// `provide_context` scopes is an $O(1)$ atomic reference count increment.
 #[derive(Clone, Default)]
 pub struct ContextMap {
-    data: HashMap<TypeId, Arc<dyn Any + Send + Sync>>,
+    data: Arc<HashMap<TypeId, Arc<dyn Any + Send + Sync>>>,
 }
 
 impl ContextMap {
@@ -44,7 +48,7 @@ impl ContextMap {
 
     /// Insert or overwrite a context value of type `T`.
     pub fn insert<T: Send + Sync + 'static>(&mut self, value: T) {
-        self.data.insert(TypeId::of::<T>(), Arc::new(value));
+        Arc::make_mut(&mut self.data).insert(TypeId::of::<T>(), Arc::new(value));
     }
 
     /// Retrieve a cloned instance of type `T` if present.

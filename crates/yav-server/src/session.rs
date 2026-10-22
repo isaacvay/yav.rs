@@ -22,6 +22,15 @@ use sha2::Sha256;
 /// Standard cookie name for Yav sessions.
 pub const SESSION_COOKIE_NAME: &str = "_yav_session";
 
+/// Maximum allowed encoded cookie payload length in bytes (4 KB per RFC 6265).
+pub const MAX_COOKIE_VALUE_LEN: usize = 4096;
+
+fn sanitize_cookie_attr(s: &str) -> String {
+    s.chars()
+        .filter(|&c| c != ';' && c != '\r' && c != '\n' && c != '\0')
+        .collect()
+}
+
 /// Thread-safe user session container.
 #[derive(Debug, Clone)]
 pub struct Session {
@@ -120,18 +129,18 @@ impl Session {
         let is_prod = config.secure.unwrap_or_else(is_production_mode);
         let secure_flag = if is_prod { "; Secure" } else { "" };
         let http_only = if config.http_only { "; HttpOnly" } else { "" };
-        let path_attr = format!("; Path={}", config.path);
+        let cookie_name = sanitize_cookie_attr(&config.cookie_name);
+        let path_attr = format!("; Path={}", sanitize_cookie_attr(&config.path));
         let samesite_attr = format!("; SameSite={}", config.same_site);
         let domain_attr = config
             .domain
             .as_ref()
-            .map(|d| format!("; Domain={d}"))
+            .map(|d| format!("; Domain={}", sanitize_cookie_attr(d)))
             .unwrap_or_default();
 
         if map.is_empty() {
             let val = format!(
-                "{}={path_attr}; Max-Age=0{http_only}{samesite_attr}{secure_flag}{domain_attr}",
-                config.cookie_name
+                "{cookie_name}={path_attr}; Max-Age=0{http_only}{samesite_attr}{secure_flag}{domain_attr}",
             );
             return HeaderValue::from_str(&val).ok();
         }
@@ -159,10 +168,17 @@ impl Session {
 
         let json = serde_json::to_string(&map).ok()?;
         let encoded_payload = hex_encode(json.as_bytes());
+        if encoded_payload.len() > MAX_COOKIE_VALUE_LEN {
+            tracing::warn!(
+                "Session cookie payload ({} bytes) exceeds {} bytes limit; refusing to emit oversized cookie",
+                encoded_payload.len(),
+                MAX_COOKIE_VALUE_LEN
+            );
+            return None;
+        }
         let signature = compute_hmac_sha256(encoded_payload.as_bytes(), secret);
         let cookie_val = format!(
-            "{}={encoded_payload}.{signature}{path_attr}{http_only}{samesite_attr}{secure_flag}{domain_attr}{max_age_attr}",
-            config.cookie_name
+            "{cookie_name}={encoded_payload}.{signature}{path_attr}{http_only}{samesite_attr}{secure_flag}{domain_attr}{max_age_attr}",
         );
         HeaderValue::from_str(&cookie_val).ok()
     }
@@ -409,6 +425,10 @@ pub fn extract_session_from_cookie(
                     if name == config.cookie_name {
                         // Extract payload.signature
                         if let Some((payload, sig)) = val.split_once('.') {
+                            if payload.len() > MAX_COOKIE_VALUE_LEN {
+                                tracing::warn!("Rejected oversized session cookie payload");
+                                continue;
+                            }
                             let expected_sig = compute_hmac_sha256(payload.as_bytes(), secret);
                             if constant_time_eq(sig.as_bytes(), expected_sig.as_bytes()) {
                                 if let Some(bytes) = hex_decode(payload) {
@@ -497,11 +517,27 @@ pub async fn session_middleware(
         s
     };
 
+    let flash = if let Some(existing) = req.extensions().get::<crate::flash::Flash>() {
+        existing.clone()
+    } else {
+        let cookie_hdr = req.headers().get(header::COOKIE);
+        let f = crate::flash::extract_flash_from_cookie(cookie_hdr, secret.as_bytes());
+        req.extensions_mut().insert(f.clone());
+        f
+    };
+
     let mut response = next.run(req).await;
 
     if session.is_modified() {
         if let Some(cookie) = session.cookie_header_with_config(secret.as_bytes(), &config) {
             response.headers_mut().append(header::SET_COOKIE, cookie);
+        }
+    }
+
+    if flash.should_commit() && !flash.is_committed() {
+        if let Some(cookie) = flash.cookie_header_with_secret(secret.as_bytes()) {
+            response.headers_mut().append(header::SET_COOKIE, cookie);
+            flash.mark_committed();
         }
     }
 
@@ -754,5 +790,31 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(body_bytes, "user_999");
+    }
+
+    #[test]
+    fn test_cookie_attribute_sanitization_and_size_limit() {
+        let config = SessionConfig::new()
+            .cookie_name("sid; EvilAttr=1\r\n")
+            .path("/app; HttpOnly=false")
+            .domain("example.com; injected=true");
+
+        let session = Session::new();
+        session.set("k", "v");
+        let secret = b"sanitization_test_secret_32_byte";
+        let header = session
+            .cookie_header_with_config(secret, &config)
+            .expect("header");
+        let val = header.to_str().unwrap();
+        assert!(val.starts_with("sid EvilAttr=1="));
+        assert!(val.contains("Path=/app HttpOnly=false"));
+        assert!(val.contains("Domain=example.com injected=true"));
+
+        // Oversized payload (> 4096 hex chars) should return None
+        let huge_session = Session::new();
+        huge_session.set("big", "a".repeat(3000));
+        assert!(huge_session
+            .cookie_header_with_config(secret, &config)
+            .is_none());
     }
 }

@@ -65,20 +65,22 @@ impl MotionState {
     pub fn to_style(&self) -> String {
         let mut parts = Vec::new();
 
-        if let Some(op) = self.opacity {
+        if let Some(op) = self.opacity.filter(|v| v.is_finite()) {
             parts.push(format!("opacity: {op};"));
         }
 
         let mut transforms = Vec::new();
-        if self.x.is_some() || self.y.is_some() {
-            let x = self.x.unwrap_or(0.0);
-            let y = self.y.unwrap_or(0.0);
+        let valid_x = self.x.filter(|v| v.is_finite());
+        let valid_y = self.y.filter(|v| v.is_finite());
+        if valid_x.is_some() || valid_y.is_some() {
+            let x = valid_x.unwrap_or(0.0);
+            let y = valid_y.unwrap_or(0.0);
             transforms.push(format!("translate3d({x}px, {y}px, 0)"));
         }
-        if let Some(s) = self.scale {
+        if let Some(s) = self.scale.filter(|v| v.is_finite()) {
             transforms.push(format!("scale({s})"));
         }
-        if let Some(r) = self.rotate {
+        if let Some(r) = self.rotate.filter(|v| v.is_finite()) {
             transforms.push(format!("rotate({r}deg)"));
         }
 
@@ -86,7 +88,7 @@ impl MotionState {
             parts.push(format!("transform: {};", transforms.join(" ")));
         }
 
-        if let Some(b) = self.blur {
+        if let Some(b) = self.blur.filter(|v| v.is_finite()) {
             parts.push(format!("filter: blur({b}px);"));
         }
 
@@ -96,22 +98,22 @@ impl MotionState {
     /// Convert state to JSON string for client-side runtime hydration.
     pub fn to_json(&self) -> String {
         let mut fields = Vec::new();
-        if let Some(op) = self.opacity {
+        if let Some(op) = self.opacity.filter(|v| v.is_finite()) {
             fields.push(format!("\"opacity\":{op}"));
         }
-        if let Some(x) = self.x {
+        if let Some(x) = self.x.filter(|v| v.is_finite()) {
             fields.push(format!("\"x\":{x}"));
         }
-        if let Some(y) = self.y {
+        if let Some(y) = self.y.filter(|v| v.is_finite()) {
             fields.push(format!("\"y\":{y}"));
         }
-        if let Some(s) = self.scale {
+        if let Some(s) = self.scale.filter(|v| v.is_finite()) {
             fields.push(format!("\"scale\":{s}"));
         }
-        if let Some(r) = self.rotate {
+        if let Some(r) = self.rotate.filter(|v| v.is_finite()) {
             fields.push(format!("\"rotate\":{r}"));
         }
-        if let Some(b) = self.blur {
+        if let Some(b) = self.blur.filter(|v| v.is_finite()) {
             fields.push(format!("\"blur\":{b}"));
         }
         format!("{{{}}}", fields.join(","))
@@ -199,9 +201,29 @@ impl Transition {
 
     /// Convert transition to JSON string.
     pub fn to_json(&self) -> String {
+        let stiffness = if self.stiffness.is_finite() {
+            self.stiffness
+        } else {
+            260.0
+        };
+        let damping = if self.damping.is_finite() {
+            self.damping
+        } else {
+            20.0
+        };
+        let mass = if self.mass.is_finite() && self.mass > 0.0 {
+            self.mass
+        } else {
+            1.0
+        };
+        let escaped_ease = self
+            .ease
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"")
+            .replace(['\n', '\r'], " ");
         format!(
             "{{\"is_spring\":{},\"stiffness\":{},\"damping\":{},\"mass\":{},\"duration_ms\":{},\"delay_ms\":{},\"ease\":\"{}\"}}",
-            self.is_spring, self.stiffness, self.damping, self.mass, self.duration_ms, self.delay_ms, self.ease
+            self.is_spring, stiffness, damping, mass, self.duration_ms, self.delay_ms, escaped_ease
         )
     }
 }
@@ -613,128 +635,142 @@ pub fn ScrollProgressBar(props: ScrollProgressBarProps) -> Node {
 /// Returns the zero-dependency client script powering Yav Motion's spring physics,
 /// scroll reveal, gesture animations, and scroll progress tracking.
 pub fn motion_script() -> Node {
-    let script = r#"<script>
-(function() {
-  function initYavMotion() {
-    // 1. Scroll Progress Bars
+    let script = r#"(function() {
+  if (window.__YAV_MOTION_INSTALLED__) return;
+  window.__YAV_MOTION_INSTALLED__ = true;
+
+  const prefersReducedMotion = () =>
+    window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  function animateTo(el, target, transition) {
+    if (!target) return;
+    const trans = transition || {};
+    const duration = prefersReducedMotion() ? 0 : (trans.duration_ms || 400);
+    const ease = trans.is_spring
+      ? 'cubic-bezier(0.175, 0.885, 0.32, 1.275)'
+      : (trans.ease || 'cubic-bezier(0.16, 1, 0.3, 1)');
+
+    const transforms = [];
+    if (target.x !== undefined || target.y !== undefined) {
+      transforms.push(`translate3d(${target.x || 0}px, ${target.y || 0}px, 0)`);
+    }
+    if (target.scale !== undefined) {
+      transforms.push(`scale(${target.scale})`);
+    }
+    if (target.rotate !== undefined) {
+      transforms.push(`rotate(${target.rotate}deg)`);
+    }
+
+    el.style.transition = duration > 0 ? `all ${duration}ms ${ease}` : 'none';
+    if (target.opacity !== undefined) {
+      el.style.opacity = target.opacity;
+    }
+    if (transforms.length > 0) {
+      el.style.transform = transforms.join(' ');
+    }
+    if (target.blur !== undefined) {
+      el.style.filter = `blur(${target.blur}px)`;
+    }
+  }
+
+  let scrollBound = false;
+  function updateProgress() {
     const progressBars = document.querySelectorAll('[data-scroll-progress]');
-    if (progressBars.length > 0) {
-      function updateProgress() {
-        const scrollTop = window.scrollY || document.documentElement.scrollTop;
-        const docHeight = document.documentElement.scrollHeight - window.innerHeight;
-        const progress = docHeight > 0 ? Math.min(Math.max(scrollTop / docHeight, 0), 1) : 0;
-        progressBars.forEach(bar => {
-          bar.style.transform = `scaleX(${progress})`;
-        });
-      }
-      window.addEventListener('scroll', updateProgress, { passive: true });
-      updateProgress();
-    }
-
-    // 2. Motion Elements Animation
-    function animateTo(el, target, transition) {
-      if (!target) return;
-      const trans = transition || {};
-      const duration = trans.duration_ms || 400;
-      const ease = trans.is_spring
-        ? 'cubic-bezier(0.175, 0.885, 0.32, 1.275)'
-        : (trans.ease || 'cubic-bezier(0.16, 1, 0.3, 1)');
-
-      const transforms = [];
-      if (target.x !== undefined || target.y !== undefined) {
-        transforms.push(`translate3d(${target.x || 0}px, ${target.y || 0}px, 0)`);
-      }
-      if (target.scale !== undefined) {
-        transforms.push(`scale(${target.scale})`);
-      }
-      if (target.rotate !== undefined) {
-        transforms.push(`rotate(${target.rotate}deg)`);
-      }
-
-      el.style.transition = `all ${duration}ms ${ease}`;
-      if (target.opacity !== undefined) {
-        el.style.opacity = target.opacity;
-      }
-      if (transforms.length > 0) {
-        el.style.transform = transforms.join(' ');
-      }
-      if (target.blur !== undefined) {
-        el.style.filter = `blur(${target.blur}px)`;
-      }
-    }
-
-    // 3. Staggered Groups & InView Observers
-    const observer = new IntersectionObserver((entries) => {
-      entries.forEach(entry => {
-        if (!entry.isIntersecting) return;
-        const target = entry.target;
-
-        if (target.hasAttribute('data-motion-group')) {
-          const stagger = parseInt(target.getAttribute('data-stagger') || '60', 10);
-          const items = target.querySelectorAll('[data-motion]');
-          items.forEach((item, idx) => {
-            const anim = JSON.parse(item.getAttribute('data-motion-animate') || '{}');
-            const trans = JSON.parse(item.getAttribute('data-motion-transition') || '{}');
-            setTimeout(() => {
-              animateTo(item, anim, trans);
-            }, idx * stagger);
-          });
-          observer.unobserve(target);
-        } else if (target.hasAttribute('data-motion')) {
-          const anim = JSON.parse(target.getAttribute('data-motion-animate') || '{}');
-          const trans = JSON.parse(target.getAttribute('data-motion-transition') || '{}');
-          const delay = trans.delay_ms || 0;
-          setTimeout(() => {
-            animateTo(target, anim, trans);
-          }, delay);
-
-          const once = target.getAttribute('data-motion-once') !== 'false';
-          if (once) observer.unobserve(target);
-        }
-      });
-    }, { threshold: 0.15 });
-
-    document.querySelectorAll('[data-motion-inview="true"]').forEach(el => {
-      observer.observe(el);
-    });
-
-    // Immediate animations (not requiring inView)
-    document.querySelectorAll('[data-motion]:not([data-motion-inview="true"])').forEach(el => {
-      const anim = JSON.parse(el.getAttribute('data-motion-animate') || '{}');
-      const trans = JSON.parse(el.getAttribute('data-motion-transition') || '{}');
-      const delay = trans.delay_ms || 0;
-      setTimeout(() => {
-        animateTo(el, anim, trans);
-      }, delay);
-    });
-
-    // 4. Gestures: whileHover & whileTap
-    document.querySelectorAll('[data-motion-hover], [data-motion-tap]').forEach(el => {
-      const hoverState = el.getAttribute('data-motion-hover') ? JSON.parse(el.getAttribute('data-motion-hover')) : null;
-      const tapState = el.getAttribute('data-motion-tap') ? JSON.parse(el.getAttribute('data-motion-tap')) : null;
-      const animState = el.getAttribute('data-motion-animate') ? JSON.parse(el.getAttribute('data-motion-animate')) : null;
-      const trans = JSON.parse(el.getAttribute('data-motion-transition') || '{}');
-
-      if (hoverState) {
-        el.addEventListener('mouseenter', () => animateTo(el, hoverState, trans));
-        el.addEventListener('mouseleave', () => animateTo(el, animState || { x: 0, y: 0, scale: 1, opacity: 1 }, trans));
-      }
-
-      if (tapState) {
-        el.addEventListener('mousedown', () => animateTo(el, tapState, { duration_ms: 100 }));
-        el.addEventListener('mouseup', () => animateTo(el, hoverState || animState || { scale: 1 }, trans));
-      }
+    if (progressBars.length === 0) return;
+    const scrollTop = window.scrollY || document.documentElement.scrollTop;
+    const docHeight = document.documentElement.scrollHeight - window.innerHeight;
+    const progress = docHeight > 0 ? Math.min(Math.max(scrollTop / docHeight, 0), 1) : 0;
+    progressBars.forEach(bar => {
+      bar.style.transform = `scaleX(${progress})`;
     });
   }
 
+  const observer = 'IntersectionObserver' in window ? new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      if (!entry.isIntersecting) return;
+      const target = entry.target;
+
+      if (target.hasAttribute('data-motion-group')) {
+        const stagger = prefersReducedMotion() ? 0 : parseInt(target.getAttribute('data-stagger') || '60', 10);
+        const items = target.querySelectorAll('[data-motion]');
+        items.forEach((item, idx) => {
+          try {
+            const anim = JSON.parse(item.getAttribute('data-motion-animate') || '{}');
+            const trans = JSON.parse(item.getAttribute('data-motion-transition') || '{}');
+            setTimeout(() => animateTo(item, anim, trans), idx * stagger);
+          } catch (_) {}
+        });
+        observer.unobserve(target);
+      } else if (target.hasAttribute('data-motion')) {
+        try {
+          const anim = JSON.parse(target.getAttribute('data-motion-animate') || '{}');
+          const trans = JSON.parse(target.getAttribute('data-motion-transition') || '{}');
+          const delay = prefersReducedMotion() ? 0 : (trans.delay_ms || 0);
+          setTimeout(() => animateTo(target, anim, trans), delay);
+        } catch (_) {}
+
+        const once = target.getAttribute('data-motion-once') !== 'false';
+        if (once) observer.unobserve(target);
+      }
+    });
+  }, { threshold: 0.15 }) : null;
+
+  function initYavMotion() {
+    if (!scrollBound && document.querySelector('[data-scroll-progress]')) {
+      scrollBound = true;
+      window.addEventListener('scroll', updateProgress, { passive: true });
+    }
+    updateProgress();
+
+    if (observer) {
+      document.querySelectorAll('[data-motion-inview="true"]').forEach(el => {
+        if (!el.__yav_inview_init) {
+          el.__yav_inview_init = true;
+          observer.observe(el);
+        }
+      });
+    }
+
+    document.querySelectorAll('[data-motion]:not([data-motion-inview="true"])').forEach(el => {
+      if (el.__yav_anim_init) return;
+      el.__yav_anim_init = true;
+      try {
+        const anim = JSON.parse(el.getAttribute('data-motion-animate') || '{}');
+        const trans = JSON.parse(el.getAttribute('data-motion-transition') || '{}');
+        const delay = prefersReducedMotion() ? 0 : (trans.delay_ms || 0);
+        setTimeout(() => animateTo(el, anim, trans), delay);
+      } catch (_) {}
+    });
+
+    document.querySelectorAll('[data-motion-hover], [data-motion-tap]').forEach(el => {
+      if (el.__yav_gesture_init) return;
+      el.__yav_gesture_init = true;
+      try {
+        const hoverState = el.getAttribute('data-motion-hover') ? JSON.parse(el.getAttribute('data-motion-hover')) : null;
+        const tapState = el.getAttribute('data-motion-tap') ? JSON.parse(el.getAttribute('data-motion-tap')) : null;
+        const animState = el.getAttribute('data-motion-animate') ? JSON.parse(el.getAttribute('data-motion-animate')) : null;
+        const trans = JSON.parse(el.getAttribute('data-motion-transition') || '{}');
+
+        if (hoverState) {
+          el.addEventListener('mouseenter', () => animateTo(el, hoverState, trans));
+          el.addEventListener('mouseleave', () => animateTo(el, animState || { x: 0, y: 0, scale: 1, opacity: 1 }, trans));
+        }
+        if (tapState) {
+          el.addEventListener('mousedown', () => animateTo(el, tapState, { duration_ms: 100 }));
+          el.addEventListener('mouseup', () => animateTo(el, hoverState || animState || { scale: 1 }, trans));
+        }
+      } catch (_) {}
+    });
+  }
+
+  window.addEventListener('yav:navigate', initYavMotion);
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', initYavMotion);
   } else {
     initYavMotion();
   }
-})();
-</script>"#;
-    Node::raw(script)
+})();"#;
+    Node::Element(Element::new("script").child(Node::raw(script)))
 }
 
 #[cfg(test)]

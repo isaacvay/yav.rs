@@ -44,8 +44,9 @@ impl StreamingHtml {
 }
 
 fn escape_template_tag(html: &str) -> String {
-    let lower = html.to_lowercase();
-    let needle = "</template>";
+    // Use to_ascii_lowercase() so UTF-8 byte lengths and char boundaries are 100% identical to `html`
+    let lower = html.to_ascii_lowercase();
+    let needle = "</template";
     if !lower.contains(needle) {
         return html.to_string();
     }

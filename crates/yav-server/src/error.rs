@@ -40,7 +40,12 @@ impl From<std::io::Error> for YavError {
 
 impl From<serde_json::Error> for YavError {
     fn from(err: serde_json::Error) -> Self {
-        YavError::BadRequest(err.to_string())
+        tracing::warn!(error = %err, "Failed to deserialize JSON request payload");
+        if crate::session::is_production_mode() {
+            YavError::BadRequest("Invalid JSON request payload.".to_string())
+        } else {
+            YavError::BadRequest(err.to_string())
+        }
     }
 }
 
@@ -138,7 +143,8 @@ body {
         code, escaped_title, escaped_message
     );
 
-    let doc_title = format!("{} — {}", code, escaped_title);
+    // `document_shell` already escapes `doc_title`, so pass raw `title` to avoid double escaping
+    let doc_title = format!("{} — {}", code, title);
     yav_core::document_shell(&doc_title, head_extra, &body, "")
 }
 
@@ -152,7 +158,8 @@ impl IntoResponse for YavError {
             ),
             YavError::Internal(msg) => {
                 tracing::error!(%msg, "Internal Server Error");
-                let display_msg = if cfg!(debug_assertions) {
+                let display_msg = if cfg!(debug_assertions) && !crate::session::is_production_mode()
+                {
                     msg.as_str()
                 } else {
                     "An internal server error occurred. Please try again later."

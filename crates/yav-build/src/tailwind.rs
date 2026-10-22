@@ -282,7 +282,12 @@ impl TailwindManager {
         let url = construct_download_url(&self.version, &platform);
         tracing::info!("Downloading Tailwind standalone CLI from {}", url);
 
-        let response = reqwest::get(&url).await?;
+        let client = reqwest::Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(15))
+            .timeout(std::time::Duration::from_secs(120))
+            .build()?;
+
+        let response = client.get(&url).send().await?;
         if !response.status().is_success() {
             return Err(TailwindError::DownloadFailed(format!(
                 "Failed to download Tailwind CLI from {url}: HTTP status {}",
@@ -290,13 +295,28 @@ impl TailwindManager {
             )));
         }
 
+        const MAX_BINARY_BYTES: u64 = 150 * 1024 * 1024;
         let total_size = response.content_length();
+        if let Some(len) = total_size {
+            if len > MAX_BINARY_BYTES {
+                return Err(TailwindError::DownloadFailed(format!(
+                    "Tailwind binary exceeds maximum allowed size ({len} bytes)"
+                )));
+            }
+        }
         let mut downloaded: u64 = 0;
-        let mut bytes = Vec::with_capacity(total_size.unwrap_or(45 * 1024 * 1024) as usize);
+        let mut bytes = Vec::with_capacity(
+            total_size.unwrap_or(45 * 1024 * 1024).min(MAX_BINARY_BYTES) as usize,
+        );
 
         let mut response = response;
         while let Some(chunk) = response.chunk().await? {
             downloaded += chunk.len() as u64;
+            if downloaded > MAX_BINARY_BYTES {
+                return Err(TailwindError::DownloadFailed(
+                    "Tailwind binary stream exceeded maximum allowed size (150 MB)".into(),
+                ));
+            }
             bytes.extend_from_slice(&chunk);
             on_progress(downloaded, total_size);
         }
@@ -323,7 +343,7 @@ impl TailwindManager {
             );
         }
 
-        let temp_dest = dest_path.with_extension("tmp");
+        let temp_dest = dest_path.with_extension(format!("tmp.{}", std::process::id()));
         tokio::fs::write(&temp_dest, &bytes).await?;
 
         #[cfg(unix)]
@@ -422,12 +442,19 @@ impl TailwindManager {
         output_css: impl AsRef<Path>,
         content_paths: &[impl AsRef<Path>],
     ) -> Result<tokio::process::Child, TailwindError> {
-        let bin_path = self.binary_path()?;
+        let mut bin_path = self.binary_path()?;
         if !bin_path.is_file() {
-            return Err(TailwindError::BinaryNotFound(format!(
-                "Tailwind binary not found at '{}'. Call ensure_binary() first.",
-                bin_path.display()
-            )));
+            let local_fallback = PathBuf::from(".yav/cache/tailwind")
+                .join(self.version.trim_start_matches('v'))
+                .join(self.binary_filename().unwrap_or_default());
+            if local_fallback.is_file() {
+                bin_path = local_fallback;
+            } else {
+                return Err(TailwindError::BinaryNotFound(format!(
+                    "Tailwind binary not found at '{}'. Call ensure_binary() first.",
+                    bin_path.display()
+                )));
+            }
         }
 
         let mut args = self.build_args(

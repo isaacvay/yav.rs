@@ -294,10 +294,15 @@ pub async fn etag_middleware(req: Request, next: Next) -> Response {
     {
         if let Some(ref req_etag) = if_none_match {
             if etag_matches(req_etag, existing_etag) {
+                let cc_val = response
+                    .headers()
+                    .get(header::CACHE_CONTROL)
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or(default_cache_control);
                 let mut not_modified = Response::builder()
                     .status(StatusCode::NOT_MODIFIED)
                     .header(header::ETAG, existing_etag)
-                    .header(header::CACHE_CONTROL, default_cache_control)
+                    .header(header::CACHE_CONTROL, cc_val)
                     .body(Body::empty())
                     .unwrap_or(response);
                 apply_default_security_headers(not_modified.headers_mut());

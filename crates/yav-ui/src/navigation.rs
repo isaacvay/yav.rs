@@ -157,12 +157,36 @@ pub fn client_router_script() -> Node {
 if (window.__YAV_ROUTER_INSTALLED__) return;
 window.__YAV_ROUTER_INSTALLED__ = true;
 const cache = new Map();
+const MAX_CACHE_ENTRIES = 50;
+
+function currentUrl() {
+  return window.location.pathname + window.location.search;
+}
+
+function isInternalUrl(href) {
+  if (!href || href.startsWith('#') || href.startsWith('//')) return false;
+  try {
+    const parsed = new URL(href, window.location.origin);
+    return parsed.origin === window.location.origin &&
+      (parsed.protocol === 'http:' || parsed.protocol === 'https:');
+  } catch {
+    return false;
+  }
+}
+
+function setCache(url, html) {
+  if (cache.size >= MAX_CACHE_ENTRIES && !cache.has(url)) {
+    const oldest = cache.keys().next().value;
+    if (oldest !== undefined) cache.delete(oldest);
+  }
+  cache.set(url, html);
+}
 
 function prefetch(url) {
-  if (cache.has(url) || url === window.location.pathname) return;
+  if (!isInternalUrl(url) || cache.has(url) || url === currentUrl()) return;
   fetch(url, { headers: { 'X-Yav-Prefetch': 'true' } })
     .then(r => r.ok ? r.text() : null)
-    .then(html => { if (html) cache.set(url, html); })
+    .then(html => { if (html) setCache(url, html); })
     .catch(() => {});
 }
 
@@ -170,7 +194,7 @@ const observer = 'IntersectionObserver' in window ? new IntersectionObserver((en
   entries.forEach(e => {
     if (e.isIntersecting) {
       const href = e.target.getAttribute('href');
-      if (href && !href.startsWith('http') && !href.startsWith('#')) prefetch(href);
+      if (isInternalUrl(href)) prefetch(href);
       observer.unobserve(e.target);
     }
   });
@@ -182,13 +206,17 @@ function scanLinks() {
 }
 
 async function navigate(url, push = true) {
+  if (!isInternalUrl(url)) {
+    window.location.href = url;
+    return;
+  }
   let html = cache.get(url);
   if (!html) {
     try {
       const res = await fetch(url);
       if (!res.ok) { window.location.href = url; return; }
       html = await res.text();
-      cache.set(url, html);
+      setCache(url, html);
     } catch {
       window.location.href = url;
       return;
@@ -222,12 +250,14 @@ async function navigate(url, push = true) {
   window.dispatchEvent(new CustomEvent('yav:navigate', { detail: { url } }));
 }
 
+document.addEventListener('submit', () => cache.clear());
+
 document.addEventListener('click', (e) => {
   const link = e.target.closest('a[data-yav-link="true"]');
   if (!link) return;
   const href = link.getAttribute('href');
-  if (!href || href.startsWith('http') || href.startsWith('#') || link.target === '_blank') return;
-  if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+  if (!isInternalUrl(href) || link.target === '_blank' || link.hasAttribute('download')) return;
+  if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
   e.preventDefault();
   navigate(href);
 });
@@ -236,11 +266,11 @@ document.addEventListener('mouseover', (e) => {
   const link = e.target.closest('a[data-yav-link="true"]');
   if (link) {
     const href = link.getAttribute('href');
-    if (href && !href.startsWith('http') && !href.startsWith('#')) prefetch(href);
+    if (isInternalUrl(href)) prefetch(href);
   }
 });
 
-window.addEventListener('popstate', () => navigate(window.location.pathname, false));
+window.addEventListener('popstate', () => navigate(currentUrl(), false));
 
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', scanLinks);

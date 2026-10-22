@@ -92,10 +92,14 @@ pub fn resolve_static_path(base_dir: &Path, request_path: &str) -> Result<PathBu
 
     let full_path = base_dir.join(rel_path);
 
-    // Canonicalization check if both base and target exist on disk
-    if let (Ok(canonical_base), Ok(canonical_full)) =
-        (base_dir.canonicalize(), full_path.canonicalize())
-    {
+    // Strict canonicalization check when target exists on disk (including symlinks)
+    if full_path.exists() || full_path.symlink_metadata().is_ok() {
+        let canonical_base = base_dir
+            .canonicalize()
+            .map_err(|_| YavError::BadRequest("Invalid static base directory".to_string()))?;
+        let canonical_full = full_path.canonicalize().map_err(|_| {
+            YavError::BadRequest("Invalid or unresolvable static file path".to_string())
+        })?;
         if !canonical_full.starts_with(&canonical_base) {
             return Err(YavError::BadRequest(
                 "Path traversal detected: target path escapes base directory".to_string(),
@@ -189,6 +193,16 @@ fn client_accepts_encoding(accept_encoding: &str, encoding: &str) -> bool {
     false
 }
 
+fn is_safe_precompressed_path(base_dir: &Path, candidate: &Path) -> bool {
+    if !candidate.is_file() {
+        return false;
+    }
+    match (base_dir.canonicalize(), candidate.canonicalize()) {
+        (Ok(cb), Ok(cf)) => cf.starts_with(&cb),
+        _ => false,
+    }
+}
+
 /// Asynchronously serve a static file with optional HTTP `Range` header and `Accept-Encoding` pre-compressed support.
 ///
 /// If the client accepts `br` or `gzip` encoding and a corresponding `.br` or `.gz` pre-compressed file exists,
@@ -218,9 +232,12 @@ pub async fn serve_static_file_with_encoding(
             gz_os.push(".gz");
             let gz_path = PathBuf::from(gz_os);
 
-            if client_accepts_encoding(enc, "br") && br_path.is_file() {
+            if client_accepts_encoding(enc, "br") && is_safe_precompressed_path(base_dir, &br_path)
+            {
                 (br_path, Some("br"))
-            } else if client_accepts_encoding(enc, "gzip") && gz_path.is_file() {
+            } else if client_accepts_encoding(enc, "gzip")
+                && is_safe_precompressed_path(base_dir, &gz_path)
+            {
                 (gz_path, Some("gzip"))
             } else {
                 (file_path.clone(), None)
@@ -242,9 +259,19 @@ pub async fn serve_static_file_with_encoding(
             _ => YavError::Internal(format!("Failed to stat static file: {}", err)),
         })?;
 
-    /// Maximum static asset size read into RAM at once (100 MB) to prevent OOM DoS.
-    const MAX_STATIC_READ_BYTES: usize = 100 * 1024 * 1024;
+    /// Threshold above which full-file responses are streamed in 64 KB chunks instead of read into RAM.
+    const STREAM_THRESHOLD_BYTES: usize = 1024 * 1024;
+    /// Maximum byte-range slice read into RAM at once (16 MB) to prevent OOM DoS.
+    const MAX_RANGE_READ_BYTES: usize = 16 * 1024 * 1024;
     let total_len = usize::try_from(meta.len()).unwrap_or(usize::MAX);
+
+    let mtime_secs = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let file_etag = format!("W/\"{:x}-{:x}\"", meta.len(), mtime_secs);
 
     let is_fingerprinted = file_path
         .file_name()
@@ -267,51 +294,66 @@ pub async fn serve_static_file_with_encoding(
 
     let range_bounds = range_header.and_then(|r| parse_range_header(r, total_len));
 
-    let (status, body_bytes, content_range_val) = if let Some((start, end)) = range_bounds {
-        use tokio::io::{AsyncReadExt, AsyncSeekExt};
-        let slice_len = (end - start + 1).min(MAX_STATIC_READ_BYTES);
-        let actual_end = start + slice_len - 1;
-        let mut file = tokio::fs::File::open(&actual_file)
-            .await
-            .map_err(|e| YavError::Internal(format!("Failed to open static file: {e}")))?;
-        file.seek(std::io::SeekFrom::Start(start as u64))
-            .await
-            .map_err(|e| YavError::Internal(format!("Failed to seek static file: {e}")))?;
-        let mut buf = vec![0u8; slice_len];
-        file.read_exact(&mut buf)
-            .await
-            .map_err(|e| YavError::Internal(format!("Failed to read static range: {e}")))?;
-        (
-            StatusCode::PARTIAL_CONTENT,
-            buf,
-            Some(format!("bytes {start}-{actual_end}/{total_len}")),
-        )
-    } else {
-        if total_len > MAX_STATIC_READ_BYTES {
-            return Err(YavError::BadRequest(
-                "Static file exceeds maximum in-memory read size; use HTTP Range requests"
-                    .to_string(),
-            ));
-        }
-        let contents = tokio::fs::read(&actual_file)
-            .await
-            .map_err(|err| match err.kind() {
-                std::io::ErrorKind::NotFound => YavError::NotFound,
-                std::io::ErrorKind::PermissionDenied => {
-                    YavError::Internal("Permission denied reading static file".to_string())
+    let (status, response_body, content_len, content_range_val) =
+        if let Some((start, end)) = range_bounds {
+            use tokio::io::{AsyncReadExt, AsyncSeekExt};
+            let slice_len = (end - start + 1).min(MAX_RANGE_READ_BYTES);
+            let actual_end = start + slice_len - 1;
+            let mut file = tokio::fs::File::open(&actual_file)
+                .await
+                .map_err(|e| YavError::Internal(format!("Failed to open static file: {e}")))?;
+            file.seek(std::io::SeekFrom::Start(start as u64))
+                .await
+                .map_err(|e| YavError::Internal(format!("Failed to seek static file: {e}")))?;
+            let mut buf = vec![0u8; slice_len];
+            file.read_exact(&mut buf)
+                .await
+                .map_err(|e| YavError::Internal(format!("Failed to read static range: {e}")))?;
+            let len = buf.len();
+            (
+                StatusCode::PARTIAL_CONTENT,
+                Body::from(buf),
+                len,
+                Some(format!("bytes {start}-{actual_end}/{total_len}")),
+            )
+        } else if total_len > STREAM_THRESHOLD_BYTES {
+            let file = tokio::fs::File::open(&actual_file)
+                .await
+                .map_err(|e| YavError::Internal(format!("Failed to open static file: {e}")))?;
+            let stream = futures_util::stream::unfold(file, |mut f| async move {
+                use tokio::io::AsyncReadExt;
+                let mut buf = vec![0u8; 64 * 1024];
+                match f.read(&mut buf).await {
+                    Ok(0) => None,
+                    Ok(n) => {
+                        buf.truncate(n);
+                        Some((Ok::<Vec<u8>, std::io::Error>(buf), f))
+                    }
+                    Err(e) => Some((Err(e), f)),
                 }
-                _ => YavError::Internal(format!("Failed to read static file: {}", err)),
-            })?;
-        (StatusCode::OK, contents, None)
-    };
+            });
+            (StatusCode::OK, Body::from_stream(stream), total_len, None)
+        } else {
+            let contents = tokio::fs::read(&actual_file)
+                .await
+                .map_err(|err| match err.kind() {
+                    std::io::ErrorKind::NotFound => YavError::NotFound,
+                    std::io::ErrorKind::PermissionDenied => {
+                        YavError::Internal("Permission denied reading static file".to_string())
+                    }
+                    _ => YavError::Internal(format!("Failed to read static file: {}", err)),
+                })?;
+            let len = contents.len();
+            (StatusCode::OK, Body::from(contents), len, None)
+        };
 
-    let content_len = body_bytes.len();
     let mut builder = Response::builder()
         .status(status)
         .header(header::CONTENT_TYPE, mime)
         .header(header::CONTENT_LENGTH, content_len.to_string())
         .header(header::ACCEPT_RANGES, "bytes")
         .header(header::CACHE_CONTROL, cache_control)
+        .header(header::ETAG, file_etag)
         .header(header::VARY, "Accept-Encoding");
 
     // Prevent stored XSS in user-supplied or static SVG files when navigated to directly
@@ -331,7 +373,7 @@ pub async fn serve_static_file_with_encoding(
     }
 
     let response = builder
-        .body(Body::from(body_bytes))
+        .body(response_body)
         .map_err(|e| YavError::Internal(format!("Failed to build response: {}", e)))?;
 
     Ok(response)

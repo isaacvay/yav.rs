@@ -46,7 +46,9 @@ impl SitemapEntry {
 
     /// Set priority between 0.0 and 1.0.
     pub fn priority(mut self, priority: f32) -> Self {
-        self.priority = Some(priority.clamp(0.0, 1.0));
+        if priority.is_finite() {
+            self.priority = Some(priority.clamp(0.0, 1.0));
+        }
         self
     }
 }
@@ -189,25 +191,27 @@ impl RobotsTxt {
 
     /// Render standard robots.txt text format.
     pub fn to_txt(&self) -> String {
+        let sanitize =
+            |s: &str| -> String { s.chars().filter(|&c| c != '\r' && c != '\n').collect() };
         let mut out = String::new();
 
         if self.user_agents.is_empty() {
             out.push_str("User-agent: *\nAllow: /\n\n");
         } else {
             for rule in &self.user_agents {
-                out.push_str(&format!("User-agent: {}\n", rule.user_agent));
+                out.push_str(&format!("User-agent: {}\n", sanitize(&rule.user_agent)));
                 for allow in &rule.allow {
-                    out.push_str(&format!("Allow: {}\n", allow));
+                    out.push_str(&format!("Allow: {}\n", sanitize(allow)));
                 }
                 for disallow in &rule.disallow {
-                    out.push_str(&format!("Disallow: {}\n", disallow));
+                    out.push_str(&format!("Disallow: {}\n", sanitize(disallow)));
                 }
                 out.push('\n');
             }
         }
 
         for sitemap in &self.sitemaps {
-            out.push_str(&format!("Sitemap: {}\n", sitemap));
+            out.push_str(&format!("Sitemap: {}\n", sanitize(sitemap)));
         }
 
         out

@@ -158,17 +158,8 @@ pub fn split_path_and_query(raw_url: &str) -> (&str, HashMap<String, String>) {
     }
 }
 
-/// Attempt to match a single [`Route`] against an HTTP method and request URL.
-///
-/// Returns `Some(RouteMatch)` on successful match, or `None` if the route does not match.
-pub fn match_route(route: &Route, method: &str, raw_url: &str) -> Option<RouteMatch> {
-    if !route.matches_method(method) {
-        return None;
-    }
-
-    let (path_part, query) = split_path_and_query(raw_url);
-    let req_segments: Vec<&str> = path_part.split('/').filter(|s| !s.is_empty()).collect();
-
+/// Match pre-split request path segments against a [`Route`]'s segments, returning extracted path parameters.
+fn match_route_segments(route: &Route, req_segments: &[&str]) -> Option<HashMap<String, String>> {
     let catch_all_pos = route.segments.iter().position(|s| s.is_catch_all());
 
     match catch_all_pos {
@@ -193,7 +184,7 @@ pub fn match_route(route: &Route, method: &str, raw_url: &str) -> Option<RouteMa
                 }
             }
 
-            Some(RouteMatch::new(route.clone(), params, query))
+            Some(params)
         }
         Some(pos) => {
             let prefix_len = pos;
@@ -253,9 +244,30 @@ pub fn match_route(route: &Route, method: &str, raw_url: &str) -> Option<RouteMa
                 .collect();
             params.insert(catch_all_name.to_string(), remaining_decoded.join("/"));
 
-            Some(RouteMatch::new(route.clone(), params, query))
+            Some(params)
         }
     }
+}
+
+/// Attempt to match a single [`Route`] against an HTTP method and request URL.
+///
+/// Returns `Some(RouteMatch)` on successful match, or `None` if the route does not match.
+pub fn match_route(route: &Route, method: &str, raw_url: &str) -> Option<RouteMatch> {
+    if !route.matches_method(method) {
+        return None;
+    }
+
+    let url_without_hash = raw_url.split('#').next().unwrap_or(raw_url);
+    let (path_part, query_str) = match url_without_hash.split_once('?') {
+        Some((p, q)) => (p, Some(q)),
+        None => (url_without_hash, None),
+    };
+
+    let req_segments: Vec<&str> = path_part.split('/').filter(|s| !s.is_empty()).collect();
+    let params = match_route_segments(route, &req_segments)?;
+    let query = query_str.map(parse_query_string).unwrap_or_default();
+
+    Some(RouteMatch::new(route.clone(), params, query))
 }
 
 /// Compare two routes by specificity priority.
@@ -306,27 +318,36 @@ pub fn compare_route_priority(a: &Route, b: &Route) -> std::cmp::Ordering {
 ///
 /// Evaluates each route against the incoming method and path, returning the match
 /// with the highest specificity score (`static > dynamic > catch-all`).
+///
+/// Pre-splits the incoming URL segments once and only parses the query string if a route matches.
 pub fn find_best_match(routes: &[Route], method: &str, raw_url: &str) -> Option<RouteMatch> {
-    let mut best_match: Option<RouteMatch> = None;
+    let url_without_hash = raw_url.split('#').next().unwrap_or(raw_url);
+    let (path_part, query_str) = match url_without_hash.split_once('?') {
+        Some((p, q)) => (p, Some(q)),
+        None => (url_without_hash, None),
+    };
+    let req_segments: Vec<&str> = path_part.split('/').filter(|s| !s.is_empty()).collect();
+
+    let mut best_match: Option<(&Route, HashMap<String, String>)> = None;
 
     for route in routes {
-        if let Some(m) = match_route(route, method, raw_url) {
-            match &best_match {
-                None => {
-                    best_match = Some(m);
-                }
-                Some(current_best) => {
-                    if compare_route_priority(&m.route, &current_best.route)
-                        == std::cmp::Ordering::Greater
-                    {
-                        best_match = Some(m);
-                    }
-                }
+        if !route.matches_method(method) {
+            continue;
+        }
+        if let Some((current_best_route, _)) = &best_match {
+            if compare_route_priority(route, current_best_route) != std::cmp::Ordering::Greater {
+                continue;
             }
+        }
+        if let Some(params) = match_route_segments(route, &req_segments) {
+            best_match = Some((route, params));
         }
     }
 
-    best_match
+    best_match.map(|(route, params)| {
+        let query = query_str.map(parse_query_string).unwrap_or_default();
+        RouteMatch::new(route.clone(), params, query)
+    })
 }
 
 #[cfg(test)]

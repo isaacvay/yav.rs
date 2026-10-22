@@ -180,6 +180,7 @@ RestartSec=5s
 Environment=YAV_ENV=production
 Environment=PORT=3000
 Environment=RUST_LOG=info
+Environment=SESSION_SECRET=change_me_in_production_at_least_32_bytes_long
 
 # Hardening
 NoNewPrivileges=true

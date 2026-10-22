@@ -865,12 +865,20 @@ impl YavApp {
         }
 
         // Apply SessionSecret and session_middleware so FromRequestParts and handlers automatically commit cookies
-        let secret = self.session_secret.unwrap_or_else(|| {
-            if crate::session::is_production_mode() {
-                panic!("FATAL: SESSION_SECRET must be explicitly set when running in production mode! Refusing to start with the default development secret.");
-            }
-            crate::session::SessionSecret::new(crate::session::DEFAULT_DEV_SESSION_SECRET)
-        });
+        let secret = self
+            .session_secret
+            .or_else(|| {
+                std::env::var("SESSION_SECRET")
+                    .or_else(|_| std::env::var("YAV_SECRET"))
+                    .ok()
+                    .map(|s| crate::session::SessionSecret::new(s.into_bytes()))
+            })
+            .unwrap_or_else(|| {
+                if crate::session::is_production_mode() {
+                    panic!("FATAL: SESSION_SECRET must be explicitly set when running in production mode! Refusing to start with the default development secret.");
+                }
+                crate::session::SessionSecret::new(crate::session::DEFAULT_DEV_SESSION_SECRET)
+            });
         router = router
             .layer(axum::middleware::from_fn(
                 crate::session::session_middleware,
@@ -1018,11 +1026,11 @@ async fn resolve_post_method_override(req: Request) -> (Method, Request) {
         .get(axum::http::header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
         .map(|ct| ct.starts_with("application/x-www-form-urlencoded"))
-        .unwrap_or(true);
+        .unwrap_or(false);
 
     if is_form {
         let (parts, body) = req.into_parts();
-        if let Ok(bytes) = axum::body::to_bytes(body, 64 * 1024).await {
+        if let Ok(bytes) = axum::body::to_bytes(body, 2 * 1024 * 1024).await {
             let mut detected = Method::POST;
             if let Ok(body_str) = std::str::from_utf8(&bytes) {
                 let form_map = yav_router::parse_query_string(body_str);

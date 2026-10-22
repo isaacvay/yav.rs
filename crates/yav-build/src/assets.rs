@@ -217,12 +217,21 @@ impl AssetPipeline {
             if path.is_dir() {
                 Self::walk_and_copy(&path, base_src, base_dst, fingerprint, manifest)?;
             } else if path.is_file() {
+                let ext = path
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .unwrap_or_default();
+                if ext.eq_ignore_ascii_case("gz") || ext.eq_ignore_ascii_case("br") {
+                    continue;
+                }
+
                 let rel = path
                     .strip_prefix(base_src)
                     .map_err(|e| AssetError::InvalidPath(e.to_string()))?;
                 let original_key = to_forward_slash(rel);
 
                 let data = std::fs::read(&path)?;
+                let gz_bytes = compress_bytes_if_text(&path, &data)?;
 
                 if fingerprint {
                     let hash = hash_bytes(&data);
@@ -240,7 +249,9 @@ impl AssetPipeline {
                         std::fs::create_dir_all(parent)?;
                     }
                     std::fs::write(&dest_fp_path, &data)?;
-                    let _ = precompress_asset(&dest_fp_path);
+                    if let Some(ref gz) = gz_bytes {
+                        let _ = std::fs::write(append_gz_ext(&dest_fp_path), gz);
+                    }
                     manifest.insert(original_key.clone(), key);
 
                     // Always also preserve the canonical un-fingerprinted file at destination
@@ -250,14 +261,18 @@ impl AssetPipeline {
                         std::fs::create_dir_all(parent)?;
                     }
                     std::fs::write(&canonical_path, &data)?;
-                    let _ = precompress_asset(&canonical_path);
+                    if let Some(ref gz) = gz_bytes {
+                        let _ = std::fs::write(append_gz_ext(&canonical_path), gz);
+                    }
                 } else {
                     let dest_full_path = base_dst.join(rel);
                     if let Some(parent) = dest_full_path.parent() {
                         std::fs::create_dir_all(parent)?;
                     }
                     std::fs::write(&dest_full_path, &data)?;
-                    let _ = precompress_asset(&dest_full_path);
+                    if let Some(ref gz) = gz_bytes {
+                        let _ = std::fs::write(append_gz_ext(&dest_full_path), gz);
+                    }
                     manifest.insert(original_key.clone(), original_key);
                 }
             }
@@ -267,8 +282,13 @@ impl AssetPipeline {
     }
 }
 
-/// Pre-compresses text files (.css, .js, .html, .svg, .json, .xml) generating a companion `.gz` file.
-pub fn precompress_asset(path: &Path) -> Result<Option<PathBuf>, AssetError> {
+fn append_gz_ext(path: &Path) -> PathBuf {
+    let mut gz_os = path.as_os_str().to_os_string();
+    gz_os.push(".gz");
+    PathBuf::from(gz_os)
+}
+
+fn compress_bytes_if_text(path: &Path, content: &[u8]) -> Result<Option<Vec<u8>>, AssetError> {
     use flate2::write::GzEncoder;
     use flate2::Compression;
     use std::io::Write;
@@ -280,20 +300,32 @@ pub fn precompress_asset(path: &Path) -> Result<Option<PathBuf>, AssetError> {
         .unwrap_or_default();
 
     if matches!(ext.as_str(), "css" | "js" | "html" | "svg" | "json" | "xml") {
-        let content = std::fs::read(path)?;
-        let mut gz_os = path.as_os_str().to_os_string();
-        gz_os.push(".gz");
-        let gz_path = PathBuf::from(gz_os);
-
         let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
-        encoder.write_all(&content).map_err(AssetError::Io)?;
+        encoder.write_all(content).map_err(AssetError::Io)?;
         let gz_data = encoder.finish().map_err(AssetError::Io)?;
-
-        std::fs::write(&gz_path, gz_data)?;
-        Ok(Some(gz_path))
+        Ok(Some(gz_data))
     } else {
         Ok(None)
     }
+}
+
+/// Pre-compresses text files (.css, .js, .html, .svg, .json, .xml) generating a companion `.gz` file.
+pub fn precompress_asset(path: &Path) -> Result<Option<PathBuf>, AssetError> {
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|s| s.to_ascii_lowercase())
+        .unwrap_or_default();
+
+    if matches!(ext.as_str(), "css" | "js" | "html" | "svg" | "json" | "xml") {
+        let content = std::fs::read(path)?;
+        if let Some(gz_data) = compress_bytes_if_text(path, &content)? {
+            let gz_path = append_gz_ext(path);
+            std::fs::write(&gz_path, gz_data)?;
+            return Ok(Some(gz_path));
+        }
+    }
+    Ok(None)
 }
 
 #[cfg(test)]

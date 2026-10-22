@@ -331,8 +331,10 @@ pub fn Popover(props: PopoverProps) -> Node {
 
 /// Client-side script handling Popover outside-click dismiss and Escape key.
 pub fn floating_script() -> Node {
-    let script = r#"<script>
-(function() {
+    let script = r#"(function() {
+  if (window.__YAV_POPOVER_INSTALLED__) return;
+  window.__YAV_POPOVER_INSTALLED__ = true;
+
   function initPopovers() {
     document.querySelectorAll('[data-popover-root]').forEach(root => {
       if (root.__popover_init) return;
@@ -351,32 +353,32 @@ pub fn floating_script() -> Node {
         }
       });
     });
-
-    document.addEventListener('click', (e) => {
-      document.querySelectorAll('[data-popover-panel]').forEach(panel => {
-        if (!panel.contains(e.target)) {
-          panel.classList.add('hidden');
-        }
-      });
-    });
-
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') {
-        document.querySelectorAll('[data-popover-panel]').forEach(panel => {
-          panel.classList.add('hidden');
-        });
-      }
-    });
   }
 
+  document.addEventListener('click', (e) => {
+    document.querySelectorAll('[data-popover-panel]').forEach(panel => {
+      if (!panel.contains(e.target)) {
+        panel.classList.add('hidden');
+      }
+    });
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      document.querySelectorAll('[data-popover-panel]').forEach(panel => {
+        panel.classList.add('hidden');
+      });
+    }
+  });
+
+  window.addEventListener('yav:navigate', initPopovers);
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', initPopovers);
   } else {
     initPopovers();
   }
-})();
-</script>"#;
-    Node::raw(script)
+})();"#;
+    Node::Element(Element::new("script").child(Node::raw(script)))
 }
 
 #[cfg(test)]
