@@ -9,6 +9,8 @@ homepage.workspace = true
 documentation.workspace = true
 repository.workspace = true
 rust-version.workspace = true
+keywords = ["build", "tailwind", "assets", "manifest", "yav"]
+categories = ["development-tools::build-utils", "web-programming"]
 
 [dependencies]
 flate2.workspace = true

@@ -9,6 +9,8 @@ homepage.workspace = true
 documentation.workspace = true
 repository.workspace = true
 rust-version.workspace = true
+keywords = ["router", "routing", "file-based-routing", "axum", "yav"]
+categories = ["web-programming::http-server", "network-programming"]
 
 [dependencies]
 yav-core.workspace = true

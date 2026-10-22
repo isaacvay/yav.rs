@@ -39,9 +39,9 @@ pub fn scaffold_project(target_dir: &Path, name: &str) -> Result<(), Box<dyn std
 
     // 2. Generate Cargo.toml
     let yav_dep = if target_dir.join("../crates/yav").exists() {
-        r#"yav = { path = "../crates/yav" }"#
+        r#"yav = { path = "../crates/yav" }"#.to_string()
     } else {
-        r#"yav = "0.1.1""#
+        format!(r#"yav = "{}""#, env!("CARGO_PKG_VERSION"))
     };
 
     let cargo_toml = format!(

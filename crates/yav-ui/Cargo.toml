@@ -9,6 +9,8 @@ homepage.workspace = true
 documentation.workspace = true
 repository.workspace = true
 rust-version.workspace = true
+keywords = ["ui", "components", "tailwind", "widgets", "yav"]
+categories = ["gui", "web-programming"]
 
 [dependencies]
 yav-core.workspace = true

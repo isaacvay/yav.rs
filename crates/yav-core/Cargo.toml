@@ -9,6 +9,8 @@ homepage.workspace = true
 documentation.workspace = true
 repository.workspace = true
 rust-version.workspace = true
+keywords = ["web", "framework", "ssr", "vdom", "html"]
+categories = ["web-programming", "template-engine"]
 
 [dependencies]
 

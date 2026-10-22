@@ -9,6 +9,8 @@ homepage.workspace = true
 documentation.workspace = true
 repository.workspace = true
 rust-version.workspace = true
+keywords = ["macros", "rsx", "jsx", "vdom", "yav"]
+categories = ["development-tools::procedural-macro-helpers", "web-programming"]
 
 [lib]
 proc-macro = true
