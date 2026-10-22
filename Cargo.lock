@@ -2340,6 +2340,7 @@ dependencies = [
  "clap",
  "notify",
  "notify-debouncer-mini",
+ "reqwest",
  "serde",
  "serde_json",
  "tokio",

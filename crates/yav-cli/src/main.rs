@@ -24,6 +24,7 @@ mod sitemap_cmd;
 mod spinner;
 mod tailwind_setup;
 mod test_cmd;
+mod update_cmd;
 
 use clap::{CommandFactory, Parser, Subcommand};
 
@@ -125,6 +126,9 @@ enum Commands {
         #[command(subcommand)]
         action: ext::ExtAction,
     },
+    /// Update the Yav CLI binary and current project dependencies (aliases: up, upgrade)
+    #[command(alias = "up", alias = "upgrade")]
+    Update(update_cmd::UpdateArgs),
 }
 
 #[tokio::main]
@@ -201,6 +205,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Commands::Ext { action } => {
             ext::run(&action)?;
+        }
+        Commands::Update(args) => {
+            update_cmd::run(&args).await?;
         }
     }
 
