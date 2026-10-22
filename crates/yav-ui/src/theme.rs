@@ -236,10 +236,10 @@ impl Theme {
 
 /// Returns an inline JavaScript `<script>` node that prevents Flash of Unstyled Content (FOUC).
 ///
-/// Reads `localStorage.getItem('theme')` or system `prefers-color-scheme: dark`
-/// and synchronously applies the `.dark` class to `<html>` before body render.
+/// Defaults to dark mode unless `localStorage.getItem('theme') === 'light'`.
+/// Synchronously applies or removes the `.dark` class on `<html>` before body render.
 pub fn anti_fouc_script() -> Node {
-    let script = r#"try{var s=localStorage.getItem('theme');if(s==='dark'||(!s&&window.matchMedia('(prefers-color-scheme:dark)').matches)){document.documentElement.classList.add('dark')}else{document.documentElement.classList.remove('dark')}}catch(e){}"#;
+    let script = r#"try{var s=localStorage.getItem('theme');if(s==='light'){document.documentElement.classList.remove('dark')}else{document.documentElement.classList.add('dark')}}catch(e){}"#;
     Node::Element(
         Element::new("script")
             .attr("data-yav-anti-fouc", "true")
