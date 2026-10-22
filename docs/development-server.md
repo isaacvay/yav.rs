@@ -38,7 +38,7 @@ Options:
 The development server automatically classifies changes:
 - **CSS-only changes**: Triggers the standalone Tailwind CLI and dispatches a lightweight `CssReload` event to swap stylesheet links in the DOM without losing JavaScript state or scroll position.
 - **Static assets**: Reloads the browser when files in `public/` are added or changed.
-- **Rust code changes**: Automatically triggers `cargo run`, tracks compilation progress, kills previous processes cleanly (including Windows process tree termination via `taskkill /PID {pid} /T /F`), and triggers DOM morphing.
+- **Rust code changes**: Automatically triggers `cargo run`, tracks compilation progress, kills previous processes cleanly across all platforms (Windows process tree termination via `taskkill`, Unix/Linux/macOS process group termination via POSIX signals), and triggers DOM morphing.
 
 ### 2. State-Preserving DOM Morphing
 

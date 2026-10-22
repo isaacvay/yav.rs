@@ -1,0 +1,22 @@
+# Ensure consistent cross-platform line endings across Windows, Linux, and macOS
+* text=auto eol=lf
+
+# Explicitly ensure source code, configs, templates, and scripts use LF
+*.rs text eol=lf
+*.toml text eol=lf
+*.yavml text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.sh text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.css text eol=lf
+*.html text eol=lf
+*.js text eol=lf
+*.yav text eol=lf
+*.rsx text eol=lf
+
+# Binary assets
+*.png binary
+*.ico binary
+*.svg text eol=lf

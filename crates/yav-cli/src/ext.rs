@@ -47,11 +47,20 @@ pub struct EditorTarget {
     pub extensions_dir: PathBuf,
 }
 
-/// Returns the user's home directory across OSes.
+/// Returns the user's home directory across OSes (Windows, Linux, macOS).
 pub fn get_home_dir() -> Option<PathBuf> {
-    std::env::var_os("USERPROFILE")
-        .or_else(|| std::env::var_os("HOME"))
-        .map(PathBuf::from)
+    #[cfg(windows)]
+    {
+        std::env::var_os("USERPROFILE")
+            .or_else(|| std::env::var_os("HOME"))
+            .map(PathBuf::from)
+    }
+    #[cfg(not(windows))]
+    {
+        std::env::var_os("HOME")
+            .or_else(|| std::env::var_os("USERPROFILE"))
+            .map(PathBuf::from)
+    }
 }
 
 /// Discovers detected or candidate editor extension directories.
@@ -93,6 +102,23 @@ pub fn get_editor_targets() -> Vec<EditorTarget> {
         targets.push(EditorTarget {
             name: "VSCodium",
             extensions_dir: codium_ext,
+        });
+    }
+
+    // 5. Windsurf (.windsurf/extensions or .codeium/windsurf/extensions)
+    let windsurf_ext = home.join(".windsurf").join("extensions");
+    let codeium_windsurf_ext = home.join(".codeium").join("windsurf").join("extensions");
+    if windsurf_ext.parent().map(|p| p.exists()).unwrap_or(false) || windsurf_ext.exists() {
+        targets.push(EditorTarget {
+            name: "Windsurf",
+            extensions_dir: windsurf_ext,
+        });
+    } else if codeium_windsurf_ext.parent().map(|p| p.exists()).unwrap_or(false)
+        || codeium_windsurf_ext.exists()
+    {
+        targets.push(EditorTarget {
+            name: "Windsurf",
+            extensions_dir: codeium_windsurf_ext,
         });
     }
 

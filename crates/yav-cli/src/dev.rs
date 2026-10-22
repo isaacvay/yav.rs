@@ -46,12 +46,18 @@ pub fn classify_changes<'a>(paths: impl IntoIterator<Item = &'a Path>) -> Change
 }
 
 fn spawn_server(port: u16, reload_port: u16) -> std::io::Result<tokio::process::Child> {
-    tokio::process::Command::new("cargo")
-        .arg("run")
+    let mut cmd = tokio::process::Command::new("cargo");
+    cmd.arg("run")
         .env("PORT", port.to_string())
         .env("YAV_DEV", "1")
-        .env("YAV_RELOAD_PORT", reload_port.to_string())
-        .spawn()
+        .env("YAV_RELOAD_PORT", reload_port.to_string());
+
+    #[cfg(unix)]
+    {
+        cmd.process_group(0);
+    }
+
+    cmd.spawn()
 }
 
 async fn kill_server_child(mut child: tokio::process::Child) {
@@ -66,6 +72,33 @@ async fn kill_server_child(mut child: tokio::process::Child) {
                 .await;
         }
     }
+
+    #[cfg(unix)]
+    {
+        if let Some(pid) = child.id() {
+            // On Unix (Linux and macOS), cargo run spawns target/debug/app as a child process.
+            // Sending signals to the negative PID (-pid) signals the entire process group,
+            // ensuring both cargo and the compiled server process terminate cleanly so port 3000 is released.
+            let _ = tokio::process::Command::new("kill")
+                .args(["-TERM", &format!("-{}", pid)])
+                .output()
+                .await;
+            let _ = tokio::process::Command::new("pkill")
+                .args(["-TERM", "-P", &pid.to_string()])
+                .output()
+                .await;
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            let _ = tokio::process::Command::new("kill")
+                .args(["-9", &format!("-{}", pid)])
+                .output()
+                .await;
+            let _ = tokio::process::Command::new("pkill")
+                .args(["-9", "-P", &pid.to_string()])
+                .output()
+                .await;
+        }
+    }
+
     let _ = child.kill().await;
 }
 

@@ -85,9 +85,10 @@ pub fn detect_platform(os: &str, arch: &str) -> Result<String, TailwindError> {
     let arch_name = match arch {
         "x86_64" | "x64" | "amd64" => "x64",
         "aarch64" | "arm64" => "arm64",
+        "arm" | "armv7" if os_name == "linux" => "armv7",
         other => {
             return Err(TailwindError::UnsupportedPlatform(format!(
-                "Unsupported CPU architecture: {other}"
+                "Unsupported CPU architecture '{other}' for {os_name}"
             )))
         }
     };
@@ -122,9 +123,13 @@ pub struct TailwindManager {
 impl TailwindManager {
     /// Returns the global cache directory for Tailwind standalone binaries (`~/.yav/cache/tailwind`).
     pub fn default_cache_dir() -> PathBuf {
-        std::env::var_os("USERPROFILE")
-            .or_else(|| std::env::var_os("HOME"))
-            .map(|h| PathBuf::from(h).join(".yav").join("cache").join("tailwind"))
+        #[cfg(windows)]
+        let home = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME"));
+
+        #[cfg(not(windows))]
+        let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"));
+
+        home.map(|h| PathBuf::from(h).join(".yav").join("cache").join("tailwind"))
             .unwrap_or_else(|| PathBuf::from(".yav/cache/tailwind"))
     }
 
@@ -182,6 +187,17 @@ impl TailwindManager {
     pub async fn ensure_binary(&self) -> Result<PathBuf, TailwindError> {
         let bin_path = self.binary_path()?;
         if bin_path.is_file() {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                if let Ok(metadata) = std::fs::metadata(&bin_path) {
+                    let mut perms = metadata.permissions();
+                    if perms.mode() & 0o111 == 0 {
+                        perms.set_mode(0o755);
+                        let _ = std::fs::set_permissions(&bin_path, perms);
+                    }
+                }
+            }
             tracing::debug!("Using cached Tailwind CLI binary at {}", bin_path.display());
             return Ok(bin_path);
         }
@@ -190,6 +206,17 @@ impl TailwindManager {
             .join(self.version.trim_start_matches('v'))
             .join(self.binary_filename().unwrap_or_default());
         if local_fallback.is_file() {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                if let Ok(metadata) = std::fs::metadata(&local_fallback) {
+                    let mut perms = metadata.permissions();
+                    if perms.mode() & 0o111 == 0 {
+                        perms.set_mode(0o755);
+                        let _ = std::fs::set_permissions(&local_fallback, perms);
+                    }
+                }
+            }
             tracing::debug!(
                 "Using local cached Tailwind CLI binary at {}",
                 local_fallback.display()
@@ -395,6 +422,7 @@ mod tests {
     fn test_detect_platform_known() {
         assert_eq!(detect_platform("linux", "x86_64").unwrap(), "linux-x64");
         assert_eq!(detect_platform("linux", "aarch64").unwrap(), "linux-arm64");
+        assert_eq!(detect_platform("linux", "armv7").unwrap(), "linux-armv7");
         assert_eq!(detect_platform("macos", "arm64").unwrap(), "macos-arm64");
         assert_eq!(detect_platform("darwin", "x86_64").unwrap(), "macos-x64");
         assert_eq!(

@@ -20,21 +20,37 @@ Official Visual Studio Code and Cursor extension for **Yav** (`.yav` & `.rsx` co
 
 ---
 
-## Local Installation / Testing
+## Installation
 
-### Method 1: Instant Symlink (Recommended for development)
+### Method 1: Automatic via Yav CLI (Recommended for all platforms: Linux, macOS, Windows)
 
-Link this folder directly into your VS Code extensions folder:
-
-#### On Windows (PowerShell as Admin or Developer Mode enabled):
-```powershell
-New-Item -ItemType SymbolicLink -Path "$HOME\.vscode\extensions\yav-vscode" -Target "d:\deep\yav.rs\editors\vscode"
+Simply run:
+```bash
+yav ext install
 ```
-*(Or for Cursor: `$HOME\.cursor\extensions\yav-vscode`)*
+This automatically discovers all installed editors (VS Code, Cursor, Windsurf, VSCodium, VS Code Insiders) and installs the extension in one click!
+
+To check extension status across editors:
+```bash
+yav ext status
+```
+
+---
+
+### Method 2: Instant Symlink (for extension developers)
+
+Link this folder directly into your extensions directory:
 
 #### On Linux / macOS:
 ```bash
-ln -s /path/to/yav.rs/editors/vscode ~/.vscode/extensions/yav-vscode
+ln -s "$(pwd)/editors/vscode" ~/.vscode/extensions/yav-vscode
+# Or for Cursor:
+ln -s "$(pwd)/editors/vscode" ~/.cursor/extensions/yav-vscode
+```
+
+#### On Windows (PowerShell):
+```powershell
+New-Item -ItemType SymbolicLink -Path "$HOME\.vscode\extensions\yav-vscode" -Target "$PWD\editors\vscode"
 ```
 
 Restart VS Code or reload the window (`Ctrl+Shift+P` -> `Developer: Reload Window`), and any `.yav` or `.rsx` file will immediately benefit from syntax highlighting and snippets!
