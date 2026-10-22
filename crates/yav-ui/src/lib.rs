@@ -49,30 +49,35 @@ pub use card::{
 pub use carousel::{carousel, carousel_script, Carousel, CarouselSlide};
 pub use command::{command_menu, command_palette_script, CommandGroup, CommandItem, CommandMenu};
 pub use data::{
-    avatar, pagination, table, table_cell, table_header_cell, table_row, Avatar, AvatarStatus,
-    CellAlign, Pagination, Table, TableCell, TableRow,
+    avatar, pagination, table, table_cell, table_header_cell, table_row, Avatar, AvatarProps,
+    AvatarStatus, CellAlign, Pagination, PaginationProps, Table, TableCell, TableProps, TableRow,
 };
 pub use feedback::{
     alert, badge, empty_state, loading, progress_bar, skeleton, Alert, AlertProps, AlertVariant,
-    Badge, BadgeProps, BadgeVariant, EmptyState, Loading, ProgressBar, Skeleton,
+    Badge, BadgeProps, BadgeVariant, EmptyState, EmptyStateProps, Loading, LoadingProps,
+    ProgressBar, ProgressBarProps, Skeleton, SkeletonProps,
 };
-pub use floating::{floating_script, popover, tooltip, Placement, Popover, Tooltip};
+pub use floating::{
+    floating_script, popover, tooltip, Placement, Popover, PopoverProps, Tooltip, TooltipProps,
+};
 pub use form::{
     form, form_group, label, CsrfToken, Form, FormField, FormFieldProps, FormGroup, FormGroupProps,
     FormMethod, FormProps, Label, LabelProps,
 };
 pub use image::{image, Image, ImageProps};
 pub use input::{
-    checkbox, input, radio, range_slider, select, slider, switch, textarea, Checkbox, Input, Radio,
-    RangeSlider, Select, SelectOption, Slider, Switch, Textarea,
+    checkbox, input, radio, range_slider, select, slider, switch, textarea, Checkbox,
+    CheckboxProps, Input, InputProps, Radio, RadioProps, RangeSlider, RangeSliderProps, Select,
+    SelectOption, SelectProps, Slider, SliderProps, Switch, SwitchProps, Textarea, TextareaProps,
 };
 pub use islands::{
     web_components_script, Accordion, AccordionItem, AccordionItemProps, AccordionProps,
     ClientDirective, Counter, CounterProps, Island, IslandProps,
 };
 pub use layout::{
-    container, grid, hstack, separator, stack, vstack, Container, ContainerSize, Grid, Orientation,
-    Separator, Stack, StackAlign, StackDirection, StackJustify,
+    container, grid, hstack, separator, stack, vstack, Container, ContainerProps, ContainerSize,
+    Grid, GridProps, Orientation, Separator, SeparatorProps, Stack, StackAlign, StackDirection,
+    StackJustify, StackProps,
 };
 pub use meta::{MetaTags, MetaTagsProps, Metadata, TwitterCard};
 pub use motion::{
@@ -81,12 +86,13 @@ pub use motion::{
 };
 pub use navigation::{
     breadcrumbs, client_router_script, link, nav_item, navbar, navbar_brand, sidebar, sidebar_item,
-    tabs, BreadcrumbItem, Breadcrumbs, Link, LinkProps, NavItem, Navbar, NavbarBrand, Sidebar,
-    SidebarItem, TabItem, Tabs,
+    tabs, BreadcrumbItem, Breadcrumbs, BreadcrumbsProps, Link, LinkProps, NavItem, Navbar,
+    NavbarBrand, NavbarProps, Sidebar, SidebarItem, SidebarItemProps, SidebarProps, TabItem, Tabs,
+    TabsProps,
 };
 pub use overlay::{
-    dialog, drawer, dropdown, dropdown_item, Dialog, Drawer, DrawerPlacement, Dropdown,
-    DropdownItem,
+    dialog, drawer, dropdown, dropdown_item, Dialog, DialogProps, Drawer, DrawerPlacement,
+    DrawerProps, Dropdown, DropdownItem, DropdownProps,
 };
 pub use stepper::{stepper, StepItem, StepStatus, Stepper};
 pub use theme::{
@@ -134,29 +140,36 @@ pub mod prelude {
         command_menu, command_palette_script, CommandGroup, CommandItem, CommandMenu,
     };
     pub use crate::data::{
-        avatar, pagination, table, Avatar, Pagination, Table, TableCell, TableRow,
+        avatar, pagination, table, Avatar, AvatarProps, Pagination, PaginationProps, Table,
+        TableCell, TableProps, TableRow,
     };
     pub use crate::feedback::{
         alert, badge, empty_state, loading, progress_bar, skeleton, Alert, AlertProps, Badge,
-        BadgeProps, EmptyState, Loading, ProgressBar, Skeleton,
+        BadgeProps, EmptyState, EmptyStateProps, Loading, LoadingProps, ProgressBar,
+        ProgressBarProps, Skeleton, SkeletonProps,
     };
-    pub use crate::floating::{floating_script, popover, tooltip, Placement, Popover, Tooltip};
+    pub use crate::floating::{
+        floating_script, popover, tooltip, Placement, Popover, PopoverProps, Tooltip, TooltipProps,
+    };
     pub use crate::form::{
         form, form_group, label, CsrfToken, Form, FormField, FormFieldProps, FormGroup,
         FormGroupProps, FormMethod, FormProps, Label, LabelProps,
     };
     pub use crate::image::{image, Image, ImageProps};
     pub use crate::input::{
-        checkbox, input, radio, range_slider, select, slider, switch, textarea, Checkbox, Input,
-        Radio, RangeSlider, Select, Slider, Switch, Textarea,
+        checkbox, input, radio, range_slider, select, slider, switch, textarea, Checkbox,
+        CheckboxProps, Input, InputProps, Radio, RadioProps, RangeSlider, RangeSliderProps, Select,
+        SelectOption, SelectProps, Slider, SliderProps, Switch, SwitchProps, Textarea,
+        TextareaProps,
     };
     pub use crate::islands::{
         web_components_script, Accordion, AccordionItem, AccordionItemProps, AccordionProps,
         ClientDirective, Counter, CounterProps, Island, IslandProps,
     };
     pub use crate::layout::{
-        container, grid, hstack, separator, stack, vstack, Container, ContainerSize, Grid,
-        Orientation, Separator, Stack, StackDirection,
+        container, grid, hstack, separator, stack, vstack, Container, ContainerProps,
+        ContainerSize, Grid, GridProps, Orientation, Separator, SeparatorProps, Stack,
+        StackDirection, StackProps,
     };
     pub use crate::meta::{MetaTags, MetaTagsProps, Metadata, TwitterCard};
     pub use crate::motion::{
@@ -164,11 +177,13 @@ pub mod prelude {
         ScrollProgressBar, Transition,
     };
     pub use crate::navigation::{
-        breadcrumbs, client_router_script, link, navbar, sidebar, tabs, Breadcrumbs, Link,
-        LinkProps, Navbar, Sidebar, Tabs,
+        breadcrumbs, client_router_script, link, navbar, sidebar, tabs, Breadcrumbs,
+        BreadcrumbsProps, Link, LinkProps, Navbar, NavbarProps, Sidebar, SidebarItem,
+        SidebarItemProps, SidebarProps, Tabs, TabsProps,
     };
     pub use crate::overlay::{
-        dialog, drawer, dropdown, Dialog, Drawer, DrawerPlacement, Dropdown, DropdownItem,
+        dialog, drawer, dropdown, Dialog, DialogProps, Drawer, DrawerPlacement, DrawerProps,
+        Dropdown, DropdownItem, DropdownProps,
     };
     pub use crate::stepper::{stepper, StepItem, StepStatus, Stepper};
     pub use crate::theme::{

@@ -1093,6 +1093,124 @@ impl Component for Tabs {
     }
 }
 
+// ── RSX Functional Component Adapters ───────────────────────────────
+
+/// Properties for constructing a [`Navbar`] via `rsx!`.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct NavbarProps {
+    pub brand: Option<Node>,
+    pub sticky: bool,
+    pub actions: Option<Node>,
+    pub class: String,
+    pub children: Vec<Node>,
+}
+
+/// Functional component adapter for [`Navbar`], enabling `<Navbar ...>...</Navbar>` in `rsx!`.
+#[allow(non_snake_case)]
+pub fn Navbar(props: NavbarProps) -> Node {
+    let mut n = Navbar::new().sticky(props.sticky).items(props.children);
+    if let Some(b) = props.brand {
+        n = n.brand(b);
+    }
+    if let Some(a) = props.actions {
+        n = n.actions(a);
+    }
+    if !props.class.is_empty() {
+        n = n.class(props.class);
+    }
+    n.render()
+}
+
+/// Properties for constructing a [`Sidebar`] via `rsx!`.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct SidebarProps {
+    pub header: Option<Node>,
+    pub footer: Option<Node>,
+    pub class: String,
+    pub children: Vec<Node>,
+}
+
+/// Functional component adapter for [`Sidebar`], enabling `<Sidebar ...>...</Sidebar>` in `rsx!`.
+#[allow(non_snake_case)]
+pub fn Sidebar(props: SidebarProps) -> Node {
+    let mut s = Sidebar::new().items(props.children);
+    if let Some(h) = props.header {
+        s = s.header(h);
+    }
+    if let Some(f) = props.footer {
+        s = s.footer(f);
+    }
+    if !props.class.is_empty() {
+        s = s.class(props.class);
+    }
+    s.render()
+}
+
+/// Properties for constructing a [`SidebarItem`] via `rsx!`.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct SidebarItemProps {
+    pub label: String,
+    pub href: String,
+    pub icon: Option<Node>,
+    pub active: bool,
+    pub badge: Option<String>,
+    pub class: String,
+}
+
+/// Functional component adapter for [`SidebarItem`], enabling `<SidebarItem ... />` in `rsx!`.
+#[allow(non_snake_case)]
+pub fn SidebarItem(props: SidebarItemProps) -> Node {
+    let mut item = SidebarItem::new(props.label, props.href).active(props.active);
+    if let Some(ic) = props.icon {
+        item = item.icon(ic);
+    }
+    if let Some(b) = props.badge {
+        item = item.badge(b);
+    }
+    if !props.class.is_empty() {
+        item = item.class(props.class);
+    }
+    item.render()
+}
+
+/// Properties for constructing [`Breadcrumbs`] via `rsx!`.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct BreadcrumbsProps {
+    pub items: Vec<BreadcrumbItem>,
+    pub separator: Option<String>,
+    pub class: String,
+}
+
+/// Functional component adapter for [`Breadcrumbs`], enabling `<Breadcrumbs ... />` in `rsx!`.
+#[allow(non_snake_case)]
+pub fn Breadcrumbs(props: BreadcrumbsProps) -> Node {
+    let mut b = Breadcrumbs::new().items(props.items);
+    if let Some(sep) = props.separator {
+        b = b.separator(sep);
+    }
+    if !props.class.is_empty() {
+        b = b.class(props.class);
+    }
+    b.render()
+}
+
+/// Properties for constructing [`Tabs`] via `rsx!`.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct TabsProps {
+    pub items: Vec<TabItem>,
+    pub class: String,
+}
+
+/// Functional component adapter for [`Tabs`], enabling `<Tabs ... />` in `rsx!`.
+#[allow(non_snake_case)]
+pub fn Tabs(props: TabsProps) -> Node {
+    let mut t = Tabs::new().tabs(props.items);
+    if !props.class.is_empty() {
+        t = t.class(props.class);
+    }
+    t.render()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

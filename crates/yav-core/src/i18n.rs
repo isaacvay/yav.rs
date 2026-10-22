@@ -70,43 +70,31 @@ impl I18n {
         self.translate(locale, key, &[])
     }
 
-    /// Look up a translation key and interpolate parameters formatted as `{param_name}`.
+    /// Look up a translation key and interpolate parameters formatted as `{param_name}`
+    /// in a single pass.
     ///
-    /// All interpolated values are **HTML-escaped** by default to prevent XSS.
-    /// Use [`Self::translate_raw`] if you need to inject pre-escaped or trusted HTML.
+    /// Returns a plain `String` suitable for rendering inside `rsx!` (where [`crate::Node::Text`]
+    /// automatically HTML-escapes text nodes). If you are injecting the translated string directly
+    /// into raw HTML outside `rsx!`, use [`Self::translate_escaped`].
     pub fn translate(&self, locale: &str, key: &str, params: &[(&str, &str)]) -> String {
-        let raw = self
-            .dictionary
-            .get(locale)
-            .and_then(|m| m.get(key))
-            .or_else(|| {
-                self.dictionary
-                    .get(&self.default_locale)
-                    .and_then(|m| m.get(key))
-            })
-            .map(|s| s.as_str())
-            .unwrap_or(key);
-
-        if params.is_empty() {
-            return raw.to_string();
-        }
-
-        let mut out = raw.to_string();
-        for (k, v) in params {
-            let placeholder = format!("{{{k}}}");
-            let escaped = crate::escape::escape_html(v);
-            out = out.replace(&placeholder, &escaped);
-        }
-        out
+        let raw = self.lookup_raw(locale, key);
+        interpolate_single_pass(raw, params, false)
     }
 
-    /// Look up a translation key and interpolate parameters **without HTML escaping**.
-    ///
-    /// **⚠️ Security Warning**: Only use this with trusted content. Never pass user input
-    /// directly — use [`Self::translate`] instead, which escapes values automatically.
+    /// Look up a translation key and interpolate parameters with HTML-escaping applied to
+    /// each parameter value in a single pass.
+    pub fn translate_escaped(&self, locale: &str, key: &str, params: &[(&str, &str)]) -> String {
+        let raw = self.lookup_raw(locale, key);
+        interpolate_single_pass(raw, params, true)
+    }
+
+    /// Alias for [`Self::translate`] (un-escaped parameter interpolation).
     pub fn translate_raw(&self, locale: &str, key: &str, params: &[(&str, &str)]) -> String {
-        let raw = self
-            .dictionary
+        self.translate(locale, key, params)
+    }
+
+    fn lookup_raw<'a>(&'a self, locale: &str, key: &'a str) -> &'a str {
+        self.dictionary
             .get(locale)
             .and_then(|m| m.get(key))
             .or_else(|| {
@@ -115,18 +103,7 @@ impl I18n {
                     .and_then(|m| m.get(key))
             })
             .map(|s| s.as_str())
-            .unwrap_or(key);
-
-        if params.is_empty() {
-            return raw.to_string();
-        }
-
-        let mut out = raw.to_string();
-        for (k, v) in params {
-            let placeholder = format!("{{{k}}}");
-            out = out.replace(&placeholder, v);
-        }
-        out
+            .unwrap_or(key)
     }
 
     /// Check if a key is present in the dictionary for a locale (or default fallback).
@@ -192,28 +169,61 @@ impl I18n {
     }
 
     /// Resolve the most appropriate locale given an optional user preference or `Accept-Language` header.
+    ///
+    /// Respects RFC 9110 `;q=` quality weights (sorting higher weights first and ignoring `;q=0`).
     pub fn resolve_locale(&self, accept_language: Option<&str>, preferred: Option<&str>) -> String {
         // 1. Direct explicit preference
         if let Some(pref) = preferred {
-            if self.is_supported(pref) {
-                return pref.to_string();
+            let trimmed = pref.trim();
+            if let Some(matched) = self.match_supported(trimmed) {
+                return matched;
             }
-            let lang = pref.split('-').next().unwrap_or(pref);
-            if self.is_supported(lang) {
-                return lang.to_string();
+            let lang = trimmed.split(['-', '_']).next().unwrap_or(trimmed);
+            if let Some(matched) = self.match_supported(lang) {
+                return matched;
             }
         }
 
-        // 2. HTTP Accept-Language parsing
+        // 2. HTTP Accept-Language parsing with RFC 9110 quality weights (;q=0.8)
         if let Some(header_val) = accept_language {
+            let mut candidates: Vec<(&str, f32)> = Vec::new();
             for entry in header_val.split(',') {
-                let tag = entry.split(';').next().unwrap_or("").trim();
-                if self.is_supported(tag) {
-                    return tag.to_string();
+                let mut parts = entry.split(';');
+                let tag = parts.next().unwrap_or("").trim();
+                if tag.is_empty() {
+                    continue;
                 }
-                let base = tag.split('-').next().unwrap_or(tag);
-                if self.is_supported(base) {
-                    return base.to_string();
+                let mut q: f32 = 1.0;
+                for param in parts {
+                    let param = param.trim();
+                    if let Some(val_str) = param
+                        .strip_prefix("q=")
+                        .or_else(|| param.strip_prefix("Q="))
+                    {
+                        if let Ok(parsed) = val_str.trim().parse::<f32>() {
+                            q = parsed.clamp(0.0, 1.0);
+                        }
+                    }
+                }
+                // RFC 9110: q=0 means "not acceptable"
+                if q > 0.0 {
+                    candidates.push((tag, q));
+                }
+            }
+
+            // Stable sort by quality descending
+            candidates.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+            for (tag, _) in candidates {
+                if tag == "*" {
+                    return self.default_locale.clone();
+                }
+                if let Some(matched) = self.match_supported(tag) {
+                    return matched;
+                }
+                let base = tag.split(['-', '_']).next().unwrap_or(tag);
+                if let Some(matched) = self.match_supported(base) {
+                    return matched;
                 }
             }
         }
@@ -221,11 +231,49 @@ impl I18n {
         self.default_locale.clone()
     }
 
-    fn is_supported(&self, loc: &str) -> bool {
+    fn match_supported(&self, loc: &str) -> Option<String> {
         self.supported_locales
             .iter()
-            .any(|s| s.eq_ignore_ascii_case(loc))
+            .find(|s| s.eq_ignore_ascii_case(loc))
+            .cloned()
     }
+}
+
+/// Interpolates `{placeholder}` tokens in `template` in a single pass so parameter values
+/// containing `{other}` are never re-expanded by subsequent parameters.
+fn interpolate_single_pass(template: &str, params: &[(&str, &str)], escape_values: bool) -> String {
+    if params.is_empty() || !template.contains('{') {
+        return template.to_string();
+    }
+
+    let mut out = String::with_capacity(template.len() + 16);
+    let mut rest = template;
+
+    while let Some(open_idx) = rest.find('{') {
+        out.push_str(&rest[..open_idx]);
+        let after_open = &rest[open_idx + 1..];
+
+        if let Some(close_idx) = after_open.find('}') {
+            let candidate_key = &after_open[..close_idx];
+            if !candidate_key.contains('{') {
+                if let Some(&(_, val)) = params.iter().find(|&&(k, _)| k == candidate_key) {
+                    if escape_values {
+                        out.push_str(&crate::escape::escape_html(val));
+                    } else {
+                        out.push_str(val);
+                    }
+                    rest = &after_open[close_idx + 1..];
+                    continue;
+                }
+            }
+        }
+
+        out.push('{');
+        rest = after_open;
+    }
+
+    out.push_str(rest);
+    out
 }
 
 #[cfg(test)]

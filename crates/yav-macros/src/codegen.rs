@@ -74,9 +74,17 @@ fn gen_component(el: &RsxElement) -> TokenStream {
         .attributes
         .iter()
         .map(|attr| {
-            let field_ident = syn::Ident::new(&attr.name, attr.name_span);
+            let field_ident = match syn::parse_str::<syn::Ident>(&attr.name) {
+                Ok(mut id) => {
+                    id.set_span(attr.name_span);
+                    id
+                }
+                Err(_) => syn::Ident::new_raw(&attr.name, attr.name_span),
+            };
             match &attr.value {
-                RsxAttrValue::Str(s, _) => quote! { #field_ident: (#s).into() },
+                RsxAttrValue::Str(s, _) => {
+                    quote! { #field_ident: ::yav::yav_core::IntoPropValue::into_prop_value(#s) }
+                }
                 RsxAttrValue::Expr(expr, _) => quote! { #field_ident: #expr },
                 RsxAttrValue::Bool(_) => quote! { #field_ident: true },
             }
@@ -130,7 +138,7 @@ fn gen_attribute(attr: &RsxAttribute) -> TokenStream {
             quote! {
                 ::yav::yav_core::Attribute {
                     name: ::std::borrow::Cow::Borrowed(#name),
-                    value: ::yav::yav_core::AttributeValue::String((#expr).to_string()),
+                    value: ::yav::yav_core::IntoAttributeValue::into_attribute_value(#expr),
                 }
             }
         }

@@ -117,3 +117,54 @@ fn test_component_with_children() {
     assert!(html.contains("Charlie"));
     assert!(html.contains("Admin"));
 }
+
+#[test]
+fn test_dynamic_boolean_and_optional_attributes_in_rsx() {
+    let is_disabled = false;
+    let is_required = true;
+    let maybe_id: Option<&str> = Some("email-field");
+    let missing_title: Option<String> = None;
+
+    let node = rsx! {
+        <input
+            r#type="email"
+            id={maybe_id}
+            title={missing_title}
+            disabled={is_disabled}
+            required={is_required}
+        />
+    };
+
+    let html = render_to_string(&node);
+    assert!(html.contains(r#"type="email""#));
+    assert!(!html.contains("r#type"));
+    assert!(html.contains(r#"id="email-field""#));
+    assert!(!html.contains("title="));
+    assert!(!html.contains("disabled"));
+    assert!(html.contains("required"));
+}
+
+#[test]
+fn test_yav_ui_and_module_qualified_components_in_rsx() {
+    let node = rsx! {
+        <Container size="lg">
+            <yav::ui::Button variant="primary" label="Save" />
+            <Input name="username" r#type="text" placeholder="Enter username" required=true />
+            <Checkbox name="terms" label="Accept terms" checked=true />
+            <Switch name="notifications" label="Notifications" checked=true />
+            <Badge label="Active" variant="success" />
+            <Icon name="heart" class="text-red-500" />
+        </Container>
+    };
+
+    let html = render_to_string(&node);
+    assert!(html.contains("max-w-screen-lg"));
+    assert!(html.contains("Save"));
+    assert!(html.contains(r#"name="username""#));
+    assert!(html.contains(r#"placeholder="Enter username""#));
+    assert!(html.contains("Accept terms"));
+    assert!(html.contains("Notifications"));
+    assert!(html.contains("Active"));
+    assert!(html.contains("<svg"));
+    assert!(html.contains("text-red-500"));
+}

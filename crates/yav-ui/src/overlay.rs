@@ -592,6 +592,122 @@ impl Component for Drawer {
     }
 }
 
+// ── RSX Functional Component Adapters ───────────────────────────────
+
+/// Properties for constructing a [`Dialog`] via `rsx!`.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct DialogProps {
+    pub id: String,
+    pub open: bool,
+    pub title: Option<String>,
+    pub description: Option<String>,
+    pub footer: Option<Node>,
+    pub class: String,
+    pub children: Vec<Node>,
+}
+
+/// Functional component adapter for [`Dialog`], enabling `<Dialog ...>...</Dialog>` in `rsx!`.
+#[allow(non_snake_case)]
+pub fn Dialog(props: DialogProps) -> Node {
+    let mut d = Dialog::new(props.id)
+        .open(props.open)
+        .children(props.children);
+    if let Some(t) = props.title {
+        d = d.title(t);
+    }
+    if let Some(desc) = props.description {
+        d = d.description(desc);
+    }
+    if let Some(f) = props.footer {
+        d = d.footer(f);
+    }
+    if !props.class.is_empty() {
+        d = d.class(props.class);
+    }
+    d.render()
+}
+
+/// Properties for constructing a [`Drawer`] via `rsx!`.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct DrawerProps {
+    pub id: String,
+    pub open: bool,
+    pub title: Option<String>,
+    pub description: Option<String>,
+    pub placement: Option<String>,
+    pub footer: Option<Node>,
+    pub class: String,
+    pub children: Vec<Node>,
+}
+
+/// Functional component adapter for [`Drawer`], enabling `<Drawer ...>...</Drawer>` in `rsx!`.
+#[allow(non_snake_case)]
+pub fn Drawer(props: DrawerProps) -> Node {
+    let mut d = Drawer::new(props.id).open(props.open);
+    if let Some(p) = props.placement {
+        match p.to_lowercase().as_str() {
+            "left" => d = d.placement(DrawerPlacement::Left),
+            "right" => d = d.placement(DrawerPlacement::Right),
+            "top" => d = d.placement(DrawerPlacement::Top),
+            "bottom" => d = d.placement(DrawerPlacement::Bottom),
+            _ => {}
+        }
+    }
+    if let Some(t) = props.title {
+        d = d.title(t);
+    }
+    if let Some(desc) = props.description {
+        d = d.description(desc);
+    }
+    if let Some(f) = props.footer {
+        d = d.footer(f);
+    }
+    if !props.class.is_empty() {
+        d = d.class(props.class);
+    }
+    for child in props.children {
+        d = d.child(child);
+    }
+    d.render()
+}
+
+/// Properties for constructing a [`Dropdown`] via `rsx!`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DropdownProps {
+    pub id: Option<String>,
+    pub trigger: Node,
+    pub items: Vec<DropdownItem>,
+    pub align_right: bool,
+    pub class: String,
+}
+
+impl Default for DropdownProps {
+    fn default() -> Self {
+        Self {
+            id: None,
+            trigger: Node::Empty,
+            items: Vec::new(),
+            align_right: false,
+            class: String::new(),
+        }
+    }
+}
+
+/// Functional component adapter for [`Dropdown`], enabling `<Dropdown ... />` in `rsx!`.
+#[allow(non_snake_case)]
+pub fn Dropdown(props: DropdownProps) -> Node {
+    let mut d = Dropdown::new(props.trigger)
+        .items(props.items)
+        .align_right(props.align_right);
+    if let Some(id) = props.id {
+        d = d.id(id);
+    }
+    if !props.class.is_empty() {
+        d = d.class(props.class);
+    }
+    d.render()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -110,9 +110,16 @@ RUN apk add --no-cache musl-dev curl build-base
 COPY Cargo.toml Cargo.lock* package.yavml* ./
 {copy_crates}COPY src ./src/
 {copy_public}
-# Build application in release mode
+# Build application in release mode and compile Tailwind CSS if present
 ENV CARGO_INCREMENTAL=0
-RUN cargo build --release
+RUN cargo build --release && \
+    if [ -f "public/input.css" ]; then \
+      ARCH=$(uname -m); \
+      if [ "$ARCH" = "aarch64" ]; then TW_ARCH="linux-arm64-musl"; else TW_ARCH="linux-x64-musl"; fi; \
+      curl -sSL "https://github.com/tailwindlabs/tailwindcss/releases/download/v3.4.17/tailwindcss-${{TW_ARCH}}" -o /tmp/tailwindcss && \
+      chmod +x /tmp/tailwindcss && \
+      /tmp/tailwindcss -i public/input.css -o public/styles.css --content "./src/**/*.{{rs,yav,rsx,html}},./public/**/*.html" --minify; \
+    fi
 
 # 2. Runtime Stage
 FROM alpine:3.20 AS runtime

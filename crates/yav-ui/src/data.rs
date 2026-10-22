@@ -693,6 +693,133 @@ impl Component for Avatar {
     }
 }
 
+// ── RSX Functional Component Adapters ───────────────────────────────
+
+/// Properties for constructing a [`Table`] via `rsx!`.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct TableProps {
+    pub headers: Vec<String>,
+    pub rows: Vec<TableRow>,
+    pub striped: bool,
+    pub hoverable: bool,
+    pub caption: Option<String>,
+    pub class: String,
+    pub children: Vec<Node>,
+}
+
+/// Functional component adapter for [`Table`], enabling `<Table ... />` in `rsx!`.
+#[allow(non_snake_case)]
+pub fn Table(props: TableProps) -> Node {
+    let mut t = Table::new()
+        .headers(props.headers)
+        .rows(props.rows)
+        .striped(props.striped)
+        .hoverable(props.hoverable);
+    if let Some(c) = props.caption {
+        t = t.caption(c);
+    }
+    if !props.class.is_empty() {
+        t = t.class(props.class);
+    }
+    t.render()
+}
+
+/// Properties for constructing a [`Pagination`] via `rsx!`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PaginationProps {
+    pub current_page: usize,
+    pub total_pages: usize,
+    pub base_url: String,
+    pub show_edges: bool,
+    pub class: String,
+}
+
+impl Default for PaginationProps {
+    fn default() -> Self {
+        Self {
+            current_page: 1,
+            total_pages: 1,
+            base_url: "?page=".to_string(),
+            show_edges: false,
+            class: String::new(),
+        }
+    }
+}
+
+/// Functional component adapter for [`Pagination`], enabling `<Pagination ... />` in `rsx!`.
+#[allow(non_snake_case)]
+pub fn Pagination(props: PaginationProps) -> Node {
+    let mut p = Pagination::new(props.current_page, props.total_pages, props.base_url)
+        .show_edges(props.show_edges);
+    if !props.class.is_empty() {
+        p = p.class(props.class);
+    }
+    p.render()
+}
+
+/// Properties for constructing an [`Avatar`] via `rsx!`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AvatarProps {
+    pub src: Option<String>,
+    pub alt: Option<String>,
+    pub initials: Option<String>,
+    pub size: Option<String>,
+    pub circle: bool,
+    pub status: Option<String>,
+    pub class: String,
+}
+
+impl Default for AvatarProps {
+    fn default() -> Self {
+        Self {
+            src: None,
+            alt: None,
+            initials: None,
+            size: None,
+            circle: true,
+            status: None,
+            class: String::new(),
+        }
+    }
+}
+
+/// Functional component adapter for [`Avatar`], enabling `<Avatar ... />` in `rsx!`.
+#[allow(non_snake_case)]
+pub fn Avatar(props: AvatarProps) -> Node {
+    let mut a = Avatar::new().circle(props.circle);
+    if let Some(src) = props.src {
+        a = a.src(src);
+    }
+    if let Some(alt) = props.alt {
+        a = a.alt(alt);
+    }
+    if let Some(init) = props.initials {
+        a = a.initials(init);
+    }
+    if let Some(sz) = props.size {
+        match sz.to_lowercase().as_str() {
+            "sm" => a = a.size(Size::Sm),
+            "md" => a = a.size(Size::Md),
+            "lg" => a = a.size(Size::Lg),
+            "xl" => a = a.size(Size::Xl),
+            _ => {}
+        }
+    }
+    if let Some(st) = props.status {
+        match st.to_lowercase().as_str() {
+            "online" => a = a.status(AvatarStatus::Online),
+            "offline" => a = a.status(AvatarStatus::Offline),
+            "busy" => a = a.status(AvatarStatus::Busy),
+            "away" => a = a.status(AvatarStatus::Away),
+            _ => {}
+        }
+    }
+    if !props.class.is_empty() {
+        a = a.class(props.class);
+    }
+    a.render()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

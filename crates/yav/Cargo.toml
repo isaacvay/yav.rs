@@ -21,6 +21,12 @@ yav-ui.workspace = true
 yav-icons.workspace = true
 yav-build.workspace = true
 
+[features]
+default = ["classic-icons", "minimal-icons", "system-icons"]
+classic-icons = ["yav-icons/classic"]
+minimal-icons = ["yav-icons/minimal"]
+system-icons = ["yav-icons/system"]
+
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]

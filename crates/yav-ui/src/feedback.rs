@@ -967,6 +967,157 @@ pub fn empty_state(title: impl Into<String>) -> EmptyState {
     EmptyState::new(title)
 }
 
+/// Properties for constructing a [`Loading`] via `rsx!`.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct LoadingProps {
+    pub size: Option<String>,
+    pub label: Option<String>,
+    pub class: String,
+}
+
+/// Functional component adapter for [`Loading`], enabling `<Loading ... />` in `rsx!`.
+#[allow(non_snake_case)]
+pub fn Loading(props: LoadingProps) -> Node {
+    let mut l = Loading::new();
+    if let Some(s) = props.size {
+        match s.to_lowercase().as_str() {
+            "sm" => l = l.size(Size::Sm),
+            "md" => l = l.size(Size::Md),
+            "lg" => l = l.size(Size::Lg),
+            "xl" => l = l.size(Size::Xl),
+            _ => {}
+        }
+    }
+    if let Some(lbl) = props.label {
+        l = l.label(lbl);
+    }
+    if !props.class.is_empty() {
+        l = l.class(props.class);
+    }
+    l.render()
+}
+
+/// Properties for constructing a [`Skeleton`] via `rsx!`.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct SkeletonProps {
+    pub width: Option<String>,
+    pub height: Option<String>,
+    pub circle: bool,
+    pub class: String,
+}
+
+/// Functional component adapter for [`Skeleton`], enabling `<Skeleton ... />` in `rsx!`.
+#[allow(non_snake_case)]
+pub fn Skeleton(props: SkeletonProps) -> Node {
+    let mut s = Skeleton::new().circle(props.circle);
+    if let Some(w) = props.width {
+        s = s.width(w);
+    }
+    if let Some(h) = props.height {
+        s = s.height(h);
+    }
+    if !props.class.is_empty() {
+        s = s.class(props.class);
+    }
+    s.render()
+}
+
+/// Properties for constructing a [`ProgressBar`] via `rsx!`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProgressBarProps {
+    pub value: f64,
+    pub max: f64,
+    pub label: Option<String>,
+    pub show_value: bool,
+    pub variant: Option<String>,
+    pub size: Option<String>,
+    pub animated: bool,
+    pub class: String,
+}
+
+impl Default for ProgressBarProps {
+    fn default() -> Self {
+        Self {
+            value: 0.0,
+            max: 100.0,
+            label: None,
+            show_value: false,
+            variant: None,
+            size: None,
+            animated: false,
+            class: String::new(),
+        }
+    }
+}
+
+/// Functional component adapter for [`ProgressBar`], enabling `<ProgressBar ... />` in `rsx!`.
+#[allow(non_snake_case)]
+pub fn ProgressBar(props: ProgressBarProps) -> Node {
+    let mut p = ProgressBar::new(props.value)
+        .max(props.max)
+        .show_value(props.show_value)
+        .animated(props.animated);
+    if let Some(l) = props.label {
+        p = p.label(l);
+    }
+    if let Some(v) = props.variant {
+        match v.to_lowercase().as_str() {
+            "primary" => p = p.variant(Variant::Primary),
+            "secondary" => p = p.variant(Variant::Secondary),
+            "success" => p = p.variant(Variant::Success),
+            "warning" => p = p.variant(Variant::Warning),
+            "danger" => p = p.variant(Variant::Danger),
+            _ => {}
+        }
+    }
+    if let Some(s) = props.size {
+        match s.to_lowercase().as_str() {
+            "sm" => p = p.size(Size::Sm),
+            "md" => p = p.size(Size::Md),
+            "lg" => p = p.size(Size::Lg),
+            "xl" => p = p.size(Size::Xl),
+            _ => {}
+        }
+    }
+    if !props.class.is_empty() {
+        p = p.class(props.class);
+    }
+    p.render()
+}
+
+/// Properties for constructing an [`EmptyState`] via `rsx!`.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct EmptyStateProps {
+    pub title: String,
+    pub description: Option<String>,
+    pub icon: Option<Node>,
+    pub action: Option<Node>,
+    pub secondary_action: Option<Node>,
+    pub class: String,
+}
+
+/// Functional component adapter for [`EmptyState`], enabling `<EmptyState ... />` in `rsx!`.
+#[allow(non_snake_case)]
+pub fn EmptyState(props: EmptyStateProps) -> Node {
+    let mut e = EmptyState::new(props.title);
+    if let Some(d) = props.description {
+        e = e.description(d);
+    }
+    if let Some(ic) = props.icon {
+        e = e.icon(ic);
+    }
+    if let Some(act) = props.action {
+        e = e.action(act);
+    }
+    if let Some(sec) = props.secondary_action {
+        e = e.secondary_action(sec);
+    }
+    if !props.class.is_empty() {
+        e = e.class(props.class);
+    }
+    e.render()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

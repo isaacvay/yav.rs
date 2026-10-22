@@ -621,6 +621,171 @@ impl Component for Separator {
     }
 }
 
+// ── RSX Functional Component Adapters ───────────────────────────────
+
+/// Properties for constructing a [`Container`] via `rsx!`.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ContainerProps {
+    pub size: Option<String>,
+    pub centered: Option<bool>,
+    pub padded: Option<bool>,
+    pub class: String,
+    pub children: Vec<Node>,
+}
+
+/// Functional component adapter for [`Container`], enabling `<Container ...>...</Container>` in `rsx!`.
+#[allow(non_snake_case)]
+pub fn Container(props: ContainerProps) -> Node {
+    let mut c = Container::new().children(props.children);
+    if let Some(s) = props.size {
+        match s.to_lowercase().as_str() {
+            "sm" => c = c.size(ContainerSize::Sm),
+            "md" => c = c.size(ContainerSize::Md),
+            "lg" => c = c.size(ContainerSize::Lg),
+            "xl" => c = c.size(ContainerSize::Xl),
+            "full" => c = c.size(ContainerSize::Full),
+            _ => {}
+        }
+    }
+    if let Some(centered) = props.centered {
+        c = c.centered(centered);
+    }
+    if let Some(padded) = props.padded {
+        c = c.padding(padded);
+    }
+    if !props.class.is_empty() {
+        c = c.class(props.class);
+    }
+    c.render()
+}
+
+/// Properties for constructing a [`Stack`] via `rsx!`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StackProps {
+    pub direction: Option<String>,
+    pub spacing: u8,
+    pub wrap: bool,
+    pub class: String,
+    pub children: Vec<Node>,
+}
+
+impl Default for StackProps {
+    fn default() -> Self {
+        Self {
+            direction: None,
+            spacing: 4,
+            wrap: false,
+            class: String::new(),
+            children: Vec::new(),
+        }
+    }
+}
+
+/// Functional component adapter for [`Stack`], enabling `<Stack ...>...</Stack>` in `rsx!`.
+#[allow(non_snake_case)]
+pub fn Stack(props: StackProps) -> Node {
+    let mut s = Stack::new()
+        .spacing(props.spacing)
+        .wrap(props.wrap)
+        .children(props.children);
+    if let Some(d) = props.direction {
+        match d.to_lowercase().as_str() {
+            "horizontal" | "row" => s = s.horizontal(),
+            _ => s = s.vertical(),
+        }
+    }
+    if !props.class.is_empty() {
+        s = s.class(props.class);
+    }
+    s.render()
+}
+
+/// Properties for constructing a [`Grid`] via `rsx!`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GridProps {
+    pub cols: u8,
+    pub cols_sm: Option<u8>,
+    pub cols_md: Option<u8>,
+    pub cols_lg: Option<u8>,
+    pub cols_xl: Option<u8>,
+    pub gap: u8,
+    pub class: String,
+    pub children: Vec<Node>,
+}
+
+impl Default for GridProps {
+    fn default() -> Self {
+        Self {
+            cols: 1,
+            cols_sm: None,
+            cols_md: None,
+            cols_lg: None,
+            cols_xl: None,
+            gap: 4,
+            class: String::new(),
+            children: Vec::new(),
+        }
+    }
+}
+
+/// Functional component adapter for [`Grid`], enabling `<Grid ...>...</Grid>` in `rsx!`.
+#[allow(non_snake_case)]
+pub fn Grid(props: GridProps) -> Node {
+    let mut g = Grid::new()
+        .cols(props.cols)
+        .gap(props.gap)
+        .children(props.children);
+    if let Some(sm) = props.cols_sm {
+        g = g.cols_sm(sm);
+    }
+    if let Some(md) = props.cols_md {
+        g = g.cols_md(md);
+    }
+    if let Some(lg) = props.cols_lg {
+        g = g.cols_lg(lg);
+    }
+    if let Some(xl) = props.cols_xl {
+        g = g.cols_xl(xl);
+    }
+    if !props.class.is_empty() {
+        g = g.class(props.class);
+    }
+    g.render()
+}
+
+/// Properties for constructing a [`Separator`] via `rsx!`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SeparatorProps {
+    pub orientation: Option<String>,
+    pub decorative: bool,
+    pub class: String,
+}
+
+impl Default for SeparatorProps {
+    fn default() -> Self {
+        Self {
+            orientation: None,
+            decorative: true,
+            class: String::new(),
+        }
+    }
+}
+
+/// Functional component adapter for [`Separator`], enabling `<Separator ... />` in `rsx!`.
+#[allow(non_snake_case)]
+pub fn Separator(props: SeparatorProps) -> Node {
+    let mut s = Separator::new().decorative(props.decorative);
+    if let Some(o) = props.orientation {
+        if o.eq_ignore_ascii_case("vertical") {
+            s = s.vertical();
+        }
+    }
+    if !props.class.is_empty() {
+        s = s.class(props.class);
+    }
+    s.render()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

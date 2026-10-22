@@ -8,7 +8,28 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use serde::Serialize;
+use std::sync::OnceLock;
 use yav_core::{document_shell_with_lang, render_to_string, Element, Node, PageMeta};
+
+static ASSET_MANIFEST: OnceLock<Option<yav_build::assets::AssetManifest>> = OnceLock::new();
+
+/// Resolves an asset path through `dist/asset-manifest.json` (or `public/asset-manifest.json`)
+/// when running outside of `YAV_DEV` mode.
+pub fn resolve_asset_path(href: &str) -> String {
+    if std::env::var("YAV_DEV").is_ok() {
+        return href.to_string();
+    }
+    let manifest_opt = ASSET_MANIFEST.get_or_init(|| {
+        yav_build::assets::AssetManifest::load("dist/asset-manifest.json")
+            .or_else(|_| yav_build::assets::AssetManifest::load("public/asset-manifest.json"))
+            .ok()
+    });
+    if let Some(ref manifest) = manifest_opt {
+        manifest.resolve_url(href)
+    } else {
+        href.to_string()
+    }
+}
 
 /// Construct an HTML response with the given status code and HTML body string.
 ///
@@ -186,9 +207,10 @@ pub struct HtmlPage {
 impl HtmlPage {
     /// Create a new `HtmlPage` wrapping the given body content.
     pub fn new(body: impl Into<Node>) -> Self {
+        let default_css = resolve_asset_path("/public/styles.css");
         Self {
             title: String::from("Yav App"),
-            head_extra: String::from(r#"<link rel="stylesheet" href="/public/styles.css" />"#),
+            head_extra: format!(r#"<link rel="stylesheet" href="{default_css}" />"#),
             lang: String::from("en"),
             body: body.into(),
             body_end: String::new(),
@@ -216,7 +238,8 @@ impl HtmlPage {
 
     /// Append a stylesheet `<link>` tag to `<head>`.
     pub fn stylesheet(mut self, href: impl AsRef<str>) -> Self {
-        if let Some(escaped) = yav_core::escape_url(href.as_ref()) {
+        let resolved = resolve_asset_path(href.as_ref());
+        if let Some(escaped) = yav_core::escape_url(&resolved) {
             self.head_extra
                 .push_str(&format!(r#"<link rel="stylesheet" href="{escaped}" />"#));
         }
@@ -225,8 +248,9 @@ impl HtmlPage {
 
     /// Append a favicon `<link>` tag to `<head>`.
     pub fn favicon(mut self, href: impl AsRef<str>) -> Self {
-        if let Some(escaped) = yav_core::escape_url(href.as_ref()) {
-            let mime = if href.as_ref().ends_with(".svg") {
+        let resolved = resolve_asset_path(href.as_ref());
+        if let Some(escaped) = yav_core::escape_url(&resolved) {
+            let mime = if resolved.ends_with(".svg") {
                 r#" type="image/svg+xml""#
             } else {
                 ""
@@ -239,7 +263,8 @@ impl HtmlPage {
 
     /// Append a `<script>` tag before `</body>`.
     pub fn script(mut self, src: impl AsRef<str>) -> Self {
-        if let Some(escaped) = yav_core::escape_url(src.as_ref()) {
+        let resolved = resolve_asset_path(src.as_ref());
+        if let Some(escaped) = yav_core::escape_url(&resolved) {
             self.body_end
                 .push_str(&format!(r#"<script src="{escaped}"></script>"#));
         }

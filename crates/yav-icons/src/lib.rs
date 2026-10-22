@@ -86,7 +86,7 @@ pub use catalog::{
 pub static ICONS: &[IconData] = catalog::classic::CLASSIC_REGULAR;
 
 // Re-exports from render
-pub use render::{render_icon, Icon, IconSize, FALLBACK_SVG};
+pub use render::{render_icon, Icon, IconProps, IconSize, FALLBACK_SVG};
 
 /// Convenience module for common imports.
 pub mod prelude {
@@ -94,7 +94,7 @@ pub mod prelude {
         all_categories, all_icons, all_icons_iter, get_icon, get_icon_by, icons_in_category,
         search_icons, IconData, IconFamily, IconStyle,
     };
-    pub use crate::render::{render_icon, Icon, IconSize};
+    pub use crate::render::{render_icon, Icon, IconProps, IconSize};
     pub use crate::ICONS;
 }
 

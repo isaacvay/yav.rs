@@ -12,3 +12,9 @@ rust-version.workspace = true
 
 [dependencies]
 yav-core.workspace = true
+
+[features]
+default = ["classic", "minimal", "system"]
+classic = []
+minimal = []
+system = []

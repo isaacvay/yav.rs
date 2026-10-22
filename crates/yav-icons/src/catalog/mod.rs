@@ -118,9 +118,32 @@ pub struct IconData {
     pub is_fill: bool,
 }
 
+#[cfg(feature = "classic")]
 pub mod classic;
+#[cfg(not(feature = "classic"))]
+pub mod classic {
+    pub static CLASSIC_REGULAR: &[super::IconData] = &[];
+}
+
+#[cfg(feature = "minimal")]
 pub mod minimal;
+#[cfg(not(feature = "minimal"))]
+pub mod minimal {
+    pub static MINIMAL_REGULAR: &[super::IconData] = &[];
+    pub static MINIMAL_SOLID: &[super::IconData] = &[];
+}
+
+#[cfg(feature = "system")]
 pub mod system;
+#[cfg(not(feature = "system"))]
+pub mod system {
+    pub static SYSTEM_REGULAR: &[super::IconData] = &[];
+    pub static SYSTEM_BOLD: &[super::IconData] = &[];
+    pub static SYSTEM_SOLID: &[super::IconData] = &[];
+    pub static SYSTEM_DUOTONE: &[super::IconData] = &[];
+    pub static SYSTEM_LIGHT: &[super::IconData] = &[];
+    pub static SYSTEM_THIN: &[super::IconData] = &[];
+}
 
 /// Attribution notice for icons in this catalog.
 pub const LUCIDE_ATTRIBUTION: &str =

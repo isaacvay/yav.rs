@@ -257,6 +257,78 @@ pub fn popover() -> Popover {
     Popover::new()
 }
 
+/// Properties for constructing a [`Tooltip`] via `rsx!`.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct TooltipProps {
+    pub text: String,
+    pub placement: Option<String>,
+    pub class: String,
+    pub children: Vec<Node>,
+}
+
+/// Functional component adapter for [`Tooltip`], enabling `<Tooltip text="...">...</Tooltip>` in `rsx!`.
+#[allow(non_snake_case)]
+pub fn Tooltip(props: TooltipProps) -> Node {
+    let mut t = Tooltip::new(props.text);
+    if let Some(p) = props.placement {
+        match p.to_lowercase().as_str() {
+            "top" => t = t.placement(Placement::Top),
+            "bottom" => t = t.placement(Placement::Bottom),
+            "left" => t = t.placement(Placement::Left),
+            "right" => t = t.placement(Placement::Right),
+            _ => {}
+        }
+    }
+    if !props.class.is_empty() {
+        t = t.class(props.class);
+    }
+    if !props.children.is_empty() {
+        t = t.child(Node::Fragment(props.children));
+    }
+    t.render()
+}
+
+/// Properties for constructing a [`Popover`] via `rsx!`.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct PopoverProps {
+    pub id: Option<String>,
+    pub placement: Option<String>,
+    pub trigger: Option<Node>,
+    pub content: Option<Node>,
+    pub class: String,
+    pub children: Vec<Node>,
+}
+
+/// Functional component adapter for [`Popover`], enabling `<Popover ...>...</Popover>` in `rsx!`.
+#[allow(non_snake_case)]
+pub fn Popover(props: PopoverProps) -> Node {
+    let mut p = Popover::new();
+    if let Some(id) = props.id {
+        p = p.id(id);
+    }
+    if let Some(pl) = props.placement {
+        match pl.to_lowercase().as_str() {
+            "top" => p = p.placement(Placement::Top),
+            "bottom" => p = p.placement(Placement::Bottom),
+            "left" => p = p.placement(Placement::Left),
+            "right" => p = p.placement(Placement::Right),
+            _ => {}
+        }
+    }
+    if let Some(trig) = props.trigger {
+        p = p.trigger(trig);
+    }
+    if let Some(cnt) = props.content {
+        p = p.content(cnt);
+    } else if !props.children.is_empty() {
+        p = p.content(Node::Fragment(props.children));
+    }
+    if !props.class.is_empty() {
+        p = p.class(props.class);
+    }
+    p.render()
+}
+
 /// Client-side script handling Popover outside-click dismiss and Escape key.
 pub fn floating_script() -> Node {
     let script = r#"<script>

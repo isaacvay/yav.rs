@@ -1575,6 +1575,452 @@ pub fn range_slider(min_name: impl Into<String>, max_name: impl Into<String>) ->
     RangeSlider::new(min_name, max_name)
 }
 
+// ── RSX Functional Component Adapters ───────────────────────────────
+
+/// Properties for constructing an [`Input`] via `rsx!`.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct InputProps {
+    pub r#type: Option<String>,
+    pub input_type: Option<String>,
+    pub name: Option<String>,
+    pub value: Option<String>,
+    pub placeholder: Option<String>,
+    pub id: Option<String>,
+    pub disabled: bool,
+    pub required: bool,
+    pub readonly: bool,
+    pub invalid: bool,
+    pub size: Option<String>,
+    pub class: String,
+    pub aria_label: Option<String>,
+    pub aria_describedby: Option<String>,
+    pub autocomplete: Option<String>,
+    pub min: Option<String>,
+    pub max: Option<String>,
+    pub step: Option<String>,
+    pub pattern: Option<String>,
+}
+
+/// Functional component adapter for [`Input`], enabling `<Input ... />` in `rsx!`.
+#[allow(non_snake_case)]
+pub fn Input(props: InputProps) -> Node {
+    let mut i = Input::new();
+    if let Some(t) = props.input_type.or(props.r#type) {
+        i = i.input_type(t);
+    }
+    if let Some(n) = props.name {
+        i = i.name(n);
+    }
+    if let Some(v) = props.value {
+        i = i.value(v);
+    }
+    if let Some(p) = props.placeholder {
+        i = i.placeholder(p);
+    }
+    if let Some(id) = props.id {
+        i = i.id(id);
+    }
+    if props.disabled {
+        i = i.disabled(true);
+    }
+    if props.required {
+        i = i.required(true);
+    }
+    if props.readonly {
+        i = i.readonly(true);
+    }
+    if props.invalid {
+        i = i.invalid(true);
+    }
+    if let Some(s) = props.size {
+        match s.to_lowercase().as_str() {
+            "sm" => i = i.size(Size::Sm),
+            "md" => i = i.size(Size::Md),
+            "lg" => i = i.size(Size::Lg),
+            "xl" => i = i.size(Size::Xl),
+            _ => {}
+        }
+    }
+    if !props.class.is_empty() {
+        i = i.class(props.class);
+    }
+    if let Some(al) = props.aria_label {
+        i = i.aria_label(al);
+    }
+    if let Some(ad) = props.aria_describedby {
+        i = i.aria_describedby(ad);
+    }
+    if let Some(ac) = props.autocomplete {
+        i = i.autocomplete(ac);
+    }
+    if let Some(min) = props.min {
+        i = i.min(min);
+    }
+    if let Some(max) = props.max {
+        i = i.max(max);
+    }
+    if let Some(step) = props.step {
+        i = i.step(step);
+    }
+    if let Some(pat) = props.pattern {
+        i = i.pattern(pat);
+    }
+    i.render()
+}
+
+/// Properties for constructing a [`Textarea`] via `rsx!`.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct TextareaProps {
+    pub name: Option<String>,
+    pub value: Option<String>,
+    pub placeholder: Option<String>,
+    pub id: Option<String>,
+    pub rows: Option<u32>,
+    pub cols: Option<u32>,
+    pub disabled: bool,
+    pub required: bool,
+    pub readonly: bool,
+    pub invalid: bool,
+    pub class: String,
+    pub aria_label: Option<String>,
+    pub aria_describedby: Option<String>,
+}
+
+/// Functional component adapter for [`Textarea`], enabling `<Textarea ... />` in `rsx!`.
+#[allow(non_snake_case)]
+pub fn Textarea(props: TextareaProps) -> Node {
+    let mut t = Textarea::new();
+    if let Some(n) = props.name {
+        t = t.name(n);
+    }
+    if let Some(v) = props.value {
+        t = t.value(v);
+    }
+    if let Some(p) = props.placeholder {
+        t = t.placeholder(p);
+    }
+    if let Some(id) = props.id {
+        t = t.id(id);
+    }
+    if let Some(rows) = props.rows {
+        t = t.rows(rows);
+    }
+    if let Some(cols) = props.cols {
+        t = t.cols(cols);
+    }
+    if props.disabled {
+        t = t.disabled(true);
+    }
+    if props.required {
+        t = t.required(true);
+    }
+    if props.readonly {
+        t = t.readonly(true);
+    }
+    if props.invalid {
+        t = t.invalid(true);
+    }
+    if !props.class.is_empty() {
+        t = t.class(props.class);
+    }
+    if let Some(al) = props.aria_label {
+        t = t.aria_label(al);
+    }
+    if let Some(ad) = props.aria_describedby {
+        t = t.aria_describedby(ad);
+    }
+    t.render()
+}
+
+/// Properties for constructing a [`Select`] via `rsx!`.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct SelectProps {
+    pub name: Option<String>,
+    pub id: Option<String>,
+    pub options: Vec<SelectOption>,
+    pub placeholder: Option<String>,
+    pub disabled: bool,
+    pub required: bool,
+    pub multiple: bool,
+    pub size_attr: Option<u32>,
+    pub class: String,
+    pub aria_label: Option<String>,
+    pub children: Vec<Node>,
+}
+
+/// Functional component adapter for [`Select`], enabling `<Select ...>...</Select>` in `rsx!`.
+#[allow(non_snake_case)]
+pub fn Select(props: SelectProps) -> Node {
+    let mut s = Select::new();
+    if let Some(n) = props.name {
+        s = s.name(n);
+    }
+    if let Some(id) = props.id {
+        s = s.id(id);
+    }
+    if !props.options.is_empty() {
+        s = s.options(props.options);
+    }
+    if let Some(p) = props.placeholder {
+        s = s.placeholder(p);
+    }
+    if props.disabled {
+        s = s.disabled(true);
+    }
+    if props.required {
+        s = s.required(true);
+    }
+    if props.multiple {
+        s = s.multiple(true);
+    }
+    if let Some(sz) = props.size_attr {
+        s = s.size_attr(sz);
+    }
+    if !props.class.is_empty() {
+        s = s.class(props.class);
+    }
+    if let Some(al) = props.aria_label {
+        s = s.aria_label(al);
+    }
+    let mut node = s.render();
+    if !props.children.is_empty() {
+        if let Node::Element(ref mut el) = node {
+            el.children.extend(props.children);
+        }
+    }
+    node
+}
+
+/// Properties for constructing a [`Checkbox`] via `rsx!`.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct CheckboxProps {
+    pub name: Option<String>,
+    pub value: Option<String>,
+    pub id: Option<String>,
+    pub checked: bool,
+    pub disabled: bool,
+    pub required: bool,
+    pub label: Option<String>,
+    pub description: Option<String>,
+    pub class: String,
+}
+
+/// Functional component adapter for [`Checkbox`], enabling `<Checkbox ... />` in `rsx!`.
+#[allow(non_snake_case)]
+pub fn Checkbox(props: CheckboxProps) -> Node {
+    let mut c = Checkbox::new()
+        .checked(props.checked)
+        .disabled(props.disabled)
+        .required(props.required);
+    if let Some(n) = props.name {
+        c = c.name(n);
+    }
+    if let Some(v) = props.value {
+        c = c.value(v);
+    }
+    if let Some(id) = props.id {
+        c = c.id(id);
+    }
+    if let Some(l) = props.label {
+        c = c.label(l);
+    }
+    if let Some(d) = props.description {
+        c = c.description(d);
+    }
+    if !props.class.is_empty() {
+        c = c.class(props.class);
+    }
+    c.render()
+}
+
+/// Properties for constructing a [`Radio`] via `rsx!`.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct RadioProps {
+    pub name: String,
+    pub value: String,
+    pub id: Option<String>,
+    pub checked: bool,
+    pub disabled: bool,
+    pub required: bool,
+    pub label: Option<String>,
+    pub class: String,
+}
+
+/// Functional component adapter for [`Radio`], enabling `<Radio ... />` in `rsx!`.
+#[allow(non_snake_case)]
+pub fn Radio(props: RadioProps) -> Node {
+    let mut r = Radio::new(props.name, props.value)
+        .checked(props.checked)
+        .disabled(props.disabled)
+        .required(props.required);
+    if let Some(id) = props.id {
+        r = r.id(id);
+    }
+    if let Some(l) = props.label {
+        r = r.label(l);
+    }
+    if !props.class.is_empty() {
+        r = r.class(props.class);
+    }
+    r.render()
+}
+
+/// Properties for constructing a [`Switch`] via `rsx!`.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct SwitchProps {
+    pub name: Option<String>,
+    pub id: Option<String>,
+    pub label: Option<String>,
+    pub description: Option<String>,
+    pub checked: bool,
+    pub disabled: bool,
+    pub size: Option<String>,
+    pub class: String,
+}
+
+/// Functional component adapter for [`Switch`], enabling `<Switch ... />` in `rsx!`.
+#[allow(non_snake_case)]
+pub fn Switch(props: SwitchProps) -> Node {
+    let mut s = Switch::new()
+        .checked(props.checked)
+        .disabled(props.disabled);
+    if let Some(n) = props.name {
+        s = s.name(n);
+    }
+    if let Some(id) = props.id {
+        s = s.id(id);
+    }
+    if let Some(l) = props.label {
+        s = s.label(l);
+    }
+    if let Some(d) = props.description {
+        s = s.description(d);
+    }
+    if let Some(sz) = props.size {
+        match sz.to_lowercase().as_str() {
+            "sm" => s = s.size(Size::Sm),
+            "md" => s = s.size(Size::Md),
+            "lg" => s = s.size(Size::Lg),
+            "xl" => s = s.size(Size::Xl),
+            _ => {}
+        }
+    }
+    if !props.class.is_empty() {
+        s = s.class(props.class);
+    }
+    s.render()
+}
+
+/// Properties for constructing a [`Slider`] via `rsx!`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SliderProps {
+    pub name: Option<String>,
+    pub id: Option<String>,
+    pub label: Option<String>,
+    pub value: f64,
+    pub min: f64,
+    pub max: f64,
+    pub step: f64,
+    pub unit: Option<String>,
+    pub disabled: bool,
+    pub class: String,
+}
+
+impl Default for SliderProps {
+    fn default() -> Self {
+        Self {
+            name: None,
+            id: None,
+            label: None,
+            value: 0.0,
+            min: 0.0,
+            max: 100.0,
+            step: 1.0,
+            unit: None,
+            disabled: false,
+            class: String::new(),
+        }
+    }
+}
+
+/// Functional component adapter for [`Slider`], enabling `<Slider ... />` in `rsx!`.
+#[allow(non_snake_case)]
+pub fn Slider(props: SliderProps) -> Node {
+    let mut sl = Slider::new()
+        .value(props.value)
+        .min(props.min)
+        .max(props.max)
+        .step(props.step)
+        .disabled(props.disabled);
+    if let Some(n) = props.name {
+        sl = sl.name(n);
+    }
+    if let Some(id) = props.id {
+        sl = sl.id(id);
+    }
+    if let Some(l) = props.label {
+        sl = sl.label(l);
+    }
+    if let Some(u) = props.unit {
+        sl = sl.unit(u);
+    }
+    if !props.class.is_empty() {
+        sl = sl.class(props.class);
+    }
+    sl.render()
+}
+
+/// Properties for constructing a [`RangeSlider`] via `rsx!`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RangeSliderProps {
+    pub min_name: String,
+    pub max_name: String,
+    pub label: Option<String>,
+    pub min_value: f64,
+    pub max_value: f64,
+    pub min: f64,
+    pub max: f64,
+    pub step: f64,
+    pub unit: Option<String>,
+    pub class: String,
+}
+
+impl Default for RangeSliderProps {
+    fn default() -> Self {
+        Self {
+            min_name: "min".to_string(),
+            max_name: "max".to_string(),
+            label: None,
+            min_value: 0.0,
+            max_value: 100.0,
+            min: 0.0,
+            max: 100.0,
+            step: 1.0,
+            unit: None,
+            class: String::new(),
+        }
+    }
+}
+
+/// Functional component adapter for [`RangeSlider`], enabling `<RangeSlider ... />` in `rsx!`.
+#[allow(non_snake_case)]
+pub fn RangeSlider(props: RangeSliderProps) -> Node {
+    let mut rs = RangeSlider::new(props.min_name, props.max_name)
+        .values(props.min_value, props.max_value)
+        .bounds(props.min, props.max)
+        .step(props.step);
+    if let Some(l) = props.label {
+        rs = rs.label(l);
+    }
+    if let Some(u) = props.unit {
+        rs = rs.unit(u);
+    }
+    if !props.class.is_empty() {
+        rs = rs.class(props.class);
+    }
+    rs.render()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

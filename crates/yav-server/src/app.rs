@@ -48,6 +48,20 @@ impl BoxedHandler {
         }))
     }
 
+    /// Create a handler from an async function or closure taking [`RouteContext`](crate::action::RouteContext).
+    pub fn from_ctx<F, Fut, R>(f: F) -> Self
+    where
+        F: Fn(crate::action::RouteContext) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = R> + Send + 'static,
+        R: IntoResponse + 'static,
+    {
+        BoxedHandler(Arc::new(move |req| {
+            let ctx = crate::action::RouteContext::from_request(&req);
+            let fut = f(ctx);
+            Box::pin(async move { fut.await.into_response() })
+        }))
+    }
+
     /// Execute the handler for an incoming request.
     pub async fn call(&self, req: Request) -> Response {
         (self.0)(req).await
@@ -60,19 +74,25 @@ impl std::fmt::Debug for BoxedHandler {
     }
 }
 
+/// Marker type for [`IntoBoxedHandler`] implementations taking a [`Request`].
+pub struct RequestHandlerMarker;
+
+/// Marker type for [`IntoBoxedHandler`] implementations taking zero arguments.
+pub struct ZeroArgHandlerMarker;
+
 /// Trait for types convertible into a [`BoxedHandler`].
-pub trait IntoBoxedHandler: Send + Sync + 'static {
+pub trait IntoBoxedHandler<M = RequestHandlerMarker>: Send + Sync + 'static {
     /// Convert `self` into a [`BoxedHandler`].
     fn into_boxed_handler(self) -> BoxedHandler;
 }
 
-impl IntoBoxedHandler for BoxedHandler {
+impl IntoBoxedHandler<RequestHandlerMarker> for BoxedHandler {
     fn into_boxed_handler(self) -> BoxedHandler {
         self
     }
 }
 
-impl<F, Fut, R> IntoBoxedHandler for F
+impl<F, Fut, R> IntoBoxedHandler<RequestHandlerMarker> for F
 where
     F: Fn(Request) -> Fut + Send + Sync + 'static,
     Fut: Future<Output = R> + Send + 'static,
@@ -80,6 +100,17 @@ where
 {
     fn into_boxed_handler(self) -> BoxedHandler {
         BoxedHandler::new(self)
+    }
+}
+
+impl<F, Fut, R> IntoBoxedHandler<ZeroArgHandlerMarker> for F
+where
+    F: Fn() -> Fut + Send + Sync + 'static,
+    Fut: Future<Output = R> + Send + 'static,
+    R: IntoResponse + 'static,
+{
+    fn into_boxed_handler(self) -> BoxedHandler {
+        BoxedHandler::from_zero_arg(self)
     }
 }
 
@@ -95,7 +126,11 @@ pub struct AppRoute {
 
 impl AppRoute {
     /// Create a new application route, automatically normalizing `:param` and `*wildcard` to Axum syntax.
-    pub fn new(path: impl Into<String>, method: Method, handler: impl IntoBoxedHandler) -> Self {
+    pub fn new<M>(
+        path: impl Into<String>,
+        method: Method,
+        handler: impl IntoBoxedHandler<M>,
+    ) -> Self {
         let raw_path: String = path.into();
         let normalized = yav_router::route::to_axum_pattern(&raw_path);
         Self {
@@ -350,7 +385,7 @@ impl YavApp {
 
     /// Configure a custom 404 Not Found fallback handler.
     #[must_use]
-    pub fn not_found_handler(mut self, handler: impl IntoBoxedHandler) -> Self {
+    pub fn not_found_handler<M>(mut self, handler: impl IntoBoxedHandler<M>) -> Self {
         self.not_found_handler = Some(handler.into_boxed_handler());
         self
     }
@@ -443,11 +478,11 @@ impl YavApp {
 
     /// Add a route with a custom path, HTTP method, and asynchronous handler.
     #[must_use]
-    pub fn route(
+    pub fn route<M>(
         mut self,
         path: impl Into<String>,
         method: Method,
-        handler: impl IntoBoxedHandler,
+        handler: impl IntoBoxedHandler<M>,
     ) -> Self {
         self.routes.push(AppRoute::new(path, method, handler));
         self
@@ -455,32 +490,87 @@ impl YavApp {
 
     /// Register a `GET` route.
     #[must_use]
-    pub fn get(self, path: impl Into<String>, handler: impl IntoBoxedHandler) -> Self {
+    pub fn get<M>(self, path: impl Into<String>, handler: impl IntoBoxedHandler<M>) -> Self {
         self.route(path, Method::GET, handler)
     }
 
     /// Register a `POST` route.
     #[must_use]
-    pub fn post(self, path: impl Into<String>, handler: impl IntoBoxedHandler) -> Self {
+    pub fn post<M>(self, path: impl Into<String>, handler: impl IntoBoxedHandler<M>) -> Self {
         self.route(path, Method::POST, handler)
     }
 
     /// Register a `PUT` route.
     #[must_use]
-    pub fn put(self, path: impl Into<String>, handler: impl IntoBoxedHandler) -> Self {
+    pub fn put<M>(self, path: impl Into<String>, handler: impl IntoBoxedHandler<M>) -> Self {
         self.route(path, Method::PUT, handler)
     }
 
     /// Register a `DELETE` route.
     #[must_use]
-    pub fn delete(self, path: impl Into<String>, handler: impl IntoBoxedHandler) -> Self {
+    pub fn delete<M>(self, path: impl Into<String>, handler: impl IntoBoxedHandler<M>) -> Self {
         self.route(path, Method::DELETE, handler)
     }
 
     /// Register a `PATCH` route.
     #[must_use]
-    pub fn patch(self, path: impl Into<String>, handler: impl IntoBoxedHandler) -> Self {
+    pub fn patch<M>(self, path: impl Into<String>, handler: impl IntoBoxedHandler<M>) -> Self {
         self.route(path, Method::PATCH, handler)
+    }
+
+    /// Register a `GET` route handler that receives [`RouteContext`](crate::action::RouteContext) directly.
+    #[must_use]
+    pub fn get_ctx<F, Fut, R>(self, path: impl Into<String>, handler: F) -> Self
+    where
+        F: Fn(crate::action::RouteContext) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = R> + Send + 'static,
+        R: IntoResponse + 'static,
+    {
+        self.route(path, Method::GET, BoxedHandler::from_ctx(handler))
+    }
+
+    /// Register a `POST` route handler that receives [`RouteContext`](crate::action::RouteContext) directly.
+    #[must_use]
+    pub fn post_ctx<F, Fut, R>(self, path: impl Into<String>, handler: F) -> Self
+    where
+        F: Fn(crate::action::RouteContext) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = R> + Send + 'static,
+        R: IntoResponse + 'static,
+    {
+        self.route(path, Method::POST, BoxedHandler::from_ctx(handler))
+    }
+
+    /// Register a `PUT` route handler that receives [`RouteContext`](crate::action::RouteContext) directly.
+    #[must_use]
+    pub fn put_ctx<F, Fut, R>(self, path: impl Into<String>, handler: F) -> Self
+    where
+        F: Fn(crate::action::RouteContext) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = R> + Send + 'static,
+        R: IntoResponse + 'static,
+    {
+        self.route(path, Method::PUT, BoxedHandler::from_ctx(handler))
+    }
+
+    /// Register a `DELETE` route handler that receives [`RouteContext`](crate::action::RouteContext) directly.
+    #[must_use]
+    pub fn delete_ctx<F, Fut, R>(self, path: impl Into<String>, handler: F) -> Self
+    where
+        F: Fn(crate::action::RouteContext) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = R> + Send + 'static,
+        R: IntoResponse + 'static,
+    {
+        self.route(path, Method::DELETE, BoxedHandler::from_ctx(handler))
+    }
+
+    /// Register a `PATCH` route handler that receives [`RouteContext`](crate::action::RouteContext) directly.
+    #[must_use]
+    pub fn patch_ctx<F, Fut, R>(self, path: impl Into<String>, handler: F) -> Self
+    where
+        F: Fn(crate::action::RouteContext) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = R> + Send + 'static,
+        R: IntoResponse + 'static,
+    {
+        self.route(path, Method::PATCH, BoxedHandler::from_ctx(handler))
     }
 
     /// Register an OpenAPI 3.1 specification and automatically mount interactive Scalar and Swagger API documentation.
@@ -575,8 +665,16 @@ impl YavApp {
 
         for (path, method_handlers) in routes_by_path {
             let mut method_router = MethodRouter::new();
-            for (method, handler) in method_handlers {
-                let filter = method_to_filter(&method);
+            let has_override_target = method_handlers
+                .iter()
+                .any(|(m, _)| matches!(*m, Method::PUT | Method::DELETE | Method::PATCH));
+            let handlers_arc = Arc::new(method_handlers);
+
+            for (method, handler) in handlers_arc.iter() {
+                if *method == Method::POST && has_override_target {
+                    continue;
+                }
+                let filter = method_to_filter(method);
                 let h = handler.clone();
                 method_router = method_router.on(
                     filter,
@@ -597,6 +695,56 @@ impl YavApp {
                     },
                 );
             }
+
+            // Support HTML Form method spoofing (`_method=PUT|DELETE|PATCH` or `X-HTTP-Method-Override`) on POST requests
+            if has_override_target {
+                let all_handlers = handlers_arc.clone();
+                method_router = method_router.on(
+                    MethodFilter::POST,
+                    move |raw_params: axum::extract::RawPathParams, mut req: Request| {
+                        let all_handlers = all_handlers.clone();
+                        async move {
+                            let mut params_map = std::collections::HashMap::new();
+                            for (k, v) in raw_params.iter() {
+                                params_map.insert(
+                                    k.to_string(),
+                                    yav_router::matcher::percent_decode_path_segment(v),
+                                );
+                            }
+                            req.extensions_mut()
+                                .insert(crate::action::RouteParams(params_map));
+
+                            let (mut effective_method, mut req) =
+                                resolve_post_method_override(req).await;
+                            if effective_method != Method::POST {
+                                *req.method_mut() = effective_method.clone();
+                            }
+
+                            if let Some((_, h)) =
+                                all_handlers.iter().find(|(m, _)| *m == effective_method)
+                            {
+                                return h.call(req).await;
+                            }
+
+                            // Method not allowed on this route
+                            effective_method = Method::POST;
+                            let _ = effective_method;
+                            let allow_list = all_handlers
+                                .iter()
+                                .map(|(m, _)| m.as_str())
+                                .collect::<Vec<_>>()
+                                .join(", ");
+                            (
+                                axum::http::StatusCode::METHOD_NOT_ALLOWED,
+                                [(axum::http::header::ALLOW, allow_list)],
+                                "Method Not Allowed",
+                            )
+                                .into_response()
+                        }
+                    },
+                );
+            }
+
             router = router.route(&path, method_router);
         }
 
@@ -812,6 +960,72 @@ pub fn method_to_filter(method: &Method) -> MethodFilter {
         // Unreachable for standard methods; fallback safely to GET
         _ => MethodFilter::GET,
     }
+}
+
+fn parse_override_method(raw: &str) -> Option<Method> {
+    match raw.trim().to_ascii_uppercase().as_str() {
+        "PUT" => Some(Method::PUT),
+        "DELETE" => Some(Method::DELETE),
+        "PATCH" => Some(Method::PATCH),
+        _ => None,
+    }
+}
+
+/// Inspects an incoming `POST` request for HTTP method spoofing via:
+/// 1. `X-HTTP-Method-Override` header
+/// 2. `?_method=PUT|DELETE|PATCH` query parameter
+/// 3. `_method=PUT|DELETE|PATCH` field in an `application/x-www-form-urlencoded` form body
+async fn resolve_post_method_override(req: Request) -> (Method, Request) {
+    // 1. Check X-HTTP-Method-Override header
+    if let Some(hdr) = req
+        .headers()
+        .get("x-http-method-override")
+        .and_then(|v| v.to_str().ok())
+    {
+        if let Some(m) = parse_override_method(hdr) {
+            return (m, req);
+        }
+    }
+
+    // 2. Check ?_method=... in query string
+    if let Some(q) = req.uri().query() {
+        let query_map = yav_router::parse_query_string(q);
+        if let Some(val) = query_map.get("_method") {
+            if let Some(m) = parse_override_method(val) {
+                return (m, req);
+            }
+        }
+    }
+
+    // 3. Check application/x-www-form-urlencoded body for _method=...
+    let is_form = req
+        .headers()
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .map(|ct| ct.starts_with("application/x-www-form-urlencoded"))
+        .unwrap_or(true);
+
+    if is_form {
+        let (parts, body) = req.into_parts();
+        if let Ok(bytes) = axum::body::to_bytes(body, 64 * 1024).await {
+            let mut detected = Method::POST;
+            if let Ok(body_str) = std::str::from_utf8(&bytes) {
+                let form_map = yav_router::parse_query_string(body_str);
+                if let Some(val) = form_map.get("_method") {
+                    if let Some(m) = parse_override_method(val) {
+                        detected = m;
+                    }
+                }
+            }
+            let rebuilt = Request::from_parts(parts, axum::body::Body::from(bytes));
+            return (detected, rebuilt);
+        } else {
+            let rebuilt = Request::from_parts(parts, axum::body::Body::empty());
+            return (Method::POST, rebuilt);
+        }
+    }
+
+    (Method::POST, req)
 }
 
 #[cfg(test)]
@@ -1244,5 +1458,77 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(std::str::from_utf8(&body2).unwrap(), "<h1>Custom 404</h1>");
+    }
+
+    #[tokio::test]
+    async fn test_http_method_override_and_ctx_handlers() {
+        let app = YavApp::new()
+            .get("/zero", || async {
+                html_response(StatusCode::OK, "zero-arg")
+            })
+            .get_ctx("/users/:id", |ctx| async move {
+                let id = ctx.param("id").unwrap_or("0");
+                html_response(StatusCode::OK, format!("user:{id}"))
+            })
+            .delete_ctx("/items/:id", |ctx| async move {
+                let id = ctx.param("id").unwrap_or("0");
+                html_response(StatusCode::OK, format!("deleted:{id}"))
+            })
+            .put_ctx("/items/:id", |ctx| async move {
+                let id = ctx.param("id").unwrap_or("0");
+                html_response(StatusCode::OK, format!("updated:{id}"))
+            });
+
+        let router = app.into_router();
+
+        // 1. Zero-arg handler
+        let req_zero = Request::builder()
+            .uri("/zero")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let resp_zero = router.clone().oneshot(req_zero).await.unwrap();
+        assert_eq!(resp_zero.status(), StatusCode::OK);
+
+        // 2. Context handler
+        let req_ctx = Request::builder()
+            .uri("/users/42")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let resp_ctx = router.clone().oneshot(req_ctx).await.unwrap();
+        let body_ctx = axum::body::to_bytes(resp_ctx.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(&body_ctx[..], b"user:42");
+
+        // 3. Form POST with _method=DELETE
+        let req_del = Request::builder()
+            .method("POST")
+            .uri("/items/99")
+            .header(
+                axum::http::header::CONTENT_TYPE,
+                "application/x-www-form-urlencoded",
+            )
+            .body(axum::body::Body::from("_method=DELETE&confirm=yes"))
+            .unwrap();
+        let resp_del = router.clone().oneshot(req_del).await.unwrap();
+        assert_eq!(resp_del.status(), StatusCode::OK);
+        let body_del = axum::body::to_bytes(resp_del.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(&body_del[..], b"deleted:99");
+
+        // 4. POST with X-HTTP-Method-Override: PUT
+        let req_put = Request::builder()
+            .method("POST")
+            .uri("/items/77")
+            .header("x-http-method-override", "PUT")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let resp_put = router.oneshot(req_put).await.unwrap();
+        assert_eq!(resp_put.status(), StatusCode::OK);
+        let body_put = axum::body::to_bytes(resp_put.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(&body_put[..], b"updated:77");
     }
 }

@@ -292,6 +292,53 @@ impl<'a> IntoNode for Icon<'a> {
     }
 }
 
+/// Properties for constructing an [`Icon`] via `rsx!`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct IconProps {
+    pub name: String,
+    pub family: Option<String>,
+    pub style: Option<String>,
+    pub size: Option<String>,
+    pub class: Option<String>,
+    pub aria_label: Option<String>,
+}
+
+/// Functional component adapter for [`Icon`], enabling `<Icon name="..." />` in `rsx!`.
+#[allow(non_snake_case)]
+pub fn Icon(props: IconProps) -> yav_core::Node {
+    let mut icon = Icon::new(&props.name);
+    if let Some(ref fam) = props.family {
+        if let Some(parsed) = IconFamily::parse_str(fam) {
+            icon = icon.family(parsed);
+        }
+    }
+    if let Some(ref sty) = props.style {
+        if let Some(parsed) = IconStyle::parse_str(sty) {
+            icon = icon.style(parsed);
+        }
+    }
+    if let Some(ref sz) = props.size {
+        let icon_size = match sz.trim().to_ascii_lowercase().as_str() {
+            "sm" => IconSize::Sm,
+            "md" => IconSize::Md,
+            "lg" => IconSize::Lg,
+            "xl" => IconSize::Xl,
+            other => other
+                .parse::<u32>()
+                .map(IconSize::Custom)
+                .unwrap_or(IconSize::Md),
+        };
+        icon = icon.size(icon_size);
+    }
+    if let Some(ref cls) = props.class {
+        icon = icon.class(cls);
+    }
+    if let Some(ref al) = props.aria_label {
+        icon = icon.aria_label(al);
+    }
+    icon.render_node()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

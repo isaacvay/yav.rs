@@ -202,13 +202,9 @@ fn parse_node(reader: &mut TokenReader) -> Result<RsxNode> {
                 _ => unreachable!(),
             };
             let span = lit.span();
-            let repr = lit.to_string();
-
-            if repr.starts_with('"') && repr.ends_with('"') && repr.len() >= 2 {
-                let inner = unescape_string_literal(&repr[1..repr.len() - 1]);
-                Ok(RsxNode::Text(inner, span))
-            } else {
-                Ok(RsxNode::Text(repr, span))
+            match syn::Lit::new(lit.clone()) {
+                syn::Lit::Str(lit_str) => Ok(RsxNode::Text(lit_str.value(), span)),
+                _ => Ok(RsxNode::Text(lit.to_string(), span)),
             }
         }
 
@@ -275,7 +271,12 @@ fn parse_element(reader: &mut TokenReader) -> Result<RsxNode> {
 
     // Parse tag name
     let (tag, tag_span) = parse_tag_name(reader)?;
-    let is_component = tag.chars().next().is_some_and(|c| c.is_uppercase());
+    let last_segment = tag.rsplit("::").next().unwrap_or(&tag);
+    let is_component = tag.contains("::")
+        || last_segment
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_uppercase());
 
     // Parse attributes until `>` or `/>`
     let mut attributes = Vec::new();
@@ -385,7 +386,11 @@ fn parse_attribute(reader: &mut TokenReader) -> Result<RsxAttribute> {
 fn parse_attr_name(reader: &mut TokenReader) -> Result<(String, Span)> {
     let ident = reader.expect_ident()?;
     let span = ident.span();
-    let mut name = ident.to_string();
+    let ident_str = ident.to_string();
+    let mut name = ident_str
+        .strip_prefix("r#")
+        .unwrap_or(&ident_str)
+        .to_string();
 
     // Allow hyphenated and colon-separated names: `data-id`, `aria-label`, `client:load`, `class:active`
     loop {
@@ -397,8 +402,9 @@ fn parse_attr_name(reader: &mut TokenReader) -> Result<(String, Span)> {
                     Some(TokenTree::Ident(_)) => {
                         reader.next(); // consume separator
                         let next = reader.expect_ident()?;
+                        let next_str = next.to_string();
                         name.push(sep);
-                        name.push_str(&next.to_string());
+                        name.push_str(next_str.strip_prefix("r#").unwrap_or(&next_str));
                     }
                     _ => break,
                 }
@@ -418,13 +424,12 @@ fn parse_attr_value(reader: &mut TokenReader) -> Result<RsxAttrValue> {
                 _ => unreachable!(),
             };
             let span = lit.span();
-            let repr = lit.to_string();
-            if repr.starts_with('"') && repr.ends_with('"') && repr.len() >= 2 {
-                let inner = unescape_string_literal(&repr[1..repr.len() - 1]);
-                Ok(RsxAttrValue::Str(inner, span))
-            } else {
-                let stream = quote::quote!(#lit);
-                Ok(RsxAttrValue::Expr(stream, span))
+            match syn::Lit::new(lit.clone()) {
+                syn::Lit::Str(lit_str) => Ok(RsxAttrValue::Str(lit_str.value(), span)),
+                _ => {
+                    let stream = quote::quote!(#lit);
+                    Ok(RsxAttrValue::Expr(stream, span))
+                }
             }
         }
         Some(TokenTree::Group(g)) if g.delimiter() == Delimiter::Brace => {
@@ -459,7 +464,7 @@ fn parse_tag_name(reader: &mut TokenReader) -> Result<(String, Span)> {
     let span = ident.span();
     let mut name = ident.to_string();
 
-    // Allow hyphenated tag names: `my-component`
+    // Allow hyphenated tag names (`my-component`) and module-qualified component paths (`ui::Button`)
     loop {
         match reader.peek() {
             Some(TokenTree::Punct(p)) if p.as_char() == '-' => {
@@ -473,35 +478,23 @@ fn parse_tag_name(reader: &mut TokenReader) -> Result<(String, Span)> {
                     _ => break,
                 }
             }
+            Some(TokenTree::Punct(p)) if p.as_char() == ':' => {
+                match (reader.peek_nth(1), reader.peek_nth(2)) {
+                    (Some(TokenTree::Punct(p2)), Some(TokenTree::Ident(_)))
+                        if p2.as_char() == ':' =>
+                    {
+                        reader.next(); // consume first `:`
+                        reader.next(); // consume second `:`
+                        let next = reader.expect_ident()?;
+                        name.push_str("::");
+                        name.push_str(&next.to_string());
+                    }
+                    _ => break,
+                }
+            }
             _ => break,
         }
     }
 
     Ok((name, span))
-}
-
-fn unescape_string_literal(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let mut chars = s.chars();
-    while let Some(ch) = chars.next() {
-        if ch == '\\' {
-            match chars.next() {
-                Some('n') => out.push('\n'),
-                Some('r') => out.push('\r'),
-                Some('t') => out.push('\t'),
-                Some('\\') => out.push('\\'),
-                Some('"') => out.push('"'),
-                Some('\'') => out.push('\''),
-                Some('0') => out.push('\0'),
-                Some(other) => {
-                    out.push('\\');
-                    out.push(other);
-                }
-                None => out.push('\\'),
-            }
-        } else {
-            out.push(ch);
-        }
-    }
-    out
 }

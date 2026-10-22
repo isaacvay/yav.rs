@@ -187,7 +187,7 @@ pub fn match_route(route: &Route, method: &str, raw_url: &str) -> Option<RouteMa
                         }
                     }
                     RouteSegment::Dynamic(param_name) => {
-                        params.insert(param_name.clone(), percent_decode(req_seg));
+                        params.insert(param_name.clone(), percent_decode_path_segment(req_seg));
                     }
                     RouteSegment::CatchAll(_) => unreachable!(),
                 }
@@ -214,7 +214,7 @@ pub fn match_route(route: &Route, method: &str, raw_url: &str) -> Option<RouteMa
                         }
                     }
                     RouteSegment::Dynamic(param_name) => {
-                        params.insert(param_name.clone(), percent_decode(req_seg));
+                        params.insert(param_name.clone(), percent_decode_path_segment(req_seg));
                     }
                     RouteSegment::CatchAll(_) => unreachable!(),
                 }
@@ -231,7 +231,10 @@ pub fn match_route(route: &Route, method: &str, raw_url: &str) -> Option<RouteMa
                         }
                     }
                     RouteSegment::Dynamic(param_name) => {
-                        params.insert(param_name.clone(), percent_decode(req_segments[req_idx]));
+                        params.insert(
+                            param_name.clone(),
+                            percent_decode_path_segment(req_segments[req_idx]),
+                        );
                     }
                     RouteSegment::CatchAll(_) => unreachable!(),
                 }
@@ -244,11 +247,11 @@ pub fn match_route(route: &Route, method: &str, raw_url: &str) -> Option<RouteMa
             };
 
             let remaining_slice = &req_segments[prefix_len..req_segments.len() - suffix_len];
-            let remaining_joined = remaining_slice.join("/");
-            params.insert(
-                catch_all_name.to_string(),
-                percent_decode(&remaining_joined),
-            );
+            let remaining_decoded: Vec<String> = remaining_slice
+                .iter()
+                .map(|seg| percent_decode_path_segment(seg))
+                .collect();
+            params.insert(catch_all_name.to_string(), remaining_decoded.join("/"));
 
             Some(RouteMatch::new(route.clone(), params, query))
         }

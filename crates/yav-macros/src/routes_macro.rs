@@ -149,10 +149,14 @@ pub fn auto_routes_impl(input: AutoRoutesInput) -> syn::Result<TokenStream> {
                                         url_pattern.as_str(),
                                         syn::Ident::new("DELETE", proc_macro2::Span::call_site()),
                                     ))
+                                } else if fn_name == "patch" || fn_name.ends_with("_patch") {
+                                    Some((
+                                        url_pattern.as_str(),
+                                        syn::Ident::new("PATCH", proc_macro2::Span::call_site()),
+                                    ))
                                 } else if fn_name == "handler"
                                     || fn_name == "page"
                                     || fn_name == stem
-                                    || fn_name.starts_with(stem)
                                     || (stem == "index" && fn_name == "index")
                                     || (stem.starts_with('_')
                                         && (fn_name == "detail" || fn_name.ends_with("_detail")))

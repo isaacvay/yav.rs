@@ -263,6 +263,123 @@ impl_into_node_for_display!(
     i8, i16, i32, i64, i128, isize, u8, u16, u32, u64, u128, usize, f32, f64, bool, char
 );
 
+// ── IntoAttributeValue conversion trait ─────────────────────────────
+
+/// Trait for types that can be converted into an [`AttributeValue`].
+///
+/// Used by the `rsx!` macro for dynamic attribute expressions (`attr={expr}`):
+/// - `bool` converts to [`AttributeValue::Bool`] (`false` omits the attribute, `true` renders a boolean attribute)
+/// - `Option<T>` renders the inner value when `Some(v)` or omits the attribute when `None`
+/// - Strings and numbers convert to [`AttributeValue::String`]
+pub trait IntoAttributeValue {
+    fn into_attribute_value(self) -> AttributeValue;
+}
+
+impl IntoAttributeValue for AttributeValue {
+    fn into_attribute_value(self) -> AttributeValue {
+        self
+    }
+}
+
+impl IntoAttributeValue for bool {
+    fn into_attribute_value(self) -> AttributeValue {
+        AttributeValue::Bool(self)
+    }
+}
+
+impl IntoAttributeValue for String {
+    fn into_attribute_value(self) -> AttributeValue {
+        AttributeValue::String(self)
+    }
+}
+
+impl IntoAttributeValue for &String {
+    fn into_attribute_value(self) -> AttributeValue {
+        AttributeValue::String(self.clone())
+    }
+}
+
+impl IntoAttributeValue for &str {
+    fn into_attribute_value(self) -> AttributeValue {
+        AttributeValue::String(self.to_string())
+    }
+}
+
+impl IntoAttributeValue for Cow<'_, str> {
+    fn into_attribute_value(self) -> AttributeValue {
+        AttributeValue::String(self.into_owned())
+    }
+}
+
+impl<T: IntoAttributeValue> IntoAttributeValue for Option<T> {
+    fn into_attribute_value(self) -> AttributeValue {
+        match self {
+            Some(v) => v.into_attribute_value(),
+            None => AttributeValue::Bool(false),
+        }
+    }
+}
+
+macro_rules! impl_into_attr_value_for_display {
+    ($($t:ty),*) => {
+        $(
+            impl IntoAttributeValue for $t {
+                fn into_attribute_value(self) -> AttributeValue {
+                    AttributeValue::String(self.to_string())
+                }
+            }
+        )*
+    };
+}
+
+impl_into_attr_value_for_display!(
+    i8, i16, i32, i64, i128, isize, u8, u16, u32, u64, u128, usize, f32, f64, char
+);
+
+// ── IntoPropValue conversion trait for component props in rsx! ──────
+
+/// Trait for converting string literals in `rsx!` into component property types
+/// (`String`, `Option<String>`, `&str`, `Option<&str>`, `Cow<str>`).
+pub trait IntoPropValue<T> {
+    fn into_prop_value(self) -> T;
+}
+
+impl IntoPropValue<String> for &str {
+    fn into_prop_value(self) -> String {
+        self.to_string()
+    }
+}
+
+impl IntoPropValue<Option<String>> for &str {
+    fn into_prop_value(self) -> Option<String> {
+        Some(self.to_string())
+    }
+}
+
+impl<'a> IntoPropValue<&'a str> for &'a str {
+    fn into_prop_value(self) -> &'a str {
+        self
+    }
+}
+
+impl<'a> IntoPropValue<Option<&'a str>> for &'a str {
+    fn into_prop_value(self) -> Option<&'a str> {
+        Some(self)
+    }
+}
+
+impl<'a> IntoPropValue<Cow<'a, str>> for &'a str {
+    fn into_prop_value(self) -> Cow<'a, str> {
+        Cow::Borrowed(self)
+    }
+}
+
+impl<'a> IntoPropValue<Option<Cow<'a, str>>> for &'a str {
+    fn into_prop_value(self) -> Option<Cow<'a, str>> {
+        Some(Cow::Borrowed(self))
+    }
+}
+
 impl fmt::Display for Node {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", crate::render::render_to_string(self))

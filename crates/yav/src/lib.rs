@@ -151,25 +151,23 @@
 //! Handlers receive a [`server::RouteContext`] allowing inspection of URL parameters, query parameters, headers,
 //! client IP, and typed dependencies:
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use yav::prelude::*;
 //!
 //! let app = YavApp::new()
 //!     // Dynamic URL parameters: /users/:id
-//!     .get("/users/:id", |ctx: RouteContext| async move {
+//!     .get_ctx("/users/:id", |ctx: RouteContext| async move {
 //!         let user_id = ctx.param("id").unwrap_or("unknown");
-//!         html_response(StatusCode::OK, rsx! {
+//!         HtmlPage::new(rsx! {
 //!             <div><h1>{ format!("User Profile #{}", user_id) }</h1></div>
 //!         })
 //!     })
-//!     // Query string parsing: /search?q=rust&limit=20
-//!     .get("/search", |ctx: RouteContext| async move {
-//!         let query = ctx.query("q").unwrap_or("");
-//!         let limit = ctx.query_as::<usize>("limit").unwrap_or(10);
-//!         json_response(StatusCode::OK, serde_json::json!({
-//!             "query": query,
-//!             "limit": limit
-//!         }))
+//!     // Query string parsing: /search?q=rust
+//!     .get_ctx("/search", |ctx: RouteContext| async move {
+//!         let query = ctx.query_val("q").unwrap_or("").to_string();
+//!         HtmlPage::new(rsx! {
+//!             <p>{ format!("Search results for: {query}") }</p>
+//!         })
 //!     });
 //! ```
 //!
@@ -252,19 +250,19 @@
 //!
 //! Yav features an integrated zero-runtime-dependency icon catalog ([`icons`]) searchable in $O(\log N)$ time:
 //!
-//! ```rust,ignore
+//! ```rust
 //! use yav::prelude::*;
 //!
 //! let view = rsx! {
 //!     <div class="flex items-center gap-3">
-//!         // Lucide stroke icons (Classic)
-//!         { render_icon("classic:check-circle", 20, "text-emerald-500") }
+//!         // Declarative <Icon /> component in RSX
+//!         <Icon name="classic:check-circle" class="text-emerald-500" />
 //!
 //!         // MynaUI modern regular & solid icons (Minimal)
-//!         { render_icon("minimal:bell", 20, "text-amber-500") }
+//!         { render_icon("minimal:bell", IconSize::Md, Some("text-amber-500"), None) }
 //!
 //!         // Phosphor bold, duotone & fill icons (System)
-//!         { render_icon("system:shield-check:bold", 24, "text-indigo-500") }
+//!         { render_icon("system:bold:shield-check", IconSize::Lg, Some("text-indigo-500"), None) }
 //!     </div>
 //! };
 //! ```
@@ -390,8 +388,8 @@ pub mod prelude {
     pub use yav_core::{
         document_shell, document_shell_with_lang, escape_attribute, escape_html, escape_url,
         provide_context, render_to_buf, render_to_string, use_context, use_context_or_default,
-        Attribute, AttributeValue, Children, Component, ContextMap, Element, I18n, IntoNode,
-        Layout, Node, PageMeta,
+        Attribute, AttributeValue, Children, Component, ContextMap, Element, I18n,
+        IntoAttributeValue, IntoNode, IntoPropValue, Layout, Node, PageMeta,
     };
 
     // Procedural Macros
@@ -420,5 +418,5 @@ pub mod prelude {
     pub use yav_ui::prelude::*;
 
     // Built-in Icon System
-    pub use yav_icons::{render_icon, Icon, IconFamily, IconSize, IconStyle};
+    pub use yav_icons::{render_icon, Icon, IconFamily, IconProps, IconSize, IconStyle};
 }

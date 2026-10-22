@@ -94,6 +94,31 @@ impl AssetManifest {
         std::fs::write(p, self.to_json())?;
         Ok(())
     }
+
+    /// Loads an `AssetManifest` from a JSON file on disk.
+    pub fn load(path: impl AsRef<Path>) -> Result<Self, AssetError> {
+        let content = std::fs::read_to_string(path.as_ref())?;
+        let entries: BTreeMap<String, String> = serde_json::from_str(&content)
+            .map_err(|e| AssetError::InvalidPath(format!("Invalid manifest JSON: {e}")))?;
+        Ok(Self { entries })
+    }
+
+    /// Resolves a public URL (such as `"/public/styles.css"` or `"/styles.css"`) to its
+    /// fingerprinted counterpart if present in the manifest, or returns the original URL.
+    pub fn resolve_url(&self, url: &str) -> String {
+        if let Some(rel) = url.strip_prefix("/public/") {
+            if let Some(fp) = self.get(rel) {
+                return format!("/public/{fp}");
+            }
+        } else if let Some(rel) = url.strip_prefix('/') {
+            if let Some(fp) = self.get(rel) {
+                return format!("/{fp}");
+            }
+        } else if let Some(fp) = self.get(url) {
+            return fp.to_string();
+        }
+        url.to_string()
+    }
 }
 
 /// Computes an 8-character hex SHA256 digest of binary content for fingerprinting.

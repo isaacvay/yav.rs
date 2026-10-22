@@ -120,17 +120,38 @@ pub async fn handler(_req: Request) -> HtmlPage {{
     let stem = last.trim_end_matches(".rs");
     if let Some(parent) = file_path.parent() {
         let mod_file = parent.join("mod.rs");
+        if !mod_file.exists() && segments.len() > 1 {
+            let _ = fs::write(&mod_file, "");
+        }
         let _ = ensure_mod_registered(&mod_file, stem, false);
     }
 
+    // Also register intermediate directories in their parent mod.rs
+    let mut curr_dir = root.join("src").join("routes");
+    for &seg in &segments[..segments.len() - 1] {
+        let parent_mod = curr_dir.join("mod.rs");
+        let _ = ensure_mod_registered(&parent_mod, seg, false);
+        curr_dir.push(seg);
+    }
+
     let route_pattern = yav_router::fs_router::file_path_to_route_pattern(&clean_path);
-    let mod_ident = if stem.contains('[') || stem.contains(']') {
-        stem.replace(['[', ']'], "")
-    } else {
-        stem.to_string()
-    };
+    let mod_chain = segments
+        .iter()
+        .map(|s| {
+            let clean = s
+                .trim_end_matches(".rs")
+                .replace(['[', ']'], "")
+                .replace('.', "_");
+            if clean.is_empty() {
+                "param".to_string()
+            } else {
+                clean
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("::");
     println!(
-        "\x1b[36m💡 Wire in main.rs:\x1b[0m .get(\"{route_pattern}\", routes::{mod_ident}::handler)"
+        "\x1b[36m💡 Wire in main.rs:\x1b[0m .get(\"{route_pattern}\", routes::{mod_chain}::handler)"
     );
 
     Ok(())
