@@ -295,12 +295,12 @@ pub async fn run(cli_port: u16) -> Result<(), Box<dyn std::error::Error>> {
                     match spawn_server(server_port, reload_port) {
                         Ok(new_child) => {
                             server_child = Some(new_child);
-                            if wait_for_server_ready(server_port, std::time::Duration::from_secs(30)).await {
+                            if wait_for_server_ready(server_port, std::time::Duration::from_secs(90)).await {
                                 println!("\x1b[32m✔ Server ready!\x1b[0m");
                                 reload_server.notify_clear_error();
                                 reload_server.notify_reload();
                             } else {
-                                eprintln!("\x1b[33m⚠️ Server did not respond within 30s\x1b[0m");
+                                eprintln!("\x1b[33m⚠️ Server did not respond within 90s\x1b[0m");
                             }
                         }
                         Err(e) => {
