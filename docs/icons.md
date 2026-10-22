@@ -53,7 +53,7 @@ If `aria_label` is omitted, the icon automatically receives `aria-hidden="true"`
 
 ## CLI Icon Explorer
 
-You can search and explore all 80+ available icons directly from your terminal using `yav icon`:
+You can search and explore all 13,000+ available icons across all three families (`Classic`, `Minimal`, `System`) directly from your terminal using `yav icon`:
 
 ```bash
 # List all built-in icons

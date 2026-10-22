@@ -197,6 +197,97 @@ pub const CSRF_FIELD_NAME: &str = "_csrf";
 /// Canonical HTTP header name for anti-CSRF token in AJAX/HTMX submissions.
 pub const CSRF_HEADER_NAME: &str = "x-csrf-token";
 
+static CSRF_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+/// Extracted URL-encoded form fields (`application/x-www-form-urlencoded`).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FormData(pub std::collections::HashMap<String, String>);
+
+impl FormData {
+    /// Create a new empty `FormData` map.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Retrieve a form field value by name.
+    pub fn get(&self, key: &str) -> Option<&str> {
+        self.0.get(key).map(|s| s.as_str())
+    }
+
+    /// Retrieve a form field value by name, or `""` if absent.
+    pub fn get_or_empty(&self, key: &str) -> &str {
+        self.get(key).unwrap_or("")
+    }
+}
+
+impl<S> axum::extract::FromRequest<S> for FormData
+where
+    S: Send + Sync,
+{
+    type Rejection = (StatusCode, &'static str);
+
+    async fn from_request(
+        req: axum::extract::Request,
+        _state: &S,
+    ) -> Result<Self, Self::Rejection> {
+        let bytes = axum::body::to_bytes(req.into_body(), 2 * 1024 * 1024)
+            .await
+            .map_err(|_| (StatusCode::PAYLOAD_TOO_LARGE, "Form body too large"))?;
+        let body_str = std::str::from_utf8(&bytes)
+            .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid UTF-8 in form body"))?;
+        Ok(FormData(yav_router::parse_query_string(body_str)))
+    }
+}
+
+/// Session-bound anti-CSRF token manager.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CsrfToken(String);
+
+impl CsrfToken {
+    /// Retrieve the existing CSRF token from the user's [`Session`](crate::session::Session),
+    /// or generate and store a new 64-character hex token if none exists.
+    pub fn from_session(session: &crate::session::Session) -> Self {
+        if let Some(existing) = session.get("_csrf_token") {
+            if !existing.is_empty() {
+                return Self(existing);
+            }
+        }
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let seq = CSRF_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let pid = std::process::id();
+        let seed = format!("yav-csrf-{nanos}-{seq}-{pid}");
+        let token = crate::session::compute_hmac_sha256(
+            seed.as_bytes(),
+            crate::session::DEFAULT_DEV_SESSION_SECRET,
+        );
+        session.set("_csrf_token", token.clone());
+        Self(token)
+    }
+
+    /// Return the raw token string.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// Render a hidden `<input type="hidden" name="_csrf" value="..." />` Virtual DOM node.
+    pub fn hidden_input(&self) -> Node {
+        csrf_field(&self.0)
+    }
+
+    /// Verify the `_csrf` field inside a submitted [`FormData`] in constant time.
+    pub fn verify(&self, form: &FormData) -> bool {
+        verify_csrf_token(&self.0, form.get_or_empty(CSRF_FIELD_NAME))
+    }
+
+    /// Verify a raw submitted token string in constant time.
+    pub fn verify_token(&self, submitted: &str) -> bool {
+        verify_csrf_token(&self.0, submitted)
+    }
+}
+
 /// Render a hidden anti-CSRF input tag suitable for inclusion inside an HTML form.
 pub fn csrf_field(token: impl Into<String>) -> Node {
     Node::Element(

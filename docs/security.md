@@ -10,72 +10,84 @@ All dynamic text expressions and attribute values inside `rsx!` are escaped auto
 - **URL Attributes (`href`, `src`, `action`)**: Dynamic URLs are checked against malicious pseudo-protocols like `javascript:`, `vbscript:`, or `data:text/html`. Dangerous URLs are automatically sanitized.
 - **Raw HTML**: Only content explicitly wrapped in `Node::raw(...)` bypasses escaping. Use with extreme caution.
 
-## 2. Cryptographic Sessions (HMAC-SHA256)
+## 2. Cryptographic Sessions & Signed Flash Cookies (HMAC-SHA256)
 
-Yav implements tamper-proof stateless cookies:
-- Sessions are signed with HMAC-SHA256 using `SESSION_SECRET` (or `YAV_SECRET`).
-- Signatures are verified using **constant-time comparisons** (`subtle::constant_time_eq`) to eliminate timing attacks.
-- Tampered or expired cookies are rejected immediately with clean error handling.
-- Flags: `HttpOnly; SameSite=Lax; Secure` (in production).
+Yav implements tamper-proof stateless cookies for both user sessions (`Session`) and one-time flash notifications (`Flash`):
+- Sessions and flash cookies are signed with HMAC-SHA256 using `SESSION_SECRET` (or `YAV_SECRET`).
+- In production mode (`YAV_ENV=production` or release build), `SESSION_SECRET` is strictly enforced; the server refuses to start with a default development secret.
+- Signatures are verified using **constant-time comparisons** (`yav_server::session::constant_time_eq`) to eliminate timing side-channels.
+- Cookie attributes (`cookie_name`, `path`, `domain`) are sanitized against header/attribute injection (`;`, `\r`, `\n`, `\0`), and payloads exceeding 4 KB (`MAX_COOKIE_VALUE_LEN = 4096`) are rejected before HMAC computation or emission.
+- Signed `Flash` cookies embed a 5-minute expiration timestamp (`DEFAULT_FLASH_TTL_SECS = 300`) to prevent replay attacks and are automatically committed or cleared by `session_middleware`.
+- Flags: `HttpOnly; SameSite=Lax; Secure` (automatically enabled in production).
 
 ## 3. Sliding-Window Rate Limiting
 
-Protect sensitive endpoints from brute-force and DDoS attacks:
+Protect sensitive endpoints from brute-force and DDoS attacks using `RateLimitConfig`:
 
 ```rust
 use yav::server::{YavApp, RateLimitConfig};
 use std::time::Duration;
 
 let app = YavApp::new()
-    .rate_limit(RateLimitConfig {
-        window: Duration::from_secs(60),
-        max_requests: 100,
-        cleanup_interval: Duration::from_secs(300),
-        path_limits: vec![
-            ("/api/login".to_string(), (10, Duration::from_secs(60))),
-        ],
-    });
+    .rate_limit(
+        RateLimitConfig::new()
+            .limit_per_window(100)
+            .window_duration(Duration::from_secs(60))
+            .trust_proxy_headers(false) // Set to true only behind a trusted reverse proxy
+    );
 ```
 
 Headers emitted:
 - `X-RateLimit-Limit`
 - `X-RateLimit-Remaining`
-- `X-RateLimit-Reset`
 - `Retry-After` (upon HTTP 429)
 
 ## 4. CSRF Protection for Forms
 
-Yav includes built-in CSRF token generation and validation helpers:
+Yav includes built-in cryptographic CSRF token generation and constant-time verification via `CsrfToken`:
 
 ```rust
 use yav::prelude::*;
+use yav::server::{CsrfToken, FormData, Session};
 
-// In your form component
-rsx! {
-    <form method="POST" action="/submit">
-        {csrf_field(&session)}
-        <input name="email" type="email" />
-        <button type="submit">"Submit"</button>
-    </form>
+// 1. In your GET page handler, bind a CSRF token to the user's session:
+pub async fn form_page(session: Session) -> HtmlPage {
+    let csrf = CsrfToken::from_session(&session);
+    HtmlPage::new(rsx! {
+        <form method="POST" action="/submit">
+            {csrf.hidden_input()}
+            <input name="email" type="email" required />
+            <button type="submit">"Envoyer"</button>
+        </form>
+    })
 }
 
-// In your server action / handler
-if !verify_csrf_token(&form_token, &session) {
-    return (StatusCode::FORBIDDEN, "Invalid CSRF token").into_response();
+// 2. In your POST handler, verify the submitted token in constant time:
+pub async fn submit_handler(session: Session, form: FormData) -> Response {
+    let csrf = CsrfToken::from_session(&session);
+    if !csrf.verify(&form) {
+        return YavError::Forbidden("Invalid CSRF token".into()).into_response();
+    }
+    redirect("/success")
 }
 ```
 
-## 5. Path Traversal Prevention
+## 5. Path Traversal & Static Asset Hardening
 
 Static asset serving ([`crates/yav-server/src/static_files.rs`](file:///d:/deep/yav.rs/crates/yav-server/src/static_files.rs)) verifies that all resolved paths remain strictly bounded within the configured `public` directory:
-- Null bytes (`\0`) are blocked.
-- Parent directory traversal sequences (`..`, `/../`, `..\`) are detected and rejected with `404 Not Found`.
-- Windows backslash traversals are normalized and tested.
+- Null bytes (`\0`) and absolute/prefix components are blocked.
+- Parent directory traversal sequences (`..`, `/../`, `..\`) are rejected with `400 Bad Request`.
+- Both the target file and any pre-compressed `.br` / `.gz` variants undergo strict `canonicalize()` verification against the canonical base directory, preventing symlink escape attacks.
+- Static SVG files (`image/svg+xml`) are served with a strict `Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; sandbox` header to prevent stored XSS when navigated to directly.
+- Files larger than 1 MB are streamed asynchronously in 64 KB chunks to prevent memory exhaustion (OOM DoS).
 
-## 6. Secure HTTP Headers
+## 6. Default HTTP Security Headers
 
-Yav applies security headers by default on every response:
+Yav applies hardened OWASP security headers by default on every response via `security_headers_middleware`:
 - `X-Content-Type-Options: nosniff`
-- `X-Frame-Options: SAMEORIGIN`
-- `X-XSS-Protection: 1; mode=block`
+- `X-Frame-Options: DENY`
+- `X-XSS-Protection: 0` (per modern OWASP guidance)
 - `Referrer-Policy: strict-origin-when-cross-origin`
+- `Permissions-Policy: camera=(), microphone=(), geolocation=()`
+- `Cross-Origin-Opener-Policy: same-origin`
+- `Strict-Transport-Security: max-age=63072000; includeSubDomains` (automatically enabled in production mode)

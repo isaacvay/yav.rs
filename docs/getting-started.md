@@ -8,7 +8,14 @@
 ## Installation
 
 ```bash
+# Install from crates.io
+cargo install yav-cli
+
+# Or install the latest development version from GitHub
 cargo install --git https://github.com/isaacvay/yav.rs yav-cli
+
+# Keep the CLI and your projects up to date at any time
+yav update
 ```
 
 ## Create a New Project

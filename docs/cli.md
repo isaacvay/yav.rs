@@ -64,8 +64,8 @@ rsx! {
 ### 4. `yav build`
 Builds your project for production:
 - Compiles minified Tailwind CSS with full purging.
-- Applies asset fingerprinting (`main.[hash].css`).
-- Generates `dist/manifest.json`.
+- Applies asset fingerprinting (`styles.[hash].css`) and pre-compresses `.gz` assets in a single in-memory pass.
+- Generates `dist/asset-manifest.json`.
 - Compiles the optimized Rust release binary.
 
 ```bash
@@ -74,7 +74,32 @@ yav build
 
 ---
 
-### 5. `yav check`
+### 5. `yav update` (aliases: `yav up`, `yav upgrade`)
+Updates the `yav` CLI binary itself and upgrades Yav dependencies in the current project (`package.yavml`, `Cargo.toml`, `Cargo.lock`, and the cached standalone Tailwind CSS binary):
+
+```bash
+# Update both the yav CLI and the current project (if inside a Yav project)
+yav update
+
+# Only check for available updates without modifying files or installing
+yav update --check
+
+# Only update the yav CLI binary itself
+yav update --self
+
+# Only update the current project's manifests and Cargo.lock
+yav update --project
+
+# Update yav-cli directly from the official GitHub repository (main branch)
+yav update --git
+
+# Force reinstallation / update even if already up to date
+yav update --force
+```
+
+---
+
+### 6. `yav check`
 Verifies project configuration (`package.yavml`, legacy `package.yav`, or `yav.toml`), ensures Tailwind assets exist, and performs a fast `cargo check`.
 
 ```bash
@@ -83,7 +108,7 @@ yav check
 
 ---
 
-### 6. `yav generate` (alias: `yav g`)
+### 7. `yav generate` (alias: `yav g`)
 Scaffolds boilerplate for routes, functional components, or layouts with idiomatic conventions:
 
 ```bash
@@ -101,8 +126,8 @@ yav g layout AdminLayout
 
 ---
 
-### 7. `yav icon`
-Explores, searches, and inspects the built-in 80+ Lucide SVG icons catalog:
+### 8. `yav icon`
+Explores, searches, and inspects the built-in 13,000+ SVG icons catalog (Classic/Lucide, Minimal/MynaUI, and System/Phosphor):
 
 ```bash
 # Search icons by keyword
@@ -207,4 +232,36 @@ Runs the workspace test suite across all modules.
 
 ```bash
 yav test
+```
+
+---
+
+### 15. `yav run <script>`
+Executes a custom script defined in the `[scripts]` section of `package.yavml` (similar to `npm run <script>`):
+
+```bash
+yav run dev
+yav run lint
+```
+
+---
+
+### 16. `yav deploy <target>`
+Scaffolds production deployment configurations for cloud platforms and Linux servers:
+
+```bash
+yav deploy fly      # Generates fly.toml for Fly.io
+yav deploy shuttle  # Generates Shuttle.toml for Shuttle.rs
+yav deploy railway  # Generates railway.json for Railway.app
+yav deploy systemd  # Generates hardened <app>.service unit for Linux Systemd
+```
+
+---
+
+### 17. `yav ext`
+Installs or checks the status of the official Yav syntax highlighting and snippets extension across VS Code, Cursor, VS Code Insiders, and VSCodium:
+
+```bash
+yav ext install
+yav ext status
 ```

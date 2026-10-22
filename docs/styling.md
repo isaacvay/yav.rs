@@ -25,10 +25,9 @@ output = "public/styles.css"
 
 ### How It Works
 
-1. `yav dev` or `yav build` downloads the Tailwind CLI (once, cached)
-2. Yav writes a `tailwind.config.js` pointing at your source files
-3. The CLI processes your `src/styles/app.css`
-4. Output CSS is served at `/styles/app.css`
+1. `yav dev` or `yav build` downloads the Tailwind CLI (once, cached globally)
+2. Yav processes your `src/styles/app.css` against your `.rs`, `.yavml`, `.yav`, `.rsx`, and `.html` files
+3. Output CSS is written to `public/styles.css` and served at `/public/styles.css` (and fingerprinted in production via `dist/asset-manifest.json`)
 
 ### Input CSS
 
@@ -82,7 +81,7 @@ use yav::prelude::*;
 rsx! {
     <head>
         {anti_fouc_script()}
-        <link rel="stylesheet" href="/styles/app.css" />
+        <link rel="stylesheet" href="/public/styles.css" />
     </head>
 }
 ```
@@ -129,5 +128,5 @@ public/
 CSS files are linked in the document head automatically:
 
 ```html
-<link rel="stylesheet" href="/styles/app.css" />
+<link rel="stylesheet" href="/public/styles.css" />
 ```

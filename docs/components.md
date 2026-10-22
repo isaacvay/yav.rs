@@ -127,11 +127,35 @@ impl Component for UserCard {
 }
 ```
 
-### 3. File-Based Components (`.yav` / `.rsx` like JSX/TSX)
+### 3. File-Based Components (`.yavml` / `.yav` / `.rsx` like JSX/TSX)
 
-For a clean separation of concerns and editor syntax highlighting, you can author components in dedicated `.yav` or `.rsx` files.
+For a clean separation of concerns and editor syntax highlighting, you can author components in dedicated `.yavml` (or `.yav` / `.rsx`) files using either modern ESM-style syntax (`import` + `export default function`) or frontmatter (`--- ... ---`).
 
-#### Step 1: Write `src/components/UserBadge.yav`
+#### Option A: Modern `.yavml` ESM Syntax (`src/components/ModernCard.yavml`)
+
+```tsx
+import { Badge, Button } from "yav/ui";
+
+export default function ModernCard(
+    title: String,
+    subtitle: String = "Default subtitle".to_string(),
+    active: bool = true,
+) {
+    <div class="p-6 rounded-xl border bg-slate-900 text-white">
+        <div class="flex items-center justify-between">
+            <h3 class="text-xl font-bold">{title}</h3>
+            {if active {
+                rsx! { <Badge variant="success" label="Active" pill=true /> }
+            } else {
+                rsx! { <Badge variant="secondary" label="Archived" pill=true /> }
+            }}
+        </div>
+        <p class="mt-2 text-slate-400">{subtitle}</p>
+    </div>
+}
+```
+
+#### Option B: Frontmatter `.yavml` / `.yav` Syntax (`src/components/UserBadge.yavml`)
 
 ```html
 ---
@@ -152,16 +176,13 @@ pub struct Props {
 </div>
 ```
 
-- **Top section (`--- ... ---`)**: Imports and `Props` definition, exactly like a TSX file header.
-- **Bottom section**: Clean RSX template referencing `{props.<field>}`.
-
-#### Step 2: Use in Rust with `yav_component!`
+#### Use in Rust with `yav_component!`
 
 ```rust
 use yav::prelude::*;
 
-// Generates the UserBadge struct and Component implementation:
-yav_component!("src/components/UserBadge.yav");
+// Generates the UserBadge struct, Props, and Component implementation:
+yav_component!("src/components/UserBadge.yavml");
 
 fn my_view() -> Node {
     let badge = UserBadge::new(Props {

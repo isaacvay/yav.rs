@@ -210,24 +210,24 @@
 //! use yav::prelude::*;
 //!
 //! let app = YavApp::new()
-//!     // Render form with CSRF protection token
-//!     .get("/contact", |_ctx| async {
-//!         let csrf = csrf_field("secret_token_123");
-//!         html_response(StatusCode::OK, rsx! {
+//!     // Render form with session-bound CSRF protection token
+//!     .get("/contact", |session: Session| async move {
+//!         let csrf = CsrfToken::from_session(&session);
+//!         HtmlPage::new(rsx! {
 //!             <form method="POST" action="/contact" class="space-y-4">
-//!                 { csrf }
+//!                 { csrf.hidden_input() }
 //!                 <Input name="email" r#type="email" placeholder="you@domain.com" required=true />
 //!                 <Button r#type="submit">"Send Message"</Button>
 //!             </form>
 //!         })
 //!     })
-//!     // Handle form action submission
-//!     .post("/contact", |ctx: RouteContext| async move {
-//!         let form: FormAction = ctx.form().await?;
-//!         if !verify_csrf_token(form.get("_csrf"), "secret_token_123") {
-//!             return Ok(html_response(StatusCode::FORBIDDEN, "Invalid CSRF token"));
+//!     // Handle form action submission with constant-time CSRF verification
+//!     .post("/contact", |session: Session, form: FormData| async move {
+//!         let csrf = CsrfToken::from_session(&session);
+//!         if !csrf.verify(&form) {
+//!             return html_response(StatusCode::FORBIDDEN, "Invalid CSRF token");
 //!         }
-//!         redirect("/thank-you")
+//!         safe_redirect("/thank-you")
 //!     });
 //! ```
 //!
@@ -402,13 +402,14 @@ pub mod prelude {
 
     // Server, Forms, Flash, SEO, Streaming, Session & Telemetry helpers
     pub use yav_server::{
-        csrf_field, html_response, json_response, not_found, redirect, scalar_ui_handler,
-        sse_channel, sse_response, streaming_html, swagger_ui_handler, verify_csrf_token,
-        ActionResponse, ActionResult, ApiEndpoint, Flash, FlashLevel, FlashMessage, FormAction,
-        FormErrors, HealthStatus, HtmlFragment, HtmlPage, HtmxRequest, Loader, MetricsSnapshot,
-        OpenApiSpec, RateLimitConfig, RateLimitStatus, RateLimiter, RobotsTxt, RouteContext,
-        SameSite, ServerMetrics, Session, SessionConfig, SessionSecret, Sitemap, SitemapEntry,
-        SseMsg, StreamingHtml, Suspense, UploadedFile, YavApp,
+        csrf_field, html_response, json_response, not_found, redirect, safe_redirect,
+        scalar_ui_handler, sse_channel, sse_response, streaming_html, swagger_ui_handler,
+        verify_csrf_token, ActionResponse, ActionResult, ApiEndpoint, CsrfToken, Flash, FlashLevel,
+        FlashMessage, FormAction, FormData, FormErrors, HealthStatus, HtmlFragment, HtmlPage,
+        HtmxRequest, Loader, MetricsSnapshot, OpenApiSpec, RateLimitConfig, RateLimitStatus,
+        RateLimiter, RobotsTxt, RouteContext, SameSite, ServerMetrics, Session, SessionConfig,
+        SessionSecret, Sitemap, SitemapEntry, SseMsg, StreamingHtml, Suspense, UploadedFile,
+        YavApp,
     };
 
     // Re-export common HTTP status codes for convenient handler responses

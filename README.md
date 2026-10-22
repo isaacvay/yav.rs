@@ -88,7 +88,9 @@ pub fn Hero() -> Node {
 |---------|-------------|
 | `yav new <name>` | Create a new project with Tailwind & file routing |
 | `yav dev` | Start development server with live reload and error overlay |
+| `yav update` | Update the `yav` CLI binary and current project dependencies (`aliases: up, upgrade`) |
 | `yav add <component>` | Add UI templates (`drawer`, `command-menu`, `stat-card`, `carousel`, etc.) |
+| `yav run <script>` | Run a custom script defined in `package.yavml` |
 | `yav codegen --ts` | Generate TypeScript definitions from Rust structs |
 | `yav codegen --openapi`| Export OpenAPI 3.1 specifications |
 | `yav build` | Build optimized release binary and purged CSS |
