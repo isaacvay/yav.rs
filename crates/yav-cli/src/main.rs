@@ -21,6 +21,8 @@ mod pwa;
 mod reload;
 mod run_cmd;
 mod sitemap_cmd;
+mod spinner;
+mod tailwind_setup;
 mod test_cmd;
 
 use clap::{CommandFactory, Parser, Subcommand};
@@ -141,7 +143,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     match command {
         Commands::New { name } => {
-            new::run(&name)?;
+            new::run(&name).await?;
         }
         Commands::Add { component } => {
             add::run(&component)?;

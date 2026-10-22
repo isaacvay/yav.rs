@@ -1088,7 +1088,7 @@ dist/
 }
 
 /// CLI entry point for the `yav new` command.
-pub fn run(name: &str) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn run(name: &str) -> Result<(), Box<dyn std::error::Error>> {
     validate_project_name(name).map_err(|msg| format!("Invalid project name '{name}': {msg}"))?;
 
     let target_dir = Path::new(name);
@@ -1119,9 +1119,12 @@ pub fn run(name: &str) -> Result<(), Box<dyn std::error::Error>> {
     // Check and offer/install Yav editor extension
     crate::ext::prompt_and_install_if_needed();
 
+    // Check and offer/install Tailwind CSS standalone compiler
+    let _ = crate::tailwind_setup::prompt_and_install_in_new("3.4.17").await;
+
     println!("👉 To get started:");
     println!("   cd {name}");
-    println!("   yav dev");
+    println!("   yav dev\n");
 
     Ok(())
 }

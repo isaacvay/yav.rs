@@ -120,11 +120,19 @@ pub struct TailwindManager {
 }
 
 impl TailwindManager {
+    /// Returns the global cache directory for Tailwind standalone binaries (`~/.yav/cache/tailwind`).
+    pub fn default_cache_dir() -> PathBuf {
+        std::env::var_os("USERPROFILE")
+            .or_else(|| std::env::var_os("HOME"))
+            .map(|h| PathBuf::from(h).join(".yav").join("cache").join("tailwind"))
+            .unwrap_or_else(|| PathBuf::from(".yav/cache/tailwind"))
+    }
+
     /// Creates a new `TailwindManager` with the specified version string.
     pub fn new(version: impl Into<String>) -> Self {
         Self {
             version: version.into(),
-            cache_dir: PathBuf::from(".yav/cache/tailwind"),
+            cache_dir: Self::default_cache_dir(),
         }
     }
 
@@ -157,12 +165,17 @@ impl TailwindManager {
         Ok(self.cache_dir.join(clean_version).join(filename))
     }
 
-    /// Returns true if the binary already exists in the local cache.
+    /// Returns true if the binary already exists in the cache (checking both global and local fallback).
     pub fn is_cached(&self) -> bool {
-        match self.binary_path() {
-            Ok(p) => p.is_file(),
-            Err(_) => false,
+        if let Ok(p) = self.binary_path() {
+            if p.is_file() {
+                return true;
+            }
         }
+        let local_fallback = PathBuf::from(".yav/cache/tailwind")
+            .join(self.version.trim_start_matches('v'))
+            .join(self.binary_filename().unwrap_or_default());
+        local_fallback.is_file()
     }
 
     /// Ensures the Tailwind CLI binary is available locally, downloading if necessary.
@@ -171,6 +184,17 @@ impl TailwindManager {
         if bin_path.is_file() {
             tracing::debug!("Using cached Tailwind CLI binary at {}", bin_path.display());
             return Ok(bin_path);
+        }
+
+        let local_fallback = PathBuf::from(".yav/cache/tailwind")
+            .join(self.version.trim_start_matches('v'))
+            .join(self.binary_filename().unwrap_or_default());
+        if local_fallback.is_file() {
+            tracing::debug!(
+                "Using local cached Tailwind CLI binary at {}",
+                local_fallback.display()
+            );
+            return Ok(local_fallback);
         }
 
         self.download_binary(&bin_path, None).await?;
@@ -183,6 +207,20 @@ impl TailwindManager {
         dest_path: &Path,
         expected_sha256: Option<&str>,
     ) -> Result<(), TailwindError> {
+        self.download_binary_with_progress(dest_path, expected_sha256, |_, _| {})
+            .await
+    }
+
+    /// Downloads the standalone Tailwind CLI binary with a progress callback `(downloaded_bytes, total_bytes)`.
+    pub async fn download_binary_with_progress<F>(
+        &self,
+        dest_path: &Path,
+        expected_sha256: Option<&str>,
+        mut on_progress: F,
+    ) -> Result<(), TailwindError>
+    where
+        F: FnMut(u64, Option<u64>),
+    {
         if let Some(parent) = dest_path.parent() {
             tokio::fs::create_dir_all(parent).await?;
         }
@@ -199,7 +237,16 @@ impl TailwindManager {
             )));
         }
 
-        let bytes = response.bytes().await?;
+        let total_size = response.content_length();
+        let mut downloaded: u64 = 0;
+        let mut bytes = Vec::with_capacity(total_size.unwrap_or(45 * 1024 * 1024) as usize);
+
+        let mut response = response;
+        while let Some(chunk) = response.chunk().await? {
+            downloaded += chunk.len() as u64;
+            bytes.extend_from_slice(&chunk);
+            on_progress(downloaded, total_size);
+        }
 
         // SHA256 verification placeholder
         if let Some(expected) = expected_sha256 {
@@ -217,14 +264,17 @@ impl TailwindManager {
             tracing::warn!("No SHA256 checksum available for Tailwind binary verification");
         }
 
-        tokio::fs::write(dest_path, &bytes).await?;
+        let temp_dest = dest_path.with_extension("tmp");
+        tokio::fs::write(&temp_dest, &bytes).await?;
 
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             let perms = std::fs::Permissions::from_mode(0o755);
-            std::fs::set_permissions(dest_path, perms)?;
+            std::fs::set_permissions(&temp_dest, perms)?;
         }
+
+        tokio::fs::rename(&temp_dest, dest_path).await?;
 
         tracing::info!("Tailwind standalone CLI saved to {}", dest_path.display());
         Ok(())

@@ -114,24 +114,30 @@ pub async fn run(cli_port: u16) -> Result<(), Box<dyn std::error::Error>> {
 
     // 3. Initial Tailwind compile if enabled
     let tailwind_mgr = if config.tailwind.enabled {
-        let mgr =
-            TailwindManager::new(&config.tailwind.version).with_cache_dir(".yav/cache/tailwind");
+        let mgr = TailwindManager::new(&config.tailwind.version);
         let input_css = Path::new(&config.tailwind.input_css);
         let output_css = Path::new(&config.tailwind.output_css);
 
         if input_css.is_file() {
-            println!("\x1b[34m🎨 Compiling initial Tailwind CSS...\x1b[0m");
-            let content_paths = vec![Path::new("src"), Path::new("public")];
-            if let Err(e) = mgr
-                .run_build(input_css, output_css, &content_paths, false)
+            let is_ready = crate::tailwind_setup::ensure_tailwind_in_dev(&mgr)
                 .await
-            {
-                eprintln!("\x1b[33m⚠️ Tailwind initial build warning: {e}\x1b[0m");
-            } else {
-                println!(
-                    "\x1b[32m✔ Initial CSS compiled to {}\x1b[0m",
-                    output_css.display()
-                );
+                .unwrap_or(false);
+            if is_ready {
+                let spinner = crate::spinner::Spinner::start("Compiling initial Tailwind CSS");
+                let start = std::time::Instant::now();
+                let content_paths = vec![Path::new("src"), Path::new("public")];
+                if let Err(e) = mgr
+                    .run_build(input_css, output_css, &content_paths, false)
+                    .await
+                {
+                    spinner.finish_with_warning(format!("Tailwind initial build warning: {e}"));
+                } else {
+                    spinner.finish_with_success(format!(
+                        "Initial CSS compiled to {} in {:.0?}",
+                        output_css.display(),
+                        start.elapsed()
+                    ));
+                }
             }
         }
         Some(mgr)
@@ -269,19 +275,19 @@ pub async fn run(cli_port: u16) -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
                 } else if changes.css_changed {
-                    println!("\x1b[34m🎨 Stylesheet modified. Rebuilding Tailwind CSS...\x1b[0m");
                     if let Some(ref mgr) = tailwind_mgr {
+                        let spinner = crate::spinner::Spinner::start("Stylesheet modified. Rebuilding Tailwind CSS");
                         let input_css = Path::new(&config.tailwind.input_css);
                         let output_css = Path::new(&config.tailwind.output_css);
                         let content_paths = vec![Path::new("src"), Path::new("public")];
                         match mgr.run_build(input_css, output_css, &content_paths, false).await {
                             Ok(()) => {
-                                println!("\x1b[32m✔ Tailwind CSS rebuilt! Hot swapping stylesheets...\x1b[0m");
+                                spinner.finish_with_success("Tailwind CSS rebuilt! Hot swapping stylesheets...");
                                 reload_server.notify_clear_error();
                                 reload_server.notify_css_reload(&config.tailwind.output_css);
                             }
                             Err(e) => {
-                                eprintln!("\x1b[31m❌ Tailwind build failed: {e}\x1b[0m");
+                                spinner.finish_with_error(format!("Tailwind build failed: {e}"));
                                 reload_server.notify_error(format!("Tailwind build error: {e}"));
                             }
                         }

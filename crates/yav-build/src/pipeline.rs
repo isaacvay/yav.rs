@@ -172,8 +172,7 @@ impl BuildPipeline {
 
             if input_css.is_file() {
                 tracing::info!("Compiling Tailwind CSS from '{}'", input_css.display());
-                let tailwind = TailwindManager::new(&self.config.tailwind.version)
-                    .with_cache_dir(self.root_dir.join(".yav/cache/tailwind"));
+                let tailwind = TailwindManager::new(&self.config.tailwind.version);
 
                 let content_paths = vec![self.root_dir.join("src"), self.root_dir.join("public")];
 
