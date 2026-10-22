@@ -33,6 +33,7 @@ pub fn run(force: bool) -> Result<(), Box<dyn std::error::Error>> {
     let manifest_path = public_dir.join("manifest.json");
     if manifest_path.exists() && !force {
         println!("ℹ️  `public/manifest.json` already exists (use --force to overwrite).");
+    } else {
         let manifest_value = serde_json::json!({
             "name": app_name,
             "short_name": short_name,
