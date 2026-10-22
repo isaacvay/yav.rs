@@ -82,10 +82,19 @@ fn render_node_depth(node: &Node, buf: &mut String, depth: usize) {
 }
 
 fn is_url_attribute(name: &str) -> bool {
-    matches!(
-        name,
-        "href" | "src" | "action" | "formaction" | "xlink:href" | "poster" | "data"
-    )
+    const URL_ATTRS: &[&str] = &[
+        "href",
+        "src",
+        "action",
+        "formaction",
+        "xlink:href",
+        "poster",
+        "data",
+        "cite",
+        "background",
+        "ping",
+    ];
+    URL_ATTRS.iter().any(|attr| name.eq_ignore_ascii_case(attr))
 }
 
 fn is_valid_tag_name(name: &str) -> bool {
@@ -492,5 +501,20 @@ mod tests {
         );
         let html5 = render_to_string(&injected_tag);
         assert_eq!(html5, "<div>test</div>");
+
+        // Case-insensitive URL attributes (HREF, Src, formAction) must also be filtered
+        let upper_href = Node::Element(
+            Element::new("a")
+                .attr("HREF", "javascript:alert('upper')")
+                .child(Node::text("link")),
+        );
+        assert_eq!(render_to_string(&upper_href), "<a>link</a>");
+
+        let mixed_formaction = Node::Element(
+            Element::new("button")
+                .attr("formAction", "javascript:alert('fa')")
+                .child(Node::text("btn")),
+        );
+        assert_eq!(render_to_string(&mixed_formaction), "<button>btn</button>");
     }
 }

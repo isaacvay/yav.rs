@@ -3,6 +3,10 @@
 //! Provides cookie-backed one-time notification messages that persist across HTTP redirects
 //! and are consumed by the subsequent page request.
 
+use crate::session::{
+    compute_hmac_sha256, constant_time_eq, is_production_mode, SessionSecret,
+    DEFAULT_DEV_SESSION_SECRET,
+};
 use axum::{
     extract::FromRequestParts,
     http::{header, request::Parts, HeaderValue, StatusCode},
@@ -41,17 +45,44 @@ impl FlashMessage {
     }
 }
 
-/// Axum extractor and manager for flash messages.
+/// Resolve the HMAC secret key for flash cookie signing and verification.
+fn resolve_flash_secret(custom: Option<&[u8]>) -> Vec<u8> {
+    if let Some(secret) = custom {
+        return secret.to_vec();
+    }
+    std::env::var("SESSION_SECRET")
+        .or_else(|_| std::env::var("YAV_SECRET"))
+        .ok()
+        .map(|s| s.into_bytes())
+        .unwrap_or_else(|| {
+            if is_production_mode() {
+                panic!("FATAL: SESSION_SECRET must be explicitly set when running in production mode! Refusing to sign flash cookies with default dev secret.");
+            }
+            DEFAULT_DEV_SESSION_SECRET.to_vec()
+        })
+}
+
+/// Axum extractor and manager for cryptographically signed flash messages.
 #[derive(Debug, Clone, Default)]
 pub struct Flash {
     incoming: Vec<FlashMessage>,
     outgoing: Arc<Mutex<Vec<FlashMessage>>>,
+    secret: Option<Vec<u8>>,
 }
 
 impl Flash {
     /// Create an empty flash manager.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Create an empty flash manager with an explicit HMAC signing secret.
+    pub fn with_secret(secret: impl Into<Vec<u8>>) -> Self {
+        Self {
+            incoming: Vec::new(),
+            outgoing: Arc::new(Mutex::new(Vec::new())),
+            secret: Some(secret.into()),
+        }
     }
 
     /// Messages delivered by the previous request.
@@ -85,16 +116,22 @@ impl Flash {
         }
     }
 
-    /// Generate the `Set-Cookie` header value to update or clear flash cookies.
+    /// Generate the HMAC-SHA256 signed `Set-Cookie` header value to update or clear flash cookies.
     pub fn cookie_header(&self) -> Option<HeaderValue> {
+        let secret = resolve_flash_secret(self.secret.as_deref());
+        self.cookie_header_with_secret(&secret)
+    }
+
+    /// Generate the HMAC-SHA256 signed `Set-Cookie` header value with an explicit signing secret.
+    pub fn cookie_header_with_secret(&self, secret: &[u8]) -> Option<HeaderValue> {
         let outgoing = self.outgoing.lock().ok()?.clone();
         let secure_flag = if is_production_mode() { "; Secure" } else { "" };
         if !outgoing.is_empty() {
             if let Ok(json) = serde_json::to_string(&outgoing) {
-                // Base64-like URL encoding: simple percent-encode or json in cookie
+                let encoded = urlencoding_simple(&json);
+                let signature = compute_hmac_sha256(encoded.as_bytes(), secret);
                 let val = format!(
-                    "{FLASH_COOKIE_NAME}={}; Path=/; HttpOnly; SameSite=Lax{secure_flag}",
-                    urlencoding_simple(&json)
+                    "{FLASH_COOKIE_NAME}={encoded}.{signature}; Path=/; HttpOnly; SameSite=Lax{secure_flag}"
                 );
                 return HeaderValue::from_str(&val).ok();
             }
@@ -114,22 +151,6 @@ impl Flash {
             response.headers_mut().append(header::SET_COOKIE, cookie);
         }
         response
-    }
-}
-
-fn is_production_mode() -> bool {
-    #[cfg(not(debug_assertions))]
-    {
-        true
-    }
-    #[cfg(debug_assertions)]
-    {
-        std::env::var("YAV_ENV")
-            .map(|v| v.eq_ignore_ascii_case("production"))
-            .unwrap_or(false)
-            || std::env::var("NODE_ENV")
-                .map(|v| v.eq_ignore_ascii_case("production"))
-                .unwrap_or(false)
     }
 }
 
@@ -172,6 +193,9 @@ where
     type Rejection = (StatusCode, &'static str);
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
+        let ext_secret = parts.extensions.get::<SessionSecret>().map(|s| s.0.clone());
+        let secret = resolve_flash_secret(ext_secret.as_deref());
+
         let mut incoming = Vec::new();
         if let Some(cookie_hdr) = parts.headers.get(header::COOKIE) {
             if let Ok(cookie_str) = cookie_hdr.to_str() {
@@ -179,11 +203,20 @@ where
                     let mut parts_iter = pair.trim().splitn(2, '=');
                     if let (Some(name), Some(val)) = (parts_iter.next(), parts_iter.next()) {
                         if name == FLASH_COOKIE_NAME {
-                            if let Some(decoded) = urldecoding_simple(val) {
-                                if let Ok(msgs) =
-                                    serde_json::from_str::<Vec<FlashMessage>>(&decoded)
-                                {
-                                    incoming = msgs;
+                            if let Some((payload, sig)) = val.rsplit_once('.') {
+                                let expected_sig = compute_hmac_sha256(payload.as_bytes(), &secret);
+                                if constant_time_eq(sig.as_bytes(), expected_sig.as_bytes()) {
+                                    if let Some(decoded) = urldecoding_simple(payload) {
+                                        if let Ok(msgs) =
+                                            serde_json::from_str::<Vec<FlashMessage>>(&decoded)
+                                        {
+                                            incoming = msgs;
+                                        }
+                                    }
+                                } else {
+                                    tracing::warn!(
+                                        "Rejected flash cookie with invalid HMAC-SHA256 signature"
+                                    );
                                 }
                             }
                         }
@@ -195,6 +228,7 @@ where
         Ok(Flash {
             incoming,
             outgoing: Arc::new(Mutex::new(Vec::new())),
+            secret: Some(secret),
         })
     }
 }
@@ -213,6 +247,44 @@ mod tests {
         let val = hdr.to_str().unwrap();
         assert!(val.contains(FLASH_COOKIE_NAME));
         assert!(val.contains("Path=/"));
+    }
+
+    #[tokio::test]
+    async fn test_flash_hmac_verification_and_rejection() {
+        use axum::http::Request;
+
+        let secret = b"flash_test_secret_32_bytes_long!";
+        let flash = Flash::with_secret(secret.to_vec());
+        flash.success("Signed message");
+        let cookie_hdr = flash.cookie_header().unwrap();
+        let cookie_pair = cookie_hdr.to_str().unwrap().split(';').next().unwrap();
+
+        // 1. Valid signed cookie is accepted
+        let req = Request::builder()
+            .header(header::COOKIE, cookie_pair)
+            .extension(SessionSecret::new(secret.to_vec()))
+            .body(())
+            .unwrap();
+        let (mut parts, _) = req.into_parts();
+        let extracted = Flash::from_request_parts(&mut parts, &()).await.unwrap();
+        assert_eq!(extracted.incoming().len(), 1);
+        assert_eq!(extracted.incoming()[0].message, "Signed message");
+
+        // 2. Unsigned or tampered cookie is rejected
+        let raw_payload = urlencoding_simple(r#"[{"level":"error","message":"Forged!"}]"#);
+        let forged_cookie = format!(
+            "{FLASH_COOKIE_NAME}={raw_payload}.0000000000000000000000000000000000000000000000000000000000000000"
+        );
+        let req_forged = Request::builder()
+            .header(header::COOKIE, forged_cookie)
+            .extension(SessionSecret::new(secret.to_vec()))
+            .body(())
+            .unwrap();
+        let (mut parts_forged, _) = req_forged.into_parts();
+        let extracted_forged = Flash::from_request_parts(&mut parts_forged, &())
+            .await
+            .unwrap();
+        assert!(extracted_forged.incoming().is_empty());
     }
 
     #[test]

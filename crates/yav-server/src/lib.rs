@@ -69,8 +69,9 @@ pub use forms::{
 
 // Response and handler helpers
 pub use handler::{
-    html_response, json_response, not_found, redirect, robots_response, sitemap_response,
-    HtmlFragment, HtmlPage, HtmxRequest,
+    html_response, is_local_redirect_path, is_safe_redirect_target, json_response, not_found,
+    redirect, robots_response, safe_redirect, sitemap_response, HtmlFragment, HtmlPage,
+    HtmxRequest,
 };
 
 // Health checks and server telemetry
@@ -126,7 +127,8 @@ pub mod prelude {
     pub use crate::flash::{Flash, FlashLevel, FlashMessage};
     pub use crate::forms::{ActionResponse, ActionResult, FormErrors, UploadedFile};
     pub use crate::handler::{
-        html_response, json_response, not_found, redirect, HtmlFragment, HtmlPage, HtmxRequest,
+        html_response, json_response, not_found, redirect, safe_redirect, HtmlFragment, HtmlPage,
+        HtmxRequest,
     };
     pub use crate::health::{healthz, readyz, ServerMetrics};
     pub use crate::middleware::SecurityHeadersConfig;

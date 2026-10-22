@@ -78,6 +78,9 @@ primary_region = "cdg"
 [build]
   dockerfile = "Dockerfile"
 
+[env]
+  YAV_ENV = "production"
+
 [http_service]
   internal_port = 3000
   force_https = true
@@ -174,6 +177,7 @@ WorkingDirectory=/var/www/{app_name}
 ExecStart=/var/www/{app_name}/{app_name}
 Restart=always
 RestartSec=5s
+Environment=YAV_ENV=production
 Environment=PORT=3000
 Environment=RUST_LOG=info
 

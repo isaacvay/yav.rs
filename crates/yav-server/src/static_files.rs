@@ -232,17 +232,19 @@ pub async fn serve_static_file_with_encoding(
         (file_path.clone(), None)
     };
 
-    let contents = tokio::fs::read(&actual_file)
+    let meta = tokio::fs::metadata(&actual_file)
         .await
         .map_err(|err| match err.kind() {
             std::io::ErrorKind::NotFound => YavError::NotFound,
             std::io::ErrorKind::PermissionDenied => {
                 YavError::Internal("Permission denied reading static file".to_string())
             }
-            _ => YavError::Internal(format!("Failed to read static file: {}", err)),
+            _ => YavError::Internal(format!("Failed to stat static file: {}", err)),
         })?;
 
-    let total_len = contents.len();
+    /// Maximum static asset size read into RAM at once (100 MB) to prevent OOM DoS.
+    const MAX_STATIC_READ_BYTES: usize = 100 * 1024 * 1024;
+    let total_len = usize::try_from(meta.len()).unwrap_or(usize::MAX);
 
     let is_fingerprinted = file_path
         .file_name()
@@ -266,13 +268,40 @@ pub async fn serve_static_file_with_encoding(
     let range_bounds = range_header.and_then(|r| parse_range_header(r, total_len));
 
     let (status, body_bytes, content_range_val) = if let Some((start, end)) = range_bounds {
-        let slice = contents[start..=end].to_vec();
+        use tokio::io::{AsyncReadExt, AsyncSeekExt};
+        let slice_len = (end - start + 1).min(MAX_STATIC_READ_BYTES);
+        let actual_end = start + slice_len - 1;
+        let mut file = tokio::fs::File::open(&actual_file)
+            .await
+            .map_err(|e| YavError::Internal(format!("Failed to open static file: {e}")))?;
+        file.seek(std::io::SeekFrom::Start(start as u64))
+            .await
+            .map_err(|e| YavError::Internal(format!("Failed to seek static file: {e}")))?;
+        let mut buf = vec![0u8; slice_len];
+        file.read_exact(&mut buf)
+            .await
+            .map_err(|e| YavError::Internal(format!("Failed to read static range: {e}")))?;
         (
             StatusCode::PARTIAL_CONTENT,
-            slice,
-            Some(format!("bytes {start}-{end}/{total_len}")),
+            buf,
+            Some(format!("bytes {start}-{actual_end}/{total_len}")),
         )
     } else {
+        if total_len > MAX_STATIC_READ_BYTES {
+            return Err(YavError::BadRequest(
+                "Static file exceeds maximum in-memory read size; use HTTP Range requests"
+                    .to_string(),
+            ));
+        }
+        let contents = tokio::fs::read(&actual_file)
+            .await
+            .map_err(|err| match err.kind() {
+                std::io::ErrorKind::NotFound => YavError::NotFound,
+                std::io::ErrorKind::PermissionDenied => {
+                    YavError::Internal("Permission denied reading static file".to_string())
+                }
+                _ => YavError::Internal(format!("Failed to read static file: {}", err)),
+            })?;
         (StatusCode::OK, contents, None)
     };
 
@@ -284,6 +313,14 @@ pub async fn serve_static_file_with_encoding(
         .header(header::ACCEPT_RANGES, "bytes")
         .header(header::CACHE_CONTROL, cache_control)
         .header(header::VARY, "Accept-Encoding");
+
+    // Prevent stored XSS in user-supplied or static SVG files when navigated to directly
+    if mime == "image/svg+xml" {
+        builder = builder.header(
+            header::CONTENT_SECURITY_POLICY,
+            "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+        );
+    }
 
     if let Some(enc) = content_encoding {
         builder = builder.header(header::CONTENT_ENCODING, enc);

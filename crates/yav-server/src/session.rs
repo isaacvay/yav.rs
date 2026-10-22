@@ -16,8 +16,8 @@ use axum::{
     http::{header, request::Parts, HeaderValue, StatusCode},
     response::Response,
 };
-use sha2::Sha256;
 use hmac::{Hmac, Mac};
+use sha2::Sha256;
 
 /// Standard cookie name for Yav sessions.
 pub const SESSION_COOKIE_NAME: &str = "_yav_session";
@@ -116,7 +116,7 @@ impl Session {
         secret: &[u8],
         config: &SessionConfig,
     ) -> Option<HeaderValue> {
-        let map = self.data.lock().ok()?.clone();
+        let mut map = self.data.lock().ok()?.clone();
         let is_prod = config.secure.unwrap_or_else(is_production_mode);
         let secure_flag = if is_prod { "; Secure" } else { "" };
         let http_only = if config.http_only { "; HttpOnly" } else { "" };
@@ -149,6 +149,9 @@ impl Session {
                 String::new()
             }
         } else if let Some(ttl) = config.default_ttl {
+            if let Ok(now) = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+                map.insert("_expires_at".to_string(), (now.as_secs() + ttl).to_string());
+            }
             format!("; Max-Age={ttl}")
         } else {
             String::new()
@@ -189,8 +192,7 @@ impl Session {
 pub fn compute_hmac_sha256(data: &[u8], key: &[u8]) -> String {
     type HmacSha256 = Hmac<Sha256>;
 
-    let mut mac =
-        HmacSha256::new_from_slice(key).expect("HMAC can accept key of any length");
+    let mut mac = HmacSha256::new_from_slice(key).expect("HMAC can accept key of any length");
     mac.update(data);
     let result = mac.finalize();
     hex_encode(&result.into_bytes())
@@ -232,14 +234,29 @@ impl SessionSecret {
     }
 }
 
+/// Default session Time-To-Live (7 days in seconds).
+pub const DEFAULT_SESSION_TTL_SECS: u64 = 7 * 24 * 3600;
+
 /// Check if the server is running in production mode.
+///
+/// Returns `true` when:
+/// - `YAV_ENV` or `NODE_ENV` is set to `"production"` or `"prod"`, OR
+/// - neither environment variable is set to `"development"` / `"dev"` / `"test"` AND
+///   the binary was compiled in release mode (`#[cfg(not(debug_assertions))]`).
 pub fn is_production_mode() -> bool {
-    std::env::var("YAV_ENV")
-        .map(|v| v.eq_ignore_ascii_case("production"))
-        .unwrap_or(false)
-        || std::env::var("NODE_ENV")
-            .map(|v| v.eq_ignore_ascii_case("production"))
-            .unwrap_or(false)
+    if let Ok(env) = std::env::var("YAV_ENV").or_else(|_| std::env::var("NODE_ENV")) {
+        let env = env.trim();
+        if env.eq_ignore_ascii_case("production") || env.eq_ignore_ascii_case("prod") {
+            return true;
+        }
+        if env.eq_ignore_ascii_case("development")
+            || env.eq_ignore_ascii_case("dev")
+            || env.eq_ignore_ascii_case("test")
+        {
+            return false;
+        }
+    }
+    cfg!(all(not(debug_assertions), not(test)))
 }
 
 /// Fallback secret used in dev/tests if no explicit secret is configured.
@@ -307,7 +324,7 @@ impl Default for SessionConfig {
             same_site: SameSite::Lax,
             http_only: true,
             secure: None,
-            default_ttl: None,
+            default_ttl: Some(DEFAULT_SESSION_TTL_SECS),
         }
     }
 }
@@ -365,6 +382,13 @@ impl SessionConfig {
     #[must_use]
     pub fn ttl(mut self, ttl_seconds: u64) -> Self {
         self.default_ttl = Some(ttl_seconds);
+        self
+    }
+
+    /// Disable automatic session expiration TTL (browser-session cookie).
+    #[must_use]
+    pub fn without_ttl(mut self) -> Self {
+        self.default_ttl = None;
         self
     }
 }

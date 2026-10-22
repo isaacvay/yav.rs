@@ -194,10 +194,7 @@ mod tests {
         assert_eq!(escape_url("java\tscript:alert(1)"), None);
         assert_eq!(escape_url("java\nscript:alert(1)"), None);
         assert_eq!(escape_url("data:text/html,<h1>Hi</h1>"), None);
-        assert_eq!(
-            escape_url("data:image/svg+xml,<svg onload=alert(1)>"),
-            None
-        );
+        assert_eq!(escape_url("data:image/svg+xml,<svg onload=alert(1)>"), None);
         assert_eq!(escape_url("vbscript:msgbox"), None);
     }
 

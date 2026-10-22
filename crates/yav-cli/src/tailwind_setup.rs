@@ -44,7 +44,9 @@ pub async fn download_with_progress(
     let is_tty = std::io::stdout().is_terminal();
     let version = mgr.version();
 
-    println!("\x1b[36m📥 Downloading standalone Tailwind CSS compiler v{version} (~45 MB)...\x1b[0m");
+    println!(
+        "\x1b[36m📥 Downloading standalone Tailwind CSS compiler v{version} (~45 MB)...\x1b[0m"
+    );
 
     let mut last_printed_pct = 0;
     mgr.download_binary_with_progress(dest_path, None, |downloaded, total| {

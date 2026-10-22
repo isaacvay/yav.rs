@@ -262,15 +262,25 @@ pub type ActionResult = Result<ActionResponse, FormErrors>;
 impl IntoResponse for ActionResponse {
     fn into_response(self) -> Response {
         match self {
-            ActionResponse::Redirect(url) => match HeaderValue::try_from(&url) {
-                Ok(loc) => (StatusCode::SEE_OTHER, [(header::LOCATION, loc)]).into_response(),
-                Err(_) => (
-                    StatusCode::BAD_REQUEST,
-                    [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
-                    "Invalid redirect URL",
-                )
-                    .into_response(),
-            },
+            ActionResponse::Redirect(url) => {
+                if !crate::handler::is_safe_redirect_target(&url) {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+                        "Invalid or unsafe redirect URL",
+                    )
+                        .into_response();
+                }
+                match HeaderValue::try_from(url.trim()) {
+                    Ok(loc) => (StatusCode::SEE_OTHER, [(header::LOCATION, loc)]).into_response(),
+                    Err(_) => (
+                        StatusCode::BAD_REQUEST,
+                        [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+                        "Invalid redirect URL",
+                    )
+                        .into_response(),
+                }
+            }
             ActionResponse::Errors(errors) => {
                 let json = serde_json::to_string(&errors.all()).unwrap_or_default();
                 (

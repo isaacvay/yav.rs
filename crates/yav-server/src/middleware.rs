@@ -24,14 +24,16 @@ pub struct SecurityHeadersConfig {
     pub content_type_options: Option<String>,
     /// Value for `X-Frame-Options` header (default: `"DENY"`).
     pub frame_options: Option<String>,
-    /// Value for `X-XSS-Protection` header (default: `"1; mode=block"`).
+    /// Value for `X-XSS-Protection` header (default: `"0"` per modern OWASP guidance).
     pub xss_protection: Option<String>,
     /// Value for `Referrer-Policy` header (default: `"strict-origin-when-cross-origin"`).
     pub referrer_policy: Option<String>,
-    /// Optional value for `Permissions-Policy` header.
+    /// Optional value for `Permissions-Policy` header (default: `"camera=(), microphone=(), geolocation=()"`).
     pub permissions_policy: Option<String>,
     /// Optional value for `Strict-Transport-Security` header.
     pub hsts: Option<String>,
+    /// Optional value for `Cross-Origin-Opener-Policy` header (default: `"same-origin"`).
+    pub coop: Option<String>,
 }
 
 impl Default for SecurityHeadersConfig {
@@ -39,10 +41,15 @@ impl Default for SecurityHeadersConfig {
         Self {
             content_type_options: Some("nosniff".to_string()),
             frame_options: Some("DENY".to_string()),
-            xss_protection: Some("1; mode=block".to_string()),
+            xss_protection: Some("0".to_string()),
             referrer_policy: Some("strict-origin-when-cross-origin".to_string()),
-            permissions_policy: None,
-            hsts: None,
+            permissions_policy: Some("camera=(), microphone=(), geolocation=()".to_string()),
+            hsts: if crate::session::is_production_mode() {
+                Some("max-age=63072000; includeSubDomains".to_string())
+            } else {
+                None
+            },
+            coop: Some("same-origin".to_string()),
         }
     }
 }
@@ -52,8 +59,11 @@ impl Default for SecurityHeadersConfig {
 /// Sets:
 /// - `X-Content-Type-Options: nosniff`
 /// - `X-Frame-Options: DENY`
-/// - `X-XSS-Protection: 1; mode=block`
+/// - `X-XSS-Protection: 0`
 /// - `Referrer-Policy: strict-origin-when-cross-origin`
+/// - `Permissions-Policy: camera=(), microphone=(), geolocation=()`
+/// - `Cross-Origin-Opener-Policy: same-origin`
+/// - `Strict-Transport-Security: max-age=63072000; includeSubDomains` (in production mode)
 ///
 /// If a response already contains any of these headers, the existing value is preserved.
 pub async fn security_headers_middleware(req: Request, next: Next) -> Response {
@@ -76,15 +86,39 @@ pub fn apply_default_security_headers(headers: &mut axum::http::HeaderMap) {
     }
 
     if !headers.contains_key("x-xss-protection") {
-        if let Ok(name) = HeaderName::from_lowercase(b"x-xss-protection") {
-            headers.insert(name, HeaderValue::from_static("1; mode=block"));
-        }
+        headers.insert(
+            HeaderName::from_static("x-xss-protection"),
+            HeaderValue::from_static("0"),
+        );
     }
 
     if !headers.contains_key(header::REFERRER_POLICY) {
         headers.insert(
             header::REFERRER_POLICY,
             HeaderValue::from_static("strict-origin-when-cross-origin"),
+        );
+    }
+
+    if !headers.contains_key("permissions-policy") {
+        headers.insert(
+            HeaderName::from_static("permissions-policy"),
+            HeaderValue::from_static("camera=(), microphone=(), geolocation=()"),
+        );
+    }
+
+    if !headers.contains_key("cross-origin-opener-policy") {
+        headers.insert(
+            HeaderName::from_static("cross-origin-opener-policy"),
+            HeaderValue::from_static("same-origin"),
+        );
+    }
+
+    if crate::session::is_production_mode()
+        && !headers.contains_key(header::STRICT_TRANSPORT_SECURITY)
+    {
+        headers.insert(
+            header::STRICT_TRANSPORT_SECURITY,
+            HeaderValue::from_static("max-age=63072000; includeSubDomains"),
         );
     }
 }
@@ -188,6 +222,8 @@ pub fn etag_matches(if_none_match_header: &str, target_etag: &str) -> bool {
 /// `304 Not Modified` if the request's `If-None-Match` header matches.
 pub async fn etag_middleware(req: Request, next: Next) -> Response {
     let is_get_or_head = req.method() == Method::GET || req.method() == Method::HEAD;
+    let has_req_auth = req.headers().contains_key(header::COOKIE)
+        || req.headers().contains_key(header::AUTHORIZATION);
     let if_none_match = req
         .headers()
         .get(header::IF_NONE_MATCH)
@@ -200,6 +236,13 @@ pub async fn etag_middleware(req: Request, next: Next) -> Response {
     if !is_get_or_head || response.status() != StatusCode::OK {
         return response;
     }
+
+    let is_private = has_req_auth || response.headers().contains_key(header::SET_COOKIE);
+    let default_cache_control = if is_private {
+        "private, no-cache, must-revalidate"
+    } else {
+        "public, max-age=0, must-revalidate"
+    };
 
     // Bypass ETag buffering for streaming responses (SSE, chunked HTML, media) or no-cache/no-transform directives
     if let Some(ct) = response
@@ -254,7 +297,7 @@ pub async fn etag_middleware(req: Request, next: Next) -> Response {
                 let mut not_modified = Response::builder()
                     .status(StatusCode::NOT_MODIFIED)
                     .header(header::ETAG, existing_etag)
-                    .header(header::CACHE_CONTROL, "public, max-age=0, must-revalidate")
+                    .header(header::CACHE_CONTROL, default_cache_control)
                     .body(Body::empty())
                     .unwrap_or(response);
                 apply_default_security_headers(not_modified.headers_mut());
@@ -278,7 +321,7 @@ pub async fn etag_middleware(req: Request, next: Next) -> Response {
             let mut not_modified = Response::builder()
                 .status(StatusCode::NOT_MODIFIED)
                 .header(header::ETAG, etag)
-                .header(header::CACHE_CONTROL, "public, max-age=0, must-revalidate")
+                .header(header::CACHE_CONTROL, default_cache_control)
                 .body(Body::empty())
                 .unwrap();
             apply_default_security_headers(not_modified.headers_mut());
@@ -292,7 +335,7 @@ pub async fn etag_middleware(req: Request, next: Next) -> Response {
     if !parts.headers.contains_key(header::CACHE_CONTROL) {
         parts.headers.insert(
             header::CACHE_CONTROL,
-            HeaderValue::from_static("public, max-age=0, must-revalidate"),
+            HeaderValue::from_static(default_cache_control),
         );
     }
 
@@ -323,13 +366,25 @@ mod tests {
         );
         assert_eq!(
             headers.get("x-xss-protection").map(|v| v.to_str().unwrap()),
-            Some("1; mode=block")
+            Some("0")
         );
         assert_eq!(
             headers
                 .get(header::REFERRER_POLICY)
                 .map(|v| v.to_str().unwrap()),
             Some("strict-origin-when-cross-origin")
+        );
+        assert_eq!(
+            headers
+                .get("permissions-policy")
+                .map(|v| v.to_str().unwrap()),
+            Some("camera=(), microphone=(), geolocation=()")
+        );
+        assert_eq!(
+            headers
+                .get("cross-origin-opener-policy")
+                .map(|v| v.to_str().unwrap()),
+            Some("same-origin")
         );
     }
 
@@ -362,13 +417,16 @@ mod tests {
         let config = SecurityHeadersConfig::default();
         assert_eq!(config.content_type_options.as_deref(), Some("nosniff"));
         assert_eq!(config.frame_options.as_deref(), Some("DENY"));
-        assert_eq!(config.xss_protection.as_deref(), Some("1; mode=block"));
+        assert_eq!(config.xss_protection.as_deref(), Some("0"));
         assert_eq!(
             config.referrer_policy.as_deref(),
             Some("strict-origin-when-cross-origin")
         );
-        assert!(config.permissions_policy.is_none());
-        assert!(config.hsts.is_none());
+        assert_eq!(
+            config.permissions_policy.as_deref(),
+            Some("camera=(), microphone=(), geolocation=()")
+        );
+        assert_eq!(config.coop.as_deref(), Some("same-origin"));
     }
 
     #[test]

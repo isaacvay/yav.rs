@@ -257,6 +257,53 @@ impl RateLimiter {
     }
 }
 
+/// Extract the client IP address from the request, respecting `trust_proxy` and `trusted_proxies`.
+pub fn extract_client_ip(req: &axum::extract::Request, config: &RateLimitConfig) -> String {
+    let peer_ip = req
+        .extensions()
+        .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+        .map(|ci| ci.0.ip().to_string());
+
+    let can_trust_headers = config.trust_proxy
+        && (config.trusted_proxies.is_empty()
+            || peer_ip
+                .as_deref()
+                .is_some_and(|ip| config.trusted_proxies.iter().any(|p| p == ip)));
+
+    if can_trust_headers {
+        if let Some(xff) = req
+            .headers()
+            .get("x-forwarded-for")
+            .and_then(|v| v.to_str().ok())
+        {
+            // When trusted_proxies is specified, walk right-to-left to find the first untrusted client IP
+            let extracted = if !config.trusted_proxies.is_empty() {
+                xff.split(',')
+                    .rev()
+                    .map(str::trim)
+                    .find(|ip| !ip.is_empty() && !config.trusted_proxies.iter().any(|p| p == ip))
+                    .or_else(|| xff.split(',').next().map(str::trim))
+            } else {
+                xff.split(',').next().map(str::trim)
+            };
+            if let Some(ip) = extracted.filter(|s| !s.is_empty()) {
+                return ip.to_string();
+            }
+        }
+        if let Some(real_ip) = req
+            .headers()
+            .get("x-real-ip")
+            .and_then(|v| v.to_str().ok())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            return real_ip.to_string();
+        }
+    }
+
+    peer_ip.unwrap_or_else(|| "127.0.0.1".to_string())
+}
+
 /// Axum middleware that enforces rate limits using a shared [`RateLimiter`] from request extensions.
 pub async fn rate_limit_middleware(
     req: axum::extract::Request,
@@ -268,22 +315,7 @@ pub async fn rate_limit_middleware(
         return next.run(req).await;
     };
 
-    let client_id = if limiter.config.trust_proxy {
-        req.headers()
-            .get("x-forwarded-for")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|s| s.split(',').next())
-            .map(|s| s.trim().to_string())
-            .or_else(|| {
-                req.headers()
-                    .get("x-real-ip")
-                    .and_then(|v| v.to_str().ok())
-                    .map(|s| s.trim().to_string())
-            })
-            .unwrap_or_else(|| "127.0.0.1".to_string())
-    } else {
-        "127.0.0.1".to_string()
-    };
+    let client_id = extract_client_ip(&req, &limiter.config);
 
     let path = req.uri().path().to_string();
 
@@ -384,5 +416,37 @@ mod tests {
             limiter.check("5.6.7.8", "/auth/login/"),
             RateLimitStatus::Exceeded { .. }
         ));
+    }
+
+    #[test]
+    fn test_extract_client_ip_connect_info_and_trusted_proxies() {
+        use axum::{body::Body, extract::ConnectInfo, http::Request};
+        use std::net::SocketAddr;
+
+        let peer_direct: SocketAddr = "203.0.113.42:54321".parse().unwrap();
+        let peer_proxy: SocketAddr = "10.0.0.1:8080".parse().unwrap();
+
+        // 1. Default (trust_proxy = false): uses ConnectInfo peer IP and ignores spoofed X-Forwarded-For
+        let cfg_default = RateLimitConfig::new();
+        let req1 = Request::builder()
+            .uri("/login")
+            .header("x-forwarded-for", "1.1.1.1")
+            .extension(ConnectInfo(peer_direct))
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(extract_client_ip(&req1, &cfg_default), "203.0.113.42");
+
+        // 2. With trusted_proxies(["10.0.0.1"]): direct attacker not in trusted_proxies cannot spoof XFF
+        let cfg_trusted = RateLimitConfig::new().trusted_proxies(["10.0.0.1"]);
+        assert_eq!(extract_client_ip(&req1, &cfg_trusted), "203.0.113.42");
+
+        // 3. Request coming from trusted proxy 10.0.0.1 extracts real client IP from XFF
+        let req2 = Request::builder()
+            .uri("/login")
+            .header("x-forwarded-for", "198.51.100.77, 10.0.0.1")
+            .extension(ConnectInfo(peer_proxy))
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(extract_client_ip(&req2, &cfg_trusted), "198.51.100.77");
     }
 }

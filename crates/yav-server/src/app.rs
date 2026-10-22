@@ -146,6 +146,8 @@ pub struct YavApp {
     pub etag: bool,
     /// Whether CORS is enabled.
     pub cors: bool,
+    /// Optional explicit list of allowed CORS origins (e.g. `["https://example.com"]`).
+    pub cors_origins: Vec<String>,
     /// Session signing secret key.
     pub session_secret: Option<crate::session::SessionSecret>,
     /// Session cookie and lifecycle configuration.
@@ -224,6 +226,7 @@ impl YavApp {
             host,
             etag: true,
             cors,
+            cors_origins: Vec::new(),
             session_secret,
             session_config: crate::session::SessionConfig::default(),
             rate_limiter: None,
@@ -246,6 +249,14 @@ impl YavApp {
     #[must_use]
     pub fn cors(mut self, enabled: bool) -> Self {
         self.cors = enabled;
+        self
+    }
+
+    /// Enable CORS and restrict allowed origins to an explicit allowlist (e.g. `["https://app.example.com"]`).
+    #[must_use]
+    pub fn cors_origins(mut self, origins: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.cors = true;
+        self.cors_origins = origins.into_iter().map(Into::into).collect();
         self
     }
 
@@ -406,6 +417,7 @@ impl YavApp {
             host: self.host.clone(),
             etag: self.etag,
             cors: self.cors,
+            cors_origins: self.cors_origins.clone(),
             session_secret: self.session_secret.clone(),
             session_config: self.session_config.clone(),
             rate_limiter: self.rate_limiter.clone(),
@@ -648,7 +660,36 @@ impl YavApp {
 
         // Apply CORS layer if enabled
         if self.cors {
-            router = router.layer(tower_http::cors::CorsLayer::permissive());
+            if self.cors_origins.is_empty() {
+                if crate::session::is_production_mode() {
+                    tracing::warn!(
+                        "CORS is enabled with permissive wildcard (*) in production mode. Consider restricting allowed origins via .cors_origins([...])."
+                    );
+                }
+                router = router.layer(tower_http::cors::CorsLayer::permissive());
+            } else {
+                let parsed_origins: Vec<axum::http::HeaderValue> = self
+                    .cors_origins
+                    .iter()
+                    .filter_map(|o| axum::http::HeaderValue::from_str(o).ok())
+                    .collect();
+                let cors_layer = tower_http::cors::CorsLayer::new()
+                    .allow_origin(parsed_origins)
+                    .allow_methods([
+                        Method::GET,
+                        Method::POST,
+                        Method::PUT,
+                        Method::DELETE,
+                        Method::PATCH,
+                        Method::OPTIONS,
+                    ])
+                    .allow_headers([
+                        axum::http::header::CONTENT_TYPE,
+                        axum::http::header::AUTHORIZATION,
+                        axum::http::header::ACCEPT,
+                    ]);
+                router = router.layer(cors_layer);
+            }
         }
 
         // Apply rate limiter layer if configured
@@ -711,9 +752,12 @@ impl YavApp {
         tracing::info!("Starting Yav server on http://{}", addr);
 
         let listener = tokio::net::TcpListener::bind(&addr).await?;
-        axum::serve(listener, app)
-            .with_graceful_shutdown(shutdown_signal)
-            .await?;
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .with_graceful_shutdown(shutdown_signal)
+        .await?;
 
         tracing::info!("Yav server shut down gracefully");
         Ok(())

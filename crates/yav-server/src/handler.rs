@@ -67,9 +67,39 @@ pub fn json_response<T: Serialize>(status: StatusCode, data: &T) -> Response {
     }
 }
 
+/// Checks if a redirect target URL is safe against dangerous schemes (`javascript:`, `data:`, `vbscript:`)
+/// and protocol-relative open redirects (`//evil.com`, `/\evil.com`).
+pub fn is_safe_redirect_target(url: &str) -> bool {
+    let trimmed = url.trim();
+    if trimmed.is_empty() || trimmed.chars().any(|c| c.is_control()) {
+        return false;
+    }
+    if trimmed.starts_with("//") || trimmed.starts_with("/\\") || trimmed.starts_with('\\') {
+        return false;
+    }
+    let normalized: String = trimmed
+        .chars()
+        .filter(|c| !c.is_control() && !c.is_whitespace())
+        .flat_map(|c| c.to_lowercase())
+        .collect();
+    if normalized.starts_with("javascript:")
+        || normalized.starts_with("data:")
+        || normalized.starts_with("vbscript:")
+    {
+        return false;
+    }
+    true
+}
+
+/// Checks if a redirect target is strictly a local relative path (starts with `/` and not `//` or `/\`).
+pub fn is_local_redirect_path(path: &str) -> bool {
+    let trimmed = path.trim();
+    is_safe_redirect_target(trimmed) && trimmed.starts_with('/')
+}
+
 /// Construct a 302 Found redirect response to the given target URL.
 ///
-/// Sets the `Location` header to the provided URL.
+/// Rejects dangerous schemes (`javascript:`, `data:`, `vbscript:`) and protocol-relative URLs (`//`).
 ///
 /// # Examples
 /// ```rust,no_run
@@ -80,7 +110,15 @@ pub fn json_response<T: Serialize>(status: StatusCode, data: &T) -> Response {
 /// assert_eq!(resp.status(), StatusCode::FOUND);
 /// ```
 pub fn redirect(url: &str) -> Response {
-    match HeaderValue::try_from(url) {
+    if !is_safe_redirect_target(url) {
+        return (
+            StatusCode::BAD_REQUEST,
+            [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+            "Invalid or unsafe redirect URL",
+        )
+            .into_response();
+    }
+    match HeaderValue::try_from(url.trim()) {
         Ok(loc) => (StatusCode::FOUND, [(header::LOCATION, loc)]).into_response(),
         Err(_) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -88,6 +126,17 @@ pub fn redirect(url: &str) -> Response {
             "Invalid redirect URL",
         )
             .into_response(),
+    }
+}
+
+/// Construct a 302 Found redirect strictly restricted to local application paths (`/...`).
+///
+/// If the target is an external domain or invalid, safely redirects to `"/"`.
+pub fn safe_redirect(path: &str) -> Response {
+    if is_local_redirect_path(path) {
+        redirect(path)
+    } else {
+        redirect("/")
     }
 }
 
@@ -167,30 +216,33 @@ impl HtmlPage {
 
     /// Append a stylesheet `<link>` tag to `<head>`.
     pub fn stylesheet(mut self, href: impl AsRef<str>) -> Self {
-        let escaped = yav_core::escape_attribute(href.as_ref());
-        self.head_extra
-            .push_str(&format!(r#"<link rel="stylesheet" href="{}" />"#, escaped));
+        if let Some(escaped) = yav_core::escape_url(href.as_ref()) {
+            self.head_extra
+                .push_str(&format!(r#"<link rel="stylesheet" href="{escaped}" />"#));
+        }
         self
     }
 
     /// Append a favicon `<link>` tag to `<head>`.
     pub fn favicon(mut self, href: impl AsRef<str>) -> Self {
-        let escaped = yav_core::escape_attribute(href.as_ref());
-        let mime = if href.as_ref().ends_with(".svg") {
-            r#" type="image/svg+xml""#
-        } else {
-            ""
-        };
-        self.head_extra
-            .push_str(&format!(r#"<link rel="icon"{mime} href="{escaped}" />"#));
+        if let Some(escaped) = yav_core::escape_url(href.as_ref()) {
+            let mime = if href.as_ref().ends_with(".svg") {
+                r#" type="image/svg+xml""#
+            } else {
+                ""
+            };
+            self.head_extra
+                .push_str(&format!(r#"<link rel="icon"{mime} href="{escaped}" />"#));
+        }
         self
     }
 
     /// Append a `<script>` tag before `</body>`.
     pub fn script(mut self, src: impl AsRef<str>) -> Self {
-        let escaped = yav_core::escape_attribute(src.as_ref());
-        self.body_end
-            .push_str(&format!(r#"<script src="{}"></script>"#, escaped));
+        if let Some(escaped) = yav_core::escape_url(src.as_ref()) {
+            self.body_end
+                .push_str(&format!(r#"<script src="{escaped}"></script>"#));
+        }
         self
     }
 
@@ -220,15 +272,17 @@ impl HtmlPage {
 
         let mut head = meta.render_head_tags();
         for css in &meta.css {
-            let escaped = yav_core::escape_attribute(css);
-            head.push_str(&format!(r#"<link rel="stylesheet" href="{}" />"#, escaped));
+            if let Some(escaped) = yav_core::escape_url(css) {
+                head.push_str(&format!(r#"<link rel="stylesheet" href="{escaped}" />"#));
+            }
         }
         page.head_extra = head;
 
         let mut end = String::new();
         for script in &meta.scripts {
-            let escaped = yav_core::escape_attribute(script);
-            end.push_str(&format!(r#"<script src="{}"></script>"#, escaped));
+            if let Some(escaped) = yav_core::escape_url(script) {
+                end.push_str(&format!(r#"<script src="{escaped}"></script>"#));
+            }
         }
         page.body_end = end;
 
@@ -240,11 +294,12 @@ impl HtmlPage {
         let rendered_body = render_to_string(&self.body);
         let mut body_end = self.body_end.clone();
         if std::env::var("YAV_DEV").is_ok() {
-            let reload_port =
-                std::env::var("YAV_RELOAD_PORT").unwrap_or_else(|_| "35729".to_string());
+            let reload_port: u16 = std::env::var("YAV_RELOAD_PORT")
+                .ok()
+                .and_then(|p| p.parse::<u16>().ok())
+                .unwrap_or(35729);
             body_end.push_str(&format!(
-                r#"<script>(function(){{var s=document.createElement('script');s.src=window.location.protocol+'//'+window.location.hostname+':{}/reload.js';document.head.appendChild(s);}})();</script>"#,
-                reload_port
+                r#"<script>(function(){{var s=document.createElement('script');s.src=window.location.protocol+'//'+window.location.hostname+':{reload_port}/reload.js';document.head.appendChild(s);}})();</script>"#,
             ));
         }
 
@@ -389,13 +444,17 @@ impl IntoResponse for HtmlFragment {
             }
         }
         if let Some(redirect) = self.hx_redirect {
-            if let Ok(val) = HeaderValue::from_str(&redirect) {
-                headers.insert("HX-Redirect", val);
+            if is_safe_redirect_target(&redirect) {
+                if let Ok(val) = HeaderValue::from_str(redirect.trim()) {
+                    headers.insert("HX-Redirect", val);
+                }
             }
         }
         if let Some(push_url) = self.hx_push_url {
-            if let Ok(val) = HeaderValue::from_str(&push_url) {
-                headers.insert("HX-Push-Url", val);
+            if is_safe_redirect_target(&push_url) {
+                if let Ok(val) = HeaderValue::from_str(push_url.trim()) {
+                    headers.insert("HX-Push-Url", val);
+                }
             }
         }
         if let Some(reswap) = self.hx_reswap {
@@ -612,5 +671,36 @@ mod tests {
         assert_eq!(html.matches("<html").count(), 1);
         assert_eq!(html.matches("</html>").count(), 1);
         assert!(html.contains(r#"<script src="/extra.js"></script></body>"#));
+    }
+
+    #[test]
+    fn test_redirect_blocks_dangerous_schemes_and_protocol_relative() {
+        let js_resp = redirect("javascript:alert(1)");
+        assert_eq!(js_resp.status(), StatusCode::BAD_REQUEST);
+
+        let proto_resp = redirect("//evil.com/phish");
+        assert_eq!(proto_resp.status(), StatusCode::BAD_REQUEST);
+
+        let safe_external = safe_redirect("https://evil.com/phish");
+        assert_eq!(safe_external.status(), StatusCode::FOUND);
+        assert_eq!(safe_external.headers().get(header::LOCATION).unwrap(), "/");
+
+        let safe_local = safe_redirect("/dashboard/settings");
+        assert_eq!(safe_local.status(), StatusCode::FOUND);
+        assert_eq!(
+            safe_local.headers().get(header::LOCATION).unwrap(),
+            "/dashboard/settings"
+        );
+    }
+
+    #[test]
+    fn test_html_page_script_and_stylesheet_block_javascript_urls() {
+        let page = HtmlPage::new(Node::text("Body"))
+            .stylesheet("javascript:alert(1)")
+            .script("javascript:alert(2)")
+            .favicon("data:text/html,<script>alert(3)</script>");
+        let html = page.render();
+        assert!(!html.contains("javascript:alert"));
+        assert!(!html.contains("data:text/html"));
     }
 }

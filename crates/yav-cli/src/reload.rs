@@ -43,8 +43,23 @@ pub const CLIENT_RELOAD_SCRIPT: &str = r#"(function() {
     
     var header = document.createElement("div");
     header.style.cssText = "display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #334155;padding-bottom:16px;margin-bottom:20px;";
-    var fileLabel = (typeof errorData === "object" && errorData.file) ? errorData.file : "Build Error";
-    header.innerHTML = "<div style='display:flex;align-items:center;gap:10px;'><span style='background:#ef4444;color:white;padding:4px 8px;border-radius:6px;font-size:12px;font-weight:bold;'>YAV ERROR</span><span style='color:#94a3b8;font-size:13px;'>" + fileLabel + "</span></div><button style='background:#334155;color:#94a3b8;border:none;border-radius:6px;padding:4px 10px;cursor:pointer;' onclick='document.getElementById(\"yav-error-overlay\").remove()'>✕</button>";
+    var fileLabel = (typeof errorData === "object" && errorData.file) ? String(errorData.file) : "Build Error";
+    var leftGroup = document.createElement("div");
+    leftGroup.style.cssText = "display:flex;align-items:center;gap:10px;";
+    var badge = document.createElement("span");
+    badge.style.cssText = "background:#ef4444;color:white;padding:4px 8px;border-radius:6px;font-size:12px;font-weight:bold;";
+    badge.textContent = "YAV ERROR";
+    var labelSpan = document.createElement("span");
+    labelSpan.style.cssText = "color:#94a3b8;font-size:13px;";
+    labelSpan.textContent = fileLabel;
+    leftGroup.appendChild(badge);
+    leftGroup.appendChild(labelSpan);
+    var closeBtn = document.createElement("button");
+    closeBtn.style.cssText = "background:#334155;color:#94a3b8;border:none;border-radius:6px;padding:4px 10px;cursor:pointer;";
+    closeBtn.textContent = "✕";
+    closeBtn.onclick = removeOverlay;
+    header.appendChild(leftGroup);
+    header.appendChild(closeBtn);
     
     var body = document.createElement("pre");
     body.style.cssText = "background:#0f172a;padding:16px;border-radius:8px;font-size:13px;line-height:1.5;overflow-x:auto;color:#fca5a5;white-space:pre-wrap;margin:0;";
@@ -317,16 +332,35 @@ async fn handle_connection(
     let req_str = String::from_utf8_lossy(&buf[..n]);
     let req_line = req_str.lines().next().unwrap_or("");
 
+    // Restrict CORS to local loopback origins only so external websites cannot read dev SSE events
+    let allowed_origin = req_str
+        .lines()
+        .find_map(|line| {
+            let (name, val) = line.split_once(':')?;
+            if name.trim().eq_ignore_ascii_case("origin") {
+                let origin = val.trim();
+                if origin.starts_with("http://127.0.0.1")
+                    || origin.starts_with("http://localhost")
+                    || origin.starts_with("http://[::1]")
+                {
+                    return Some(origin.to_string());
+                }
+            }
+            None
+        })
+        .unwrap_or_else(|| "http://127.0.0.1:3000".to_string());
+
     if req_line.contains("/reload.js") {
         let js = CLIENT_RELOAD_SCRIPT.replace("{{PORT}}", &port.to_string());
         let response = format!(
             "HTTP/1.1 200 OK\r\n\
              Content-Type: application/javascript; charset=utf-8\r\n\
              Content-Length: {}\r\n\
-             Access-Control-Allow-Origin: *\r\n\
+             Access-Control-Allow-Origin: {}\r\n\
              Connection: close\r\n\r\n\
              {}",
             js.len(),
+            allowed_origin,
             js
         );
         stream.write_all(response.as_bytes()).await?;
@@ -335,11 +369,13 @@ async fn handle_connection(
     }
 
     if req_line.contains("/reload") {
-        let headers = "HTTP/1.1 200 OK\r\n\
-                       Content-Type: text/event-stream\r\n\
-                       Cache-Control: no-cache\r\n\
-                       Connection: keep-alive\r\n\
-                       Access-Control-Allow-Origin: *\r\n\r\n";
+        let headers = format!(
+            "HTTP/1.1 200 OK\r\n\
+             Content-Type: text/event-stream\r\n\
+             Cache-Control: no-cache\r\n\
+             Connection: keep-alive\r\n\
+             Access-Control-Allow-Origin: {allowed_origin}\r\n\r\n"
+        );
         stream.write_all(headers.as_bytes()).await?;
         stream.flush().await?;
 
@@ -369,7 +405,11 @@ async fn handle_connection(
                             }
                         }
                         Ok(ReloadEvent::Error(msg)) => {
-                            let payload = format!("data: error:{}\n\n", msg);
+                            let safe_msg: String = msg
+                                .chars()
+                                .map(|c| if c == '\r' || c == '\n' { ' ' } else { c })
+                                .collect();
+                            let payload = format!("data: error:{safe_msg}\n\n");
                             if stream.write_all(payload.as_bytes()).await.is_err() {
                                 break;
                             }
@@ -378,7 +418,11 @@ async fn handle_connection(
                             }
                         }
                         Ok(ReloadEvent::CssReload(path)) => {
-                            let payload = format!("data: css:{}\n\n", path);
+                            let safe_path: String = path
+                                .chars()
+                                .filter(|&c| c != '\r' && c != '\n')
+                                .collect();
+                            let payload = format!("data: css:{safe_path}\n\n");
                             if stream.write_all(payload.as_bytes()).await.is_err() {
                                 break;
                             }

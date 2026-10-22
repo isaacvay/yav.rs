@@ -166,17 +166,15 @@ impl PageMeta {
         }
 
         if let Some(ref canon) = self.canonical_url {
-            out.push_str(&format!(
-                r#"<link rel="canonical" href="{}" />"#,
-                crate::escape::escape_attribute(canon)
-            ));
+            if let Some(safe_canon) = crate::escape::escape_url(canon) {
+                out.push_str(&format!(r#"<link rel="canonical" href="{safe_canon}" />"#));
+            }
         }
 
         if let Some(ref fav) = self.favicon {
-            out.push_str(&format!(
-                r#"<link rel="icon" href="{}" />"#,
-                crate::escape::escape_attribute(fav)
-            ));
+            if let Some(safe_fav) = crate::escape::escape_url(fav) {
+                out.push_str(&format!(r#"<link rel="icon" href="{safe_fav}" />"#));
+            }
         }
 
         // OpenGraph
@@ -193,10 +191,11 @@ impl PageMeta {
             ));
         }
         if let Some(ref og_img) = self.og_image {
-            out.push_str(&format!(
-                r#"<meta property="og:image" content="{}" />"#,
-                crate::escape::escape_attribute(og_img)
-            ));
+            if let Some(safe_img) = crate::escape::escape_url(og_img) {
+                out.push_str(&format!(
+                    r#"<meta property="og:image" content="{safe_img}" />"#
+                ));
+            }
         }
         if let Some(ref og_typ) = self.og_type {
             out.push_str(&format!(
@@ -344,17 +343,19 @@ impl RobotsTxt {
         self
     }
 
-    /// Render to robots.txt format.
+    /// Render to robots.txt format (stripping CR/LF to prevent directive injection).
     pub fn to_txt(&self) -> String {
-        let mut txt = format!("User-agent: {}\n", self.user_agent);
+        let sanitize_line =
+            |s: &str| -> String { s.chars().filter(|&c| c != '\r' && c != '\n').collect() };
+        let mut txt = format!("User-agent: {}\n", sanitize_line(&self.user_agent));
         for a in &self.allow {
-            txt.push_str(&format!("Allow: {}\n", a));
+            txt.push_str(&format!("Allow: {}\n", sanitize_line(a)));
         }
         for d in &self.disallow {
-            txt.push_str(&format!("Disallow: {}\n", d));
+            txt.push_str(&format!("Disallow: {}\n", sanitize_line(d)));
         }
         if let Some(ref sm) = self.sitemap {
-            txt.push_str(&format!("Sitemap: {}\n", sm));
+            txt.push_str(&format!("Sitemap: {}\n", sanitize_line(sm)));
         }
         txt
     }

@@ -113,6 +113,32 @@ pub fn construct_download_url(version: &str, platform: &str) -> String {
     )
 }
 
+/// Returns the official pinned SHA-256 checksum for a known Tailwind standalone release and platform.
+pub fn known_sha256_for_binary(version: &str, platform: &str) -> Option<&'static str> {
+    let clean_version = version.trim_start_matches('v');
+    match (clean_version, platform) {
+        ("3.4.17", "linux-arm64") => {
+            Some("69b1378b8133192d7d2feb12a116fa12d035594f58db3eff215879e4ad8cf39b")
+        }
+        ("3.4.17", "linux-x64") => {
+            Some("7d24f7fa191d2193b78cd5f5a42a6093e14409521908529f42d80b11fde1f1d4")
+        }
+        ("3.4.17", "macos-arm64") => {
+            Some("a1d0c7985759accca0bf12e51ac1dcbf0f6cf2fffb62e6e0f62d091c477a10a3")
+        }
+        ("3.4.17", "macos-x64") => {
+            Some("6cbdad74be776c087ffa5e9a057512c54898f9fe8828d3362212dfe32fc933a3")
+        }
+        ("3.4.17", "windows-arm64.exe") => {
+            Some("76f516476784c00f1562160b5758e3d8f0e6c48957efb26b5b50fbdfd76aa382")
+        }
+        ("3.4.17", "windows-x64.exe") => {
+            Some("67f1c5e3f5a03406a7bf5badf5ada09b79f3ae78ec43450c15f7e983068da346")
+        }
+        _ => None,
+    }
+}
+
 /// Manages fetching, caching, and running the standalone Tailwind CSS CLI.
 #[derive(Debug, Clone)]
 pub struct TailwindManager {
@@ -275,8 +301,10 @@ impl TailwindManager {
             on_progress(downloaded, total_size);
         }
 
-        // SHA256 verification placeholder
-        if let Some(expected) = expected_sha256 {
+        // Verify SHA-256 checksum (explicit override or built-in pinned hash for official releases)
+        let resolved_expected =
+            expected_sha256.or_else(|| known_sha256_for_binary(&self.version, &platform));
+        if let Some(expected) = resolved_expected {
             use sha2::{Digest, Sha256};
             let mut hasher = Sha256::new();
             hasher.update(&bytes);
@@ -287,8 +315,12 @@ impl TailwindManager {
                     actual,
                 });
             }
+            tracing::info!("Verified SHA-256 checksum for tailwindcss-{platform}");
         } else {
-            tracing::warn!("No SHA256 checksum available for Tailwind binary verification");
+            tracing::warn!(
+                "No pinned SHA256 checksum available for Tailwind v{} ({platform})",
+                self.version
+            );
         }
 
         let temp_dest = dest_path.with_extension("tmp");

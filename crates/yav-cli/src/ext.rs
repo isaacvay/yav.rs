@@ -13,8 +13,7 @@ const EXTENSION_DIR_NAME: &str = "yav-framework.yav-vscode-0.1.0";
 const PKG_JSON: &str = include_str!("../editors/vscode/package.json");
 const README_MD: &str = include_str!("../editors/vscode/README.md");
 const LANG_CONFIG_YAV: &str = include_str!("../editors/vscode/language-configuration.json");
-const LANG_CONFIG_YAVML: &str =
-    include_str!("../editors/vscode/language-configuration-yavml.json");
+const LANG_CONFIG_YAVML: &str = include_str!("../editors/vscode/language-configuration-yavml.json");
 const SYNTAX_YAV: &str = include_str!("../editors/vscode/syntaxes/yav.tmLanguage.json");
 const SYNTAX_YAVML: &str = include_str!("../editors/vscode/syntaxes/yavml.tmLanguage.json");
 const SCHEMA_YAVML: &str = include_str!("../editors/vscode/schemas/package.yavml.json");
@@ -113,7 +112,10 @@ pub fn get_editor_targets() -> Vec<EditorTarget> {
             name: "Windsurf",
             extensions_dir: windsurf_ext,
         });
-    } else if codeium_windsurf_ext.parent().map(|p| p.exists()).unwrap_or(false)
+    } else if codeium_windsurf_ext
+        .parent()
+        .map(|p| p.exists())
+        .unwrap_or(false)
         || codeium_windsurf_ext.exists()
     {
         targets.push(EditorTarget {
