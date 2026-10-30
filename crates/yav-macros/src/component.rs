@@ -74,7 +74,7 @@ pub fn component_impl(_attr: TokenStream, item: TokenStream) -> Result<TokenStre
     }
 
     let expanded = quote! {
-        #[derive(Clone, Debug, Default)]
+        #[derive(Default)]
         #vis struct #props_ident #generics #where_clause {
             #(pub #field_names: #field_types,)*
         }

@@ -30,7 +30,10 @@ impl BoxedHandler {
         R: IntoResponse + 'static,
     {
         BoxedHandler(Arc::new(move |req| {
-            let ctx_map = crate::action::RouteContext::from_request(&req).ssr_context_map();
+            let mut ctx_map = crate::action::RouteContext::from_request(&req).ssr_context_map();
+            if let Some(chain) = req.extensions().get::<yav_core::SsrLayoutChain>() {
+                ctx_map.insert(chain.clone());
+            }
             let fut = yav_core::with_context_map(ctx_map.clone(), || f(req));
             Box::pin(async move {
                 yav_core::with_context_map_async(ctx_map, fut)
@@ -48,7 +51,10 @@ impl BoxedHandler {
         R: IntoResponse + 'static,
     {
         BoxedHandler(Arc::new(move |req| {
-            let ctx_map = crate::action::RouteContext::from_request(&req).ssr_context_map();
+            let mut ctx_map = crate::action::RouteContext::from_request(&req).ssr_context_map();
+            if let Some(chain) = req.extensions().get::<yav_core::SsrLayoutChain>() {
+                ctx_map.insert(chain.clone());
+            }
             let fut = yav_core::with_context_map(ctx_map.clone(), &f);
             Box::pin(async move {
                 yav_core::with_context_map_async(ctx_map, fut)
@@ -67,13 +73,111 @@ impl BoxedHandler {
     {
         BoxedHandler(Arc::new(move |req| {
             let ctx = crate::action::RouteContext::from_request(&req);
-            let ctx_map = ctx.ssr_context_map();
+            let mut ctx_map = ctx.ssr_context_map();
+            if let Some(chain) = req.extensions().get::<yav_core::SsrLayoutChain>() {
+                ctx_map.insert(chain.clone());
+            }
             let fut = yav_core::with_context_map(ctx_map.clone(), || f(ctx));
             Box::pin(async move {
                 yav_core::with_context_map_async(ctx_map, fut)
                     .await
                     .into_response()
             })
+        }))
+    }
+
+    /// Wrap this handler with an SSR layout transformation chain.
+    pub fn with_layout<L>(self, layout_fn: L) -> Self
+    where
+        L: Fn(yav_core::Node) -> yav_core::Node + Send + Sync + 'static,
+    {
+        let inner = self.0;
+        let chain = yav_core::SsrLayoutChain(Arc::new(layout_fn));
+        BoxedHandler(Arc::new(move |mut req| {
+            req.extensions_mut().insert(chain.clone());
+            let mut ctx_map = crate::action::RouteContext::from_request(&req).ssr_context_map();
+            ctx_map.insert(chain.clone());
+            let fut = yav_core::with_context_map(ctx_map.clone(), || inner(req));
+            Box::pin(async move {
+                yav_core::with_context_map_async(ctx_map, fut).await
+            })
+        }))
+    }
+
+    /// Create a handler from an async function accepting 1 Axum extractor (`Path<T>`, `Query<T>`, `Session`, `RouteContext`, `FormData`, etc.).
+    pub fn from_extractor1<F, Fut, R, T1, M1>(f: F) -> Self
+    where
+        F: Fn(T1) -> Fut + Clone + Send + Sync + 'static,
+        Fut: Future<Output = R> + Send + 'static,
+        R: IntoResponse + 'static,
+        T1: axum::extract::FromRequest<(), M1> + Send + 'static,
+        M1: 'static,
+    {
+        BoxedHandler(Arc::new(move |req| {
+            let f = f.clone();
+            let mut ctx_map = crate::action::RouteContext::from_request(&req).ssr_context_map();
+            if let Some(chain) = req.extensions().get::<yav_core::SsrLayoutChain>() {
+                ctx_map.insert(chain.clone());
+            }
+            Box::pin(async move {
+                let t1 = match T1::from_request(req, &()).await {
+                    Ok(v) => v,
+                    Err(rej) => return rej.into_response(),
+                };
+                let fut = yav_core::with_context_map(ctx_map.clone(), || f(t1));
+                yav_core::with_context_map_async(ctx_map, fut)
+                    .await
+                    .into_response()
+            })
+        }))
+    }
+
+    /// Create a handler from an async function accepting 2 Axum extractors (`T1` from request parts, `T2` from request).
+    pub fn from_extractor2<F, Fut, R, T1, T2, M2>(f: F) -> Self
+    where
+        F: Fn(T1, T2) -> Fut + Clone + Send + Sync + 'static,
+        Fut: Future<Output = R> + Send + 'static,
+        R: IntoResponse + 'static,
+        T1: axum::extract::FromRequestParts<()> + Send + 'static,
+        T2: axum::extract::FromRequest<(), M2> + Send + 'static,
+        M2: 'static,
+    {
+        BoxedHandler(Arc::new(move |req| {
+            let f = f.clone();
+            let mut ctx_map = crate::action::RouteContext::from_request(&req).ssr_context_map();
+            if let Some(chain) = req.extensions().get::<yav_core::SsrLayoutChain>() {
+                ctx_map.insert(chain.clone());
+            }
+            Box::pin(async move {
+                let (mut parts, body) = req.into_parts();
+                let t1 = match T1::from_request_parts(&mut parts, &()).await {
+                    Ok(v) => v,
+                    Err(rej) => return rej.into_response(),
+                };
+                let req = Request::from_parts(parts, body);
+                let t2 = match T2::from_request(req, &()).await {
+                    Ok(v) => v,
+                    Err(rej) => return rej.into_response(),
+                };
+                let fut = yav_core::with_context_map(ctx_map.clone(), || f(t1, t2));
+                yav_core::with_context_map_async(ctx_map, fut)
+                    .await
+                    .into_response()
+            })
+        }))
+    }
+
+    /// Wrap this handler with a scoped route/directory middleware (`_middleware.rs`).
+    pub fn with_middleware<M, Fut>(self, mw: M) -> Self
+    where
+        M: Fn(Request, BoxedHandler) -> Fut + Clone + Send + Sync + 'static,
+        Fut: Future<Output = Response> + Send + 'static,
+    {
+        let next = self.clone();
+        BoxedHandler(Arc::new(move |req| {
+            let mw = mw.clone();
+            let next = next.clone();
+            Box::pin(async move { mw(req, next).await })
         }))
     }
 
@@ -214,6 +318,12 @@ pub struct YavApp {
     pub i18n: Option<Arc<yav_core::I18n>>,
     /// Custom 404 Not Found fallback handler.
     pub not_found_handler: Option<BoxedHandler>,
+    /// Whether HTTP response compression (gzip, brotli) is enabled.
+    pub compression: bool,
+    /// Shared SSR state context map populated by `.state(T)` and accessible via `use_state::<T>()`.
+    pub state_context: yav_core::ContextMap,
+    /// In-memory SSR & ISR response cache.
+    pub ssr_cache: crate::cache::SsrCache,
 }
 
 impl Default for YavApp {
@@ -285,7 +395,17 @@ impl YavApp {
             extensions: Vec::new(),
             i18n: None,
             not_found_handler: None,
+            compression: manifest.server.compression,
+            state_context: yav_core::ContextMap::new(),
+            ssr_cache: crate::cache::SsrCache::new(),
         }
+    }
+
+    /// Set whether automatic HTTP response compression (gzip, brotli) is enabled.
+    #[must_use]
+    pub fn compression(mut self, enabled: bool) -> Self {
+        self.compression = enabled;
+        self
     }
 
     /// Set whether automatic ETag generation and 304 Not Modified caching is enabled.
@@ -366,9 +486,11 @@ impl YavApp {
         self
     }
 
-    /// Register shared application state or database pool accessible to all handlers via `axum::extract::Extension<T>`.
+    /// Register shared application state or database pool accessible to all handlers via `axum::extract::Extension<T>`
+    /// as well as inside any SSR component via [`yav_core::use_state`] / [`yav_core::use_context`].
     #[must_use]
     pub fn state<T: Clone + Send + Sync + 'static>(mut self, state: T) -> Self {
+        self.state_context.insert(state.clone());
         self.extensions.push(Arc::new(move |router| {
             router.layer(axum::Extension(state.clone()))
         }));
@@ -398,10 +520,30 @@ impl YavApp {
         self
     }
 
+    /// Configure custom HTTP security headers and Content-Security-Policy (CSP).
+    #[must_use]
+    pub fn security_headers(self, config: crate::middleware::SecurityHeadersConfig) -> Self {
+        self.state(config)
+    }
+
     /// Configure a custom 404 Not Found fallback handler.
     #[must_use]
     pub fn not_found_handler<M>(mut self, handler: impl IntoBoxedHandler<M>) -> Self {
         self.not_found_handler = Some(handler.into_boxed_handler());
+        self
+    }
+
+    /// Configure a custom 404 Not Found fallback handler wrapped with an SSR layout hierarchy.
+    #[must_use]
+    pub fn not_found_handler_with_layout<M, L>(
+        mut self,
+        handler: impl IntoBoxedHandler<M>,
+        layout_fn: L,
+    ) -> Self
+    where
+        L: Fn(yav_core::Node) -> yav_core::Node + Send + Sync + 'static,
+    {
+        self.not_found_handler = Some(handler.into_boxed_handler().with_layout(layout_fn));
         self
     }
 
@@ -476,6 +618,9 @@ impl YavApp {
             extensions: Vec::new(),
             i18n: self.i18n.clone(),
             not_found_handler: self.not_found_handler.clone(),
+            compression: self.compression,
+            state_context: self.state_context.clone(),
+            ssr_cache: self.ssr_cache.clone(),
         };
         let configured = configure(sub);
         for mut r in configured.routes {
@@ -487,6 +632,7 @@ impl YavApp {
             };
             self.routes.push(r);
         }
+        self.state_context.extend(&configured.state_context);
         self.extensions.extend(configured.extensions);
         self
     }
@@ -500,6 +646,23 @@ impl YavApp {
         handler: impl IntoBoxedHandler<M>,
     ) -> Self {
         self.routes.push(AppRoute::new(path, method, handler));
+        self
+    }
+
+    /// Add a route wrapped with an SSR layout transformation hierarchy.
+    #[must_use]
+    pub fn route_with_layout<M, L>(
+        mut self,
+        path: impl Into<String>,
+        method: Method,
+        handler: impl IntoBoxedHandler<M>,
+        layout_fn: L,
+    ) -> Self
+    where
+        L: Fn(yav_core::Node) -> yav_core::Node + Send + Sync + 'static,
+    {
+        let boxed = handler.into_boxed_handler().with_layout(layout_fn);
+        self.routes.push(AppRoute::new(path, method, boxed));
         self
     }
 
@@ -588,6 +751,137 @@ impl YavApp {
         self.route(path, Method::PATCH, BoxedHandler::from_ctx(handler))
     }
 
+    /// Register a `GET` route accepting any single Axum extractor (`Path<T>`, `Query<T>`, `Session`, `RouteContext`).
+    #[must_use]
+    pub fn get_with<F, Fut, R, T1, M1>(self, path: impl Into<String>, handler: F) -> Self
+    where
+        F: Fn(T1) -> Fut + Clone + Send + Sync + 'static,
+        Fut: Future<Output = R> + Send + 'static,
+        R: IntoResponse + 'static,
+        T1: axum::extract::FromRequest<(), M1> + Send + 'static,
+        M1: 'static,
+    {
+        self.route(path, Method::GET, BoxedHandler::from_extractor1(handler))
+    }
+
+    /// Register a `POST` route accepting any single Axum extractor (`FormData`, `Session`, `RouteContext`, `Path<T>`).
+    #[must_use]
+    pub fn post_with<F, Fut, R, T1, M1>(self, path: impl Into<String>, handler: F) -> Self
+    where
+        F: Fn(T1) -> Fut + Clone + Send + Sync + 'static,
+        Fut: Future<Output = R> + Send + 'static,
+        R: IntoResponse + 'static,
+        T1: axum::extract::FromRequest<(), M1> + Send + 'static,
+        M1: 'static,
+    {
+        self.route(path, Method::POST, BoxedHandler::from_extractor1(handler))
+    }
+
+    /// Register a cached `GET` route with Incremental Static Regeneration (`stale-while-revalidate`) and TTL.
+    ///
+    /// Responses are cached in memory for `ttl`. Subsequent requests within `ttl` receive an instant
+    /// response with `X-Yav-Cache: HIT`. Expired entries are served immediately with `X-Yav-Cache: STALE`
+    /// while a background task regenerates the fresh SSR response.
+    #[must_use]
+    pub fn get_cached<M>(
+        self,
+        path: impl Into<String>,
+        ttl: std::time::Duration,
+        handler: impl IntoBoxedHandler<M>,
+    ) -> Self {
+        let inner = handler.into_boxed_handler();
+        let cache = self.ssr_cache.clone();
+        let cached_handler = BoxedHandler(Arc::new(move |req: Request| {
+            let inner = inner.clone();
+            let cache = cache.clone();
+            Box::pin(async move {
+                let cache_key = match req.uri().query() {
+                    Some(q) if !q.is_empty() => format!("{}?{}", req.uri().path(), q),
+                    _ => req.uri().path().to_string(),
+                };
+
+                if let Some(entry) = cache.get(&cache_key) {
+                    if entry.is_fresh(ttl) {
+                        return entry.into_response_with_status("HIT", ttl);
+                    }
+                    // Stale-while-revalidate: serve stale immediately and trigger background refresh
+                    if cache.try_begin_revalidation(&cache_key) {
+                        let bg_cache = cache.clone();
+                        let bg_inner = inner.clone();
+                        let bg_key = cache_key.clone();
+                        let mut bg_req = Request::builder()
+                            .method(Method::GET)
+                            .uri(req.uri().clone())
+                            .body(axum::body::Body::empty())
+                            .unwrap_or_else(|_| Request::new(axum::body::Body::empty()));
+                        *bg_req.headers_mut() = req.headers().clone();
+                        *bg_req.extensions_mut() = req.extensions().clone();
+                        tokio::spawn(async move {
+                            let resp = bg_inner.call(bg_req).await;
+                            let status = resp.status();
+                            if status.is_success() {
+                                let ct = resp
+                                    .headers()
+                                    .get(axum::http::header::CONTENT_TYPE)
+                                    .and_then(|v| v.to_str().ok())
+                                    .unwrap_or("text/html; charset=utf-8")
+                                    .to_string();
+                                if let Ok(bytes) =
+                                    axum::body::to_bytes(resp.into_body(), 16 * 1024 * 1024).await
+                                {
+                                    bg_cache.insert(
+                                        bg_key,
+                                        crate::cache::CacheEntry {
+                                            status,
+                                            content_type: ct,
+                                            body: bytes,
+                                            created_at: std::time::Instant::now(),
+                                            revalidating: false,
+                                        },
+                                    );
+                                }
+                            }
+                        });
+                    }
+                    return entry.into_response_with_status("STALE", ttl);
+                }
+
+                let resp = inner.call(req).await;
+                let status = resp.status();
+                if !status.is_success() {
+                    return resp;
+                }
+                let ct = resp
+                    .headers()
+                    .get(axum::http::header::CONTENT_TYPE)
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("text/html; charset=utf-8")
+                    .to_string();
+                match axum::body::to_bytes(resp.into_body(), 16 * 1024 * 1024).await {
+                    Ok(bytes) => {
+                        let entry = crate::cache::CacheEntry {
+                            status,
+                            content_type: ct,
+                            body: bytes,
+                            created_at: std::time::Instant::now(),
+                            revalidating: false,
+                        };
+                        let out = entry.into_response_with_status("MISS", ttl);
+                        cache.insert(cache_key, entry);
+                        out
+                    }
+                    Err(_) => (
+                        axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                        "Cache buffer error",
+                    )
+                        .into_response(),
+                }
+            })
+        }));
+
+        self.route(path, Method::GET, cached_handler)
+    }
+
     /// Register an OpenAPI 3.1 specification and automatically mount interactive Scalar and Swagger API documentation.
     ///
     /// Exposes:
@@ -649,7 +943,7 @@ impl YavApp {
         self
     }
 
-    /// Convert the configured `YavApp` into an Axum [`Router`](axum::Router).
+    /// Convert the configured `YavApp` into an Axum [`Router`].
     ///
     /// Useful for testing, embedding in other applications, or applying custom layers.
     pub fn into_router(self) -> Router {
@@ -664,7 +958,10 @@ impl YavApp {
 
         let mut router = Router::new();
 
-        // Built-in health checks (/healthz, /readyz, and /metrics) if not overridden
+        // Built-in health checks (/health, /healthz, /readyz, and /metrics) if not overridden
+        if !routes_by_path.contains_key("/health") {
+            router = router.route("/health", axum::routing::get(crate::health::healthz));
+        }
         if !routes_by_path.contains_key("/healthz") {
             router = router.route("/healthz", axum::routing::get(crate::health::healthz));
         }
@@ -894,10 +1191,16 @@ impl YavApp {
         router = router
             .layer(axum::middleware::from_fn(security_headers_middleware))
             .layer(axum::middleware::from_fn(request_logger_middleware))
-            .layer(axum::Extension(self.metrics.clone()));
+            .layer(axum::Extension(self.metrics.clone()))
+            .layer(axum::Extension(self.state_context.clone()))
+            .layer(axum::Extension(self.ssr_cache.clone()));
 
         if let Some(ref i18n) = self.i18n {
             router = router.layer(axum::Extension(i18n.clone()));
+        }
+
+        if self.compression {
+            router = router.layer(tower_http::compression::CompressionLayer::new());
         }
 
         // Apply custom state layers and extensions
@@ -908,11 +1211,106 @@ impl YavApp {
         router
     }
 
+    /// Prerender all static `GET` routes registered in this application into standalone `.html` files
+    /// inside `output_dir`, along with `404.html`, `sitemap.xml`, and `robots.txt`.
+    pub async fn export_static(
+        &self,
+        output_dir: impl AsRef<std::path::Path>,
+        base_url: &str,
+    ) -> std::io::Result<usize> {
+        let out_path = output_dir.as_ref();
+        std::fs::create_dir_all(out_path)?;
+
+        let mut exported = 0usize;
+        let mut static_paths = Vec::new();
+
+        for route in &self.routes {
+            if route.method != Method::GET
+                || route.path.contains('{')
+                || route.path.contains(':')
+                || route.path.contains('*')
+                || route.path == "/health"
+            {
+                continue;
+            }
+            let uri_path = if route.path.is_empty() {
+                "/".to_string()
+            } else {
+                route.path.clone()
+            };
+            let mut req = Request::builder()
+                .method(Method::GET)
+                .uri(&uri_path)
+                .body(axum::body::Body::empty())
+                .unwrap_or_else(|_| Request::new(axum::body::Body::empty()));
+            req.extensions_mut().insert(self.state_context.clone());
+            req.extensions_mut().insert(self.ssr_cache.clone());
+            if let Some(ref i18n) = self.i18n {
+                req.extensions_mut().insert(i18n.clone());
+            }
+            let resp = route.handler.call(req).await;
+            if let Ok(bytes) = axum::body::to_bytes(resp.into_body(), 16 * 1024 * 1024).await {
+                let target_file = if uri_path == "/" {
+                    out_path.join("index.html")
+                } else {
+                    let clean = uri_path.trim_start_matches('/');
+                    let dir = out_path.join(clean);
+                    std::fs::create_dir_all(&dir)?;
+                    dir.join("index.html")
+                };
+                std::fs::write(&target_file, &bytes)?;
+                static_paths.push(uri_path);
+                exported += 1;
+            }
+        }
+
+        if let Some(ref nf) = self.not_found_handler {
+            let mut req = Request::builder()
+                .method(Method::GET)
+                .uri("/404")
+                .body(axum::body::Body::empty())
+                .unwrap_or_else(|_| Request::new(axum::body::Body::empty()));
+            if let Some(ref i18n) = self.i18n {
+                req.extensions_mut().insert(i18n.clone());
+            }
+            let resp = nf.call(req).await;
+            if let Ok(bytes) = axum::body::to_bytes(resp.into_body(), 16 * 1024 * 1024).await {
+                std::fs::write(out_path.join("404.html"), &bytes)?;
+            }
+        }
+
+        if !static_paths.is_empty() {
+            static_paths.sort();
+            static_paths.dedup();
+            let sitemap_xml = format!(
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">\n{}\n</urlset>\n",
+                static_paths
+                    .iter()
+                    .map(|r| {
+                        let full = format!("{}{}", base_url.trim_end_matches('/'), r);
+                        format!("  <url><loc>{full}</loc><priority>0.8</priority></url>")
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            );
+            std::fs::write(out_path.join("sitemap.xml"), sitemap_xml)?;
+        }
+
+        Ok(exported)
+    }
+
     /// Start listening on the configured host and port with a custom shutdown signal.
     pub async fn serve_with_shutdown<F>(self, shutdown_signal: F) -> std::io::Result<()>
     where
         F: Future<Output = ()> + Send + 'static,
     {
+        if let Ok(export_dir) = std::env::var("YAV_EXPORT_DIR") {
+            let base_url = std::env::var("YAV_EXPORT_BASE_URL")
+                .unwrap_or_else(|_| "https://example.com".to_string());
+            self.export_static(&export_dir, &base_url).await?;
+            return Ok(());
+        }
+
         let addr = if self.host.contains(':') && !self.host.starts_with('[') {
             format!("[{}]:{}", self.host, self.port)
         } else {
@@ -1172,10 +1570,25 @@ mod tests {
         assert_eq!(route.path, "/users/{id}/posts/{*slug}");
     }
 
-    #[test]
-    fn test_built_in_healthz_routes() {
+    #[tokio::test]
+    async fn test_built_in_healthz_routes() {
+        use tower::ServiceExt;
         let app = YavApp::new();
-        let _router = app.into_router();
+        let router = app.into_router();
+
+        let req = Request::builder()
+            .uri("/health")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let resp = router.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let req_z = Request::builder()
+            .uri("/healthz")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let resp_z = router.clone().oneshot(req_z).await.unwrap();
+        assert_eq!(resp_z.status(), StatusCode::OK);
     }
 
     #[tokio::test]

@@ -6,21 +6,26 @@
 //! Tailwind CSS utility classes and design tokens.
 //!
 //! ## Components
-//! - **Button**: [`Button`]
-//! - **Card**: [`Card`], [`CardHeader`], [`CardTitle`], [`CardDescription`], [`CardContent`], [`CardFooter`]
-//! - **Input & Form Controls**: [`Input`], [`Textarea`], [`Select`], [`Checkbox`], [`Radio`]
-//! - **Layout**: [`Container`], [`Stack`], [`Grid`], [`Separator`]
-//! - **Navigation**: [`Link`], [`Navbar`], [`Sidebar`], [`Breadcrumbs`], [`Tabs`]
-//! - **Feedback**: [`Alert`], [`Badge`], [`Loading`], [`Skeleton`]
-//! - **Overlay**: [`Dialog`], [`Dropdown`]
-//! - **Data Display**: [`Table`], [`Pagination`], [`Avatar`]
-//! - **Forms**: [`Form`], [`Label`], [`FormGroup`]
-//! - **Theme**: [`Theme`], [`ColorPalette`], [`SpacingScale`], [`BorderRadii`], [`Typography`]
+//! - **Button**: [`struct@Button`]
+//! - **Card**: [`struct@Card`], [`struct@CardHeader`], [`struct@CardTitle`], [`struct@CardDescription`], [`struct@CardContent`], [`struct@CardFooter`]
+//! - **Input & Form Controls**: [`struct@Input`], [`struct@Textarea`], [`struct@Select`], [`struct@Checkbox`], [`struct@Radio`], [`struct@Slider`], [`struct@RangeSlider`], [`struct@Switch`]
+//! - **Layout**: [`struct@Container`], [`struct@Stack`], [`struct@Grid`], [`struct@Separator`]
+//! - **Navigation**: [`struct@Link`], [`struct@Navbar`], [`struct@Sidebar`], [`struct@Breadcrumbs`], [`struct@Tabs`]
+//! - **Feedback**: [`struct@Alert`], [`struct@Badge`], [`struct@Loading`], [`struct@Skeleton`], [`struct@ProgressBar`], [`struct@EmptyState`]
+//! - **Overlay**: [`struct@Dialog`], [`struct@Drawer`], [`struct@Dropdown`], [`struct@Popover`], [`struct@Tooltip`]
+//! - **Data Display**: [`struct@Table`], [`struct@Pagination`], [`struct@Avatar`]
+//! - **Forms**: [`struct@Form`], [`struct@Label`], [`struct@FormGroup`]
+//! - **Syntax Highlighting**: [`struct@CodeBlock`]
+//! - **Cursor & 3D Interactive**: [`struct@CursorSpotlight`], [`struct@TiltPlate`], [`struct@Magnetic`], [`struct@CursorFollower`]
+//! - **Motion & Spring Physics**: [`struct@Motion`], [`struct@CountUp`], [`struct@AnimatedBar`], [`struct@TypewriterCode`], [`struct@ScrollProgressBar`]
+//! - **Multi-Theme System**: [`Theme`], [`ThemePreset`], [`struct@ThemeSelector`], [`struct@ThemeToggle`]
 
 pub mod button;
 pub mod card;
 pub mod carousel;
+pub mod code_block;
 pub mod command;
+pub mod cursor;
 pub mod data;
 pub mod feedback;
 pub mod floating;
@@ -51,6 +56,10 @@ pub use command::{
     command_menu, command_palette_script, CommandGroup, CommandGroupProps, CommandItem,
     CommandItemProps, CommandMenu, CommandMenuProps,
 };
+pub use cursor::{
+    cursor_follower, cursor_spotlight, magnetic, tilt_plate, CursorFollower, CursorFollowerProps,
+    CursorSpotlight, CursorSpotlightProps, Magnetic, MagneticProps, TiltPlate, TiltPlateProps,
+};
 pub use data::{
     avatar, pagination, table, table_cell, table_header_cell, table_row, Avatar, AvatarProps,
     AvatarStatus, CellAlign, Pagination, PaginationProps, Table, TableCell, TableProps, TableRow,
@@ -60,6 +69,7 @@ pub use feedback::{
     Badge, BadgeProps, BadgeVariant, EmptyState, EmptyStateProps, Loading, LoadingProps,
     ProgressBar, ProgressBarProps, Skeleton, SkeletonProps,
 };
+pub use code_block::{code_block, CodeBlock, CodeBlockProps, CodeLanguage};
 pub use floating::{
     floating_script, popover, tooltip, Placement, Popover, PopoverProps, Tooltip, TooltipProps,
 };
@@ -84,9 +94,10 @@ pub use layout::{
 };
 pub use meta::{MetaTags, MetaTagsProps, Metadata, TwitterCard};
 pub use motion::{
-    motion, motion_group, motion_script, scroll_progress_bar, Motion, MotionGroup,
+    animated_bar, count_up, motion, motion_group, motion_script, scroll_progress_bar,
+    typewriter_code, AnimatedBar, AnimatedBarProps, CountUp, CountUpProps, Motion, MotionGroup,
     MotionGroupProps, MotionProps, MotionState, ScrollProgressBar, ScrollProgressBarProps,
-    Transition,
+    Transition, TypewriterCode, TypewriterCodeProps,
 };
 pub use navigation::{
     breadcrumbs, client_router_script, link, nav_item, navbar, navbar_brand, sidebar, sidebar_item,
@@ -100,8 +111,9 @@ pub use overlay::{
 };
 pub use stepper::{stepper, StepItem, StepStatus, Stepper, StepperProps};
 pub use theme::{
-    anti_fouc_script, reduced_motion_style, theme_toggle, BorderRadii, ColorPalette, SpacingScale,
-    Theme, ThemeToggle, ThemeToggleProps, Typography,
+    anti_fouc_script, reduced_motion_style, theme_selector, theme_toggle, BorderRadii,
+    ColorPalette, SpacingScale, Theme, ThemePreset, ThemeSelector, ThemeSelectorProps,
+    ThemeToggle, ThemeToggleProps, Typography,
 };
 pub use toast::{toast_script, Toast, ToastContainer, ToastContainerProps, ToastLevel, ToastProps};
 
@@ -140,9 +152,15 @@ pub mod prelude {
         CardTitle, CardTitleProps, StatCard, StatCardProps, StatTrend, StatTrendDirection,
     };
     pub use crate::carousel::{carousel, carousel_script, Carousel, CarouselProps, CarouselSlide};
+    pub use crate::code_block::{code_block, CodeBlock, CodeBlockProps, CodeLanguage};
     pub use crate::command::{
         command_menu, command_palette_script, CommandGroup, CommandGroupProps, CommandItem,
         CommandItemProps, CommandMenu, CommandMenuProps,
+    };
+    pub use crate::cursor::{
+        cursor_follower, cursor_spotlight, magnetic, tilt_plate, CursorFollower,
+        CursorFollowerProps, CursorSpotlight, CursorSpotlightProps, Magnetic, MagneticProps,
+        TiltPlate, TiltPlateProps,
     };
     pub use crate::data::{
         avatar, pagination, table, Avatar, AvatarProps, Pagination, PaginationProps, Table,
@@ -178,9 +196,10 @@ pub mod prelude {
     };
     pub use crate::meta::{MetaTags, MetaTagsProps, Metadata, TwitterCard};
     pub use crate::motion::{
-        motion, motion_group, motion_script, scroll_progress_bar, Motion, MotionGroup,
+        animated_bar, count_up, motion, motion_group, motion_script, scroll_progress_bar,
+        typewriter_code, AnimatedBar, AnimatedBarProps, CountUp, CountUpProps, Motion, MotionGroup,
         MotionGroupProps, MotionProps, MotionState, ScrollProgressBar, ScrollProgressBarProps,
-        Transition,
+        Transition, TypewriterCode, TypewriterCodeProps,
     };
     pub use crate::navigation::{
         breadcrumbs, client_router_script, link, navbar, sidebar, tabs, Breadcrumbs,
@@ -193,7 +212,8 @@ pub mod prelude {
     };
     pub use crate::stepper::{stepper, StepItem, StepStatus, Stepper, StepperProps};
     pub use crate::theme::{
-        anti_fouc_script, reduced_motion_style, theme_toggle, Theme, ThemeToggle, ThemeToggleProps,
+        anti_fouc_script, reduced_motion_style, theme_selector, theme_toggle, Theme, ThemePreset,
+        ThemeSelector, ThemeSelectorProps, ThemeToggle, ThemeToggleProps,
     };
     pub use crate::toast::{
         toast_script, Toast, ToastContainer, ToastContainerProps, ToastLevel, ToastProps,

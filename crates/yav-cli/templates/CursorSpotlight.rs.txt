@@ -1,0 +1,22 @@
+//! Native Cursor Spotlight & 3D Tilt Plate Component.
+//! Generated via `yav add cursor-spotlight`.
+
+use yav::prelude::*;
+
+#[derive(Clone, Default)]
+pub struct SpotlightPlateProps {
+    pub title: String,
+    pub children: Vec<Node>,
+}
+
+#[component]
+pub fn SpotlightPlate(props: SpotlightPlateProps) -> Node {
+    rsx! {
+        <CursorSpotlight radius_px={420} class="plate p-6 space-y-3">
+            <h3 class="text-lg font-medium">{props.title}</h3>
+            <div class="text-sm opacity-80">
+                {props.children}
+            </div>
+        </CursorSpotlight>
+    }
+}

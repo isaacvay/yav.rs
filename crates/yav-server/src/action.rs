@@ -31,6 +31,10 @@ pub struct RouteContext {
     pub i18n: Option<Arc<yav_core::I18n>>,
     /// Optional user session extracted from request extensions.
     pub session: Option<crate::session::Session>,
+    /// Stable per-request cryptographic CSP nonce.
+    pub nonce: String,
+    /// Shared application state map injected via `YavApp::state`.
+    pub app_state: yav_core::ContextMap,
 }
 
 impl RouteContext {
@@ -43,6 +47,8 @@ impl RouteContext {
             headers: HeaderMap::new(),
             i18n: None,
             session: None,
+            nonce: crate::middleware::CspNonce::generate().0,
+            app_state: yav_core::ContextMap::new(),
         }
     }
 
@@ -63,6 +69,19 @@ impl RouteContext {
 
         let i18n = req.extensions().get::<Arc<yav_core::I18n>>().cloned();
         let session = req.extensions().get::<crate::session::Session>().cloned();
+        let app_state = req
+            .extensions()
+            .get::<yav_core::ContextMap>()
+            .cloned()
+            .unwrap_or_default();
+        let nonce = req
+            .headers()
+            .get("x-nonce")
+            .or_else(|| req.headers().get("csp-nonce"))
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string())
+            .or_else(|| req.extensions().get::<crate::middleware::CspNonce>().map(|n| n.0.clone()))
+            .unwrap_or_else(|| crate::middleware::CspNonce::generate().0);
 
         Self {
             path,
@@ -71,6 +90,8 @@ impl RouteContext {
             headers: req.headers().clone(),
             i18n,
             session,
+            nonce,
+            app_state,
         }
     }
 
@@ -117,13 +138,47 @@ impl RouteContext {
         self.headers.get(name).and_then(|v| v.to_str().ok())
     }
 
+    /// Retrieve a cookie value by name from the `Cookie` header.
+    pub fn cookie(&self, name: &str) -> Option<String> {
+        let cookie_header = self.header("cookie")?;
+        for pair in cookie_header.split(';') {
+            let mut parts = pair.splitn(2, '=');
+            if let (Some(k), Some(v)) = (parts.next(), parts.next()) {
+                if k.trim() == name {
+                    return Some(v.trim().to_string());
+                }
+            }
+        }
+        None
+    }
+
+    /// Retrieve or generate a cryptographic CSP nonce for securing inline scripts.
+    /// Returns a stable nonce across all calls within the same request.
+    pub fn csp_nonce(&self) -> String {
+        if let Some(val) = self.headers.get("x-nonce").or_else(|| self.headers.get("csp-nonce")) {
+            if let Ok(s) = val.to_str() {
+                if !s.is_empty() {
+                    return s.to_string();
+                }
+            }
+        }
+        if !self.nonce.is_empty() {
+            return self.nonce.clone();
+        }
+        crate::middleware::CspNonce::generate().0
+    }
+
     /// Resolve the most appropriate locale for this request.
     ///
     /// Respects `?lang=...` query parameter, `:lang` path parameter,
-    /// and HTTP `Accept-Language` header, matching against supported locales
+    /// `yav_locale` / `lang` cookie, and HTTP `Accept-Language` header, matching against supported locales
     /// if an [`I18n`](yav_core::I18n) catalog is attached. Defaults to `"en"`.
     pub fn locale(&self) -> String {
-        let preferred = self.query_val("lang").or_else(|| self.param("lang"));
+        let cookie_pref = self.cookie("yav_locale").or_else(|| self.cookie("lang"));
+        let preferred = self
+            .query_val("lang")
+            .or_else(|| self.param("lang"))
+            .or(cookie_pref.as_deref());
         let accept_header = self.header("accept-language");
         if let Some(ref i18n) = self.i18n {
             i18n.resolve_locale(accept_header, preferred)
@@ -176,10 +231,14 @@ impl RouteContext {
     }
 
     /// Construct a [`ContextMap`](yav_core::ContextMap) populated with this [`RouteContext`],
-    /// its [`I18n`](yav_core::I18n) catalog, and [`Session`](crate::session::Session) if present.
+    /// its [`I18n`](yav_core::I18n) catalog, [`Session`](crate::session::Session), and [`CspNonce`](crate::middleware::CspNonce).
     pub fn ssr_context_map(&self) -> yav_core::ContextMap {
-        let mut map = yav_core::current_context();
+        let mut map = self.app_state.clone();
+        map.extend(&yav_core::current_context());
         map.insert(self.clone());
+        let current_locale = self.locale();
+        map.insert(current_locale);
+        map.insert(crate::middleware::CspNonce(self.csp_nonce()));
         if let Some(ref i18n) = self.i18n {
             map.insert(i18n.clone());
             map.insert((**i18n).clone());
@@ -194,6 +253,60 @@ impl RouteContext {
     /// injected into the SSR [`use_context`](yav_core::use_context) scope.
     pub fn with_ssr_context<R>(&self, f: impl FnOnce() -> R) -> R {
         yav_core::with_context_map(self.ssr_context_map(), f)
+    }
+}
+
+impl<S> axum::extract::FromRequestParts<S> for RouteContext
+where
+    S: Send + Sync,
+{
+    type Rejection = std::convert::Infallible;
+
+    async fn from_request_parts(
+        parts: &mut axum::http::request::Parts,
+        _state: &S,
+    ) -> Result<Self, Self::Rejection> {
+        let path = parts.uri.path().to_string();
+        let query = parts
+            .uri
+            .query()
+            .map(yav_router::parse_query_string)
+            .unwrap_or_default();
+        let mut params = HashMap::new();
+        if let Some(route_params) = parts.extensions.get::<RouteParams>() {
+            params.clone_from(&route_params.0);
+        }
+        let i18n = parts.extensions.get::<Arc<yav_core::I18n>>().cloned();
+        let session = parts.extensions.get::<crate::session::Session>().cloned();
+        let app_state = parts
+            .extensions
+            .get::<yav_core::ContextMap>()
+            .cloned()
+            .unwrap_or_default();
+        let nonce = parts
+            .headers
+            .get("x-nonce")
+            .or_else(|| parts.headers.get("csp-nonce"))
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string())
+            .or_else(|| {
+                parts
+                    .extensions
+                    .get::<crate::middleware::CspNonce>()
+                    .map(|n| n.0.clone())
+            })
+            .unwrap_or_else(|| crate::middleware::CspNonce::generate().0);
+
+        Ok(Self {
+            path,
+            params,
+            query,
+            headers: parts.headers.clone(),
+            i18n,
+            session,
+            nonce,
+            app_state,
+        })
     }
 }
 

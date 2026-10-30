@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 pub enum GenerateTarget {
     /// Generate a new route handler in src/routes/
     Route {
-        /// Route path (e.g. "dashboard", "blog/[slug]", "api/users")
+        /// Route path (e.g. "dashboard", "blog/\[slug\]", "api/users")
         path: String,
     },
     /// Generate a new functional component in src/components/
@@ -151,7 +151,7 @@ pub async fn handler(_req: Request) -> HtmlPage {{
         .collect::<Vec<_>>()
         .join("::");
     println!(
-        "\x1b[36m💡 Wire in main.rs:\x1b[0m .get(\"{route_pattern}\", routes::{mod_chain}::handler)"
+        "\x1b[36mℹ Wire in main.rs:\x1b[0m .get(\"{route_pattern}\", routes::{mod_chain}::handler)"
     );
 
     Ok(())

@@ -241,3 +241,130 @@ rsx! {
 3. **Smooth Shared Animations**: Pages transition fluidly with native CSS keyframes (e.g. cross-fade, slide, or zoom) without loading heavy client-side JavaScript routers.
 4. **Browser History & Scroll Restoration**: URL updates via `history.pushState` with full backward/forward browser button navigation and scroll preservation.
 5. **Zero-JS Graceful Fallback**: If JavaScript is disabled or unsupported, links execute standard HTTP GET navigations.
+
+---
+
+## 7. Reverse Routing with `url_for!`
+
+Rather than hard-coding URL strings throughout your views, use the type-safe `url_for` helper to interpolate route parameters:
+
+```rust
+use yav::router::url_for;
+
+// Single dynamic parameter
+let user_url = url_for("/users/:id", &[("id", "42")]);
+assert_eq!(user_url, "/users/42");
+
+// Wildcard catch-all parameter
+let doc_url = url_for("/docs/*slug", &[("slug", "getting-started/quickstart")]);
+assert_eq!(doc_url, "/docs/getting-started/quickstart");
+
+// Multiple parameters
+let post_url = url_for("/posts/[year]/[slug]", &[("year", "2026"), ("slug", "release-v014")]);
+assert_eq!(post_url, "/posts/2026/release-v014");
+```
+
+---
+
+## 8. Programmatic Route Layouts (`route_with_layout`)
+
+You can register route endpoints with an explicit wrapper layout function directly on `YavApp`:
+
+```rust
+use yav::prelude::*;
+use axum::http::Method;
+
+fn admin_layout(child: Node) -> Node {
+    rsx! {
+        <div class="admin-shell flex">
+            <aside class="sidebar w-64 bg-zinc-900 text-white p-6">
+                <h2>"Admin Panel"</h2>
+            </aside>
+            <main class="flex-1 p-8">
+                {child}
+            </main>
+        </div>
+    }
+}
+
+async fn dashboard_page() -> HtmlPage {
+    HtmlPage::new(rsx! { <h1>"Dashboard Metrics"</h1> }).title("Admin Dashboard")
+}
+
+let app = YavApp::new()
+    .route_with_layout("/admin/dashboard", Method::GET, dashboard_page, admin_layout);
+```
+
+---
+
+## 9. SSR Route Caching (`get_cached` & `route_cached`)
+
+Accelerate high-traffic or expensive server-rendered pages with in-memory SSR caching:
+
+```rust
+use yav::prelude::*;
+use std::time::Duration;
+
+let app = YavApp::new()
+    // Cache the /explore page HTML for 60 seconds
+    .get_cached("/explore", Duration::from_secs(60), || async {
+        HtmlPage::new(rsx! {
+            <h1>"Catalogue Exploratoire"</h1>
+            <p>"Contenu calculé une seule fois toutes les 60 secondes."</p>
+        })
+    });
+```
+
+* Pages served from `SsrCache` return instantly with zero redundant CPU rendering.
+* Automatically includes appropriate `ETag` and `Last-Modified` cache headers.
+
+---
+
+## 10. Request-Scoped App State (`AppState` & `use_state`)
+
+Share global or request-scoped dependency injection across your handlers and components during SSR without passing props down the entire tree:
+
+```rust
+use yav::prelude::*;
+
+#[derive(Clone)]
+struct SiteConfig {
+    site_title: String,
+    support_email: String,
+}
+
+let app = YavApp::new()
+    .state(SiteConfig {
+        site_title: "Yav Documentation".to_string(),
+        support_email: "contact@yav.rs".to_string(),
+    })
+    .get("/contact", || async {
+        let config = use_state::<SiteConfig>().expect("SiteConfig injected");
+        HtmlPage::new(rsx! {
+            <h1>{config.site_title}</h1>
+            <p>"Contactez-nous à: " {config.support_email}</p>
+        })
+    });
+```
+
+---
+
+## 11. Static Site Generation (SSG) with `export_static`
+
+In addition to dynamic SSR, `YavApp` can statically export every registered page into pre-rendered static HTML files:
+
+```rust
+let app = YavApp::new()
+    .get("/", home_handler)
+    .get("/about", about_handler)
+    .get("/pricing", pricing_handler);
+
+let out_dir = std::path::Path::new("dist");
+let count = app.export_static(out_dir, "https://yav.rs").await?;
+println!("Successfully pre-rendered {count} static HTML pages to dist/");
+```
+
+Alternatively, invoke `yav export` from the CLI:
+```bash
+yav export --output dist --base-url https://yav.rs
+```

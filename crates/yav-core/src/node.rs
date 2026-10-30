@@ -380,6 +380,28 @@ impl<'a> IntoPropValue<Option<Cow<'a, str>>> for &'a str {
     }
 }
 
+/// Properties for the `<Head>` component.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct HeadProps {
+    /// Child tags to hoist into document `<head>` (e.g. `<title>`, `<meta>`, `<link>`, `<script>`).
+    pub children: Vec<Node>,
+}
+
+/// Declarative `<Head>` component.
+///
+/// Can be declared anywhere within an RSX component tree. During SSR document rendering,
+/// any `<Head>` blocks are automatically hoisted into the document's `<head>`:
+/// `<title>` updates the document title, while `<meta>`, `<link>`, and `<script>` tags
+/// are appended to the document head. The container element is cleanly stripped from the `<body>`.
+#[allow(non_snake_case)]
+pub fn Head(props: HeadProps) -> Node {
+    Node::Element(
+        Element::new("template")
+            .attr("data-yav-head", "true")
+            .children(props.children),
+    )
+}
+
 impl fmt::Display for Node {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", crate::render::render_to_string(self))

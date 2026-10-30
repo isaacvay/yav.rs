@@ -310,7 +310,7 @@ pub struct Dropdown {
 }
 
 impl Dropdown {
-    /// Create a new dropdown with a trigger node (typically a [`Button`]).
+    /// Create a new dropdown with a trigger node (typically a [`crate::button::Button`]).
     pub fn new(trigger: impl IntoNode) -> Self {
         Self {
             trigger: trigger.into_node(),
@@ -359,24 +359,43 @@ impl Dropdown {
             "left-0 origin-top-left"
         };
 
+        let menu_id = match &self.id {
+            Some(id) => format!("{id}-menu"),
+            None => "yav-dropdown-menu".to_string(),
+        };
+
         let menu_class = merge_classes(&[
-            "absolute z-10 mt-2 w-56 rounded-md bg-white py-1 shadow-lg ring-1 ring-black/5 focus:outline-none dark:bg-gray-800 dark:ring-white/10",
+            "hidden absolute z-50 mt-2 min-w-[12rem] max-w-[calc(100vw-2rem)] rounded-xl bg-white py-1.5 shadow-xl ring-1 ring-black/5 focus:outline-none dark:bg-gray-800 dark:ring-white/10",
             align_class,
             &self.class,
         ]);
 
         let mut menu = Element::new("div")
+            .attr("id", &menu_id)
             .attr("class", menu_class)
             .attr("role", "menu")
-            .attr("aria-orientation", "vertical");
+            .attr("aria-orientation", "vertical")
+            .attr("tabindex", "-1")
+            .attr("yav:click-outside", "close")
+            .attr("data-yav-click-outside", "close")
+            .attr("yav:escape", "close")
+            .attr("data-yav-escape", "close");
 
         for item in self.items {
             menu = menu.child(item.render());
         }
 
+        let trigger_wrapped = Element::new("div")
+            .attr("class", "inline-flex cursor-pointer")
+            .attr("yav:toggle", format!("#{menu_id}"))
+            .attr("data-yav-toggle", format!("#{menu_id}"))
+            .attr("aria-haspopup", "menu")
+            .attr("aria-expanded", "false")
+            .child(self.trigger);
+
         let mut container = Element::new("div")
             .attr("class", "relative inline-block text-left")
-            .child(self.trigger)
+            .child(Node::Element(trigger_wrapped))
             .child(Node::Element(menu));
 
         if let Some(id) = &self.id {

@@ -24,6 +24,11 @@ impl I18n {
         }
     }
 
+    /// Return the default fallback locale code (e.g. `"en"`).
+    pub fn default_locale(&self) -> &str {
+        &self.default_locale
+    }
+
     /// Declare supported locales (e.g. `["en", "fr", "es"]`).
     pub fn supported_locales(
         mut self,
@@ -237,6 +242,81 @@ impl I18n {
             .find(|s| s.eq_ignore_ascii_case(loc))
             .cloned()
     }
+
+    /// Serialize the internal translation dictionary to a JSON string without external dependencies.
+    pub fn to_json(&self) -> String {
+        let mut out = String::from("{");
+        let mut loc_iter = self.dictionary.iter().peekable();
+        while let Some((loc, entries)) = loc_iter.next() {
+            out.push('"');
+            out.push_str(&escape_json(loc));
+            out.push_str("\":{");
+            let mut ent_iter = entries.iter().peekable();
+            while let Some((k, v)) = ent_iter.next() {
+                out.push('"');
+                out.push_str(&escape_json(k));
+                out.push_str("\":\"");
+                out.push_str(&escape_json(v));
+                out.push('"');
+                if ent_iter.peek().is_some() {
+                    out.push(',');
+                }
+            }
+            out.push('}');
+            if loc_iter.peek().is_some() {
+                out.push(',');
+            }
+        }
+        out.push('}');
+        out
+    }
+
+    /// Generate an embedded client-side script that enables dynamic language switching in the browser.
+    ///
+    /// Automatically translates:
+    /// - Elements with `data-i18n="key"` (updates `textContent`)
+    /// - Elements with `data-i18n-attr="attr:key, attr2:key2"` (updates attributes like `placeholder`, `title`, `aria-label`)
+    ///
+    /// Exposes `window.yavI18n.setLocale(loc)` and synchronizes `document.documentElement.lang` and the `yav_locale` cookie.
+    pub fn client_script(&self, current_locale: &str) -> String {
+        let json = self.to_json();
+        let safe_locale = escape_json(current_locale);
+        format!(
+            r##"<script id="yav-i18n-payload" type="application/json">{json}</script>
+<script>(function(){{var p=document.getElementById('yav-i18n-payload');var d=p?JSON.parse(p.textContent||'{{}}'):{{}};window.yavI18n={{locale:"{safe_locale}",setLocale:function(loc){{if(!d[loc])return;this.locale=loc;document.documentElement.lang=loc;document.cookie='yav_locale='+encodeURIComponent(loc)+';path=/;max-age=31536000';var dict=d[loc];document.querySelectorAll('[data-i18n]').forEach(function(el){{var k=el.getAttribute('data-i18n');if(dict[k])el.textContent=dict[k]}});document.querySelectorAll('[data-i18n-attr]').forEach(function(el){{var s=el.getAttribute('data-i18n-attr');s.split(',').forEach(function(pair){{var pts=pair.split(':');if(pts.length===2){{var attr=pts[0].trim();var key=pts[1].trim();if(dict[key])el.setAttribute(attr,dict[key])}} }})}})}};}})();</script>"##,
+            json = json,
+            safe_locale = safe_locale,
+        )
+    }
+
+    /// Return [`Self::client_script`] as a [`crate::Node::Raw`].
+    pub fn client_script_node(&self, current_locale: &str) -> crate::Node {
+        crate::Node::raw(self.client_script(current_locale))
+    }
+}
+
+fn escape_json(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '/' => out.push_str("\\/"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\u{08}' => out.push_str("\\b"),
+            '\u{0C}' => out.push_str("\\f"),
+            '\u{2028}' => out.push_str("\\u2028"),
+            '\u{2029}' => out.push_str("\\u2029"),
+            c if (c as u32) < 0x20 => {
+                use std::fmt::Write;
+                let _ = write!(out, "\\u{:04x}", c as u32);
+            }
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 /// Interpolates `{placeholder}` tokens in `template` in a single pass so parameter values

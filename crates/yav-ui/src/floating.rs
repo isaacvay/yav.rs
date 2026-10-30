@@ -11,21 +11,25 @@ use crate::utils::merge_classes;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Placement {
     #[default]
-    Top,
     Bottom,
+    BottomStart,
+    BottomEnd,
+    Top,
+    TopStart,
+    TopEnd,
     Left,
     Right,
 }
 
 impl Placement {
-    /// Return the CSS positioning and transform classes for this placement.
+    /// Return the CSS positioning and transform classes for this placement in tooltips.
     pub fn tooltip_classes(&self) -> (&'static str, &'static str) {
         match self {
-            Placement::Top => (
+            Placement::Top | Placement::TopStart | Placement::TopEnd => (
                 "bottom-full left-1/2 -translate-x-1/2 mb-2",
                 "top-full left-1/2 -translate-x-1/2 border-t-gray-900 border-x-transparent border-b-transparent",
             ),
-            Placement::Bottom => (
+            Placement::Bottom | Placement::BottomStart | Placement::BottomEnd => (
                 "top-full left-1/2 -translate-x-1/2 mt-2",
                 "bottom-full left-1/2 -translate-x-1/2 border-b-gray-900 border-x-transparent border-t-transparent",
             ),
@@ -37,6 +41,20 @@ impl Placement {
                 "left-full top-1/2 -translate-y-1/2 ml-2",
                 "right-full top-1/2 -translate-y-1/2 border-r-gray-900 border-y-transparent border-l-transparent",
             ),
+        }
+    }
+
+    /// Return CSS positioning classes for popovers and dropdown menus.
+    pub fn popover_classes(&self) -> &'static str {
+        match self {
+            Placement::Top => "bottom-full left-1/2 -translate-x-1/2 mb-2",
+            Placement::TopStart => "bottom-full left-0 mb-2",
+            Placement::TopEnd => "bottom-full right-0 mb-2",
+            Placement::Bottom => "top-full left-1/2 -translate-x-1/2 mt-2",
+            Placement::BottomStart => "top-full left-0 mt-2",
+            Placement::BottomEnd => "top-full right-0 mt-2",
+            Placement::Left => "right-full top-1/2 -translate-y-1/2 mr-2",
+            Placement::Right => "left-full top-1/2 -translate-y-1/2 ml-2",
         }
     }
 }
@@ -195,6 +213,7 @@ impl Popover {
 
     /// Render the popover.
     pub fn render(self) -> Node {
+        let panel_id = format!("{}-panel", self.id);
         let mut root = Element::new("div")
             .attr("id", &self.id)
             .attr("class", "relative inline-block")
@@ -205,24 +224,29 @@ impl Popover {
             let trig_wrap = Element::new("div")
                 .attr("class", "cursor-pointer")
                 .attr("data-popover-toggle", "true")
+                .attr("yav:toggle", format!("#{panel_id}"))
+                .attr("data-yav-toggle", format!("#{panel_id}"))
+                .attr("aria-haspopup", "dialog")
+                .attr("aria-expanded", "false")
                 .child(trig);
             root = root.child(Node::Element(trig_wrap));
         }
 
         // Panel Position
-        let pos_class = match self.placement {
-            Placement::Top => "bottom-full left-1/2 -translate-x-1/2 mb-2",
-            Placement::Bottom => "top-full left-1/2 -translate-x-1/2 mt-2",
-            Placement::Left => "right-full top-1/2 -translate-y-1/2 mr-2",
-            Placement::Right => "left-full top-1/2 -translate-y-1/2 ml-2",
-        };
+        let pos_class = self.placement.popover_classes();
 
-        let card_base = "hidden absolute z-50 w-72 rounded-xl bg-white p-4 shadow-xl ring-1 ring-black/5 dark:bg-gray-800 dark:ring-white/10";
+        let card_base = "hidden absolute z-50 w-72 max-w-[calc(100vw-2rem)] rounded-xl bg-white p-4 shadow-xl ring-1 ring-black/5 dark:bg-gray-800 dark:ring-white/10";
         let card_class = merge_classes(&[card_base, pos_class, &self.class]);
 
         let mut panel = Element::new("div")
+            .attr("id", &panel_id)
             .attr("class", card_class)
             .attr("role", "dialog")
+            .attr("tabindex", "-1")
+            .attr("yav:click-outside", "close")
+            .attr("data-yav-click-outside", "close")
+            .attr("yav:escape", "close")
+            .attr("data-yav-escape", "close")
             .attr("data-popover-panel", "true");
 
         if let Some(cnt) = self.content {
@@ -309,7 +333,11 @@ pub fn Popover(props: PopoverProps) -> Node {
     if let Some(pl) = props.placement {
         match pl.to_lowercase().as_str() {
             "top" => p = p.placement(Placement::Top),
+            "top-start" => p = p.placement(Placement::TopStart),
+            "top-end" => p = p.placement(Placement::TopEnd),
             "bottom" => p = p.placement(Placement::Bottom),
+            "bottom-start" => p = p.placement(Placement::BottomStart),
+            "bottom-end" => p = p.placement(Placement::BottomEnd),
             "left" => p = p.placement(Placement::Left),
             "right" => p = p.placement(Placement::Right),
             _ => {}
@@ -330,12 +358,27 @@ pub fn Popover(props: PopoverProps) -> Node {
 }
 
 /// Client-side script handling Popover outside-click dismiss and Escape key.
+/// Automatically defers to `YAV_MICRO_ACTIONS_SCRIPT` (`#yav-micro-actions`) when present
+/// in the document shell to prevent double-toggle listener conflicts.
 pub fn floating_script() -> Node {
     let script = r#"(function() {
-  if (window.__YAV_POPOVER_INSTALLED__) return;
+  if (window.__YAV_POPOVER_INSTALLED__ || document.getElementById('yav-micro-actions')) return;
   window.__YAV_POPOVER_INSTALLED__ = true;
 
+  function closePanel(p) {
+    p.classList.add('hidden');
+    p.setAttribute('hidden', '');
+    p.removeAttribute('data-open');
+  }
+
+  function openPanel(p) {
+    p.classList.remove('hidden');
+    p.removeAttribute('hidden');
+    p.setAttribute('data-open', 'true');
+  }
+
   function initPopovers() {
+    if (document.getElementById('yav-micro-actions')) return;
     document.querySelectorAll('[data-popover-root]').forEach(root => {
       if (root.__popover_init) return;
       root.__popover_init = true;
@@ -345,29 +388,30 @@ pub fn floating_script() -> Node {
       if (!toggle || !panel) return;
 
       toggle.addEventListener('click', (e) => {
+        if (document.getElementById('yav-micro-actions')) return;
         e.stopPropagation();
-        const isOpen = !panel.classList.contains('hidden');
-        document.querySelectorAll('[data-popover-panel]').forEach(p => p.classList.add('hidden'));
+        const isOpen = !panel.classList.contains('hidden') && !panel.hasAttribute('hidden');
+        document.querySelectorAll('[data-popover-panel]').forEach(closePanel);
         if (!isOpen) {
-          panel.classList.remove('hidden');
+          openPanel(panel);
         }
       });
     });
   }
 
   document.addEventListener('click', (e) => {
+    if (document.getElementById('yav-micro-actions')) return;
     document.querySelectorAll('[data-popover-panel]').forEach(panel => {
       if (!panel.contains(e.target)) {
-        panel.classList.add('hidden');
+        closePanel(panel);
       }
     });
   });
 
   document.addEventListener('keydown', (e) => {
+    if (document.getElementById('yav-micro-actions')) return;
     if (e.key === 'Escape') {
-      document.querySelectorAll('[data-popover-panel]').forEach(panel => {
-        panel.classList.add('hidden');
-      });
+      document.querySelectorAll('[data-popover-panel]').forEach(closePanel);
     }
   });
 

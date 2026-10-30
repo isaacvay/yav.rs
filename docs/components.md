@@ -96,6 +96,93 @@ rsx! {
 }
 ```
 
+#### E. Native `if` and `for` Control Flow (No Closure Hack Required)
+In Yav v0.1.4, you write standard Rust control flow directly inside `rsx!` without needing curly braces or `.iter().map(...)` closures:
+
+```rust
+let is_logged_in = true;
+let roles = ["Admin", "Maintainer", "Author"];
+
+rsx! {
+    <div class="user-panel">
+        if is_logged_in {
+            <span class="status online">"Connecté"</span>
+        } else {
+            <a href="/login" class="btn">"Se connecter"</a>
+        }
+
+        <ul class="role-list">
+            for role in roles.iter() {
+                <li class="badge">{*role}</li>
+            }
+        </ul>
+    </div>
+}
+```
+
+#### F. Short Boolean Attributes
+HTML boolean attributes can be written without `={true}`:
+
+```rust
+rsx! {
+    <input type="text" disabled required autofocus data-nav />
+    <button disabled>Chargement...</button>
+}
+```
+
+#### G. Class Directives (`class:<name>={bool}`)
+Conditionally toggle CSS utility classes cleanly without string concatenation:
+
+```rust
+let is_active = true;
+let is_disabled = false;
+
+rsx! {
+    <button
+        class="btn py-2 px-4 rounded"
+        class:active={is_active}
+        class:opacity-50={is_disabled}
+        class:border-oxide=true
+    >
+        "Action"
+    </button>
+}
+```
+If `is_active` is `true`, it automatically merges into `class="btn py-2 px-4 rounded active border-oxide"`.
+
+#### H. Zero-Cost Compile-Time Static Subtree Folding
+Subtrees in `rsx!` that contain only static tags and text are pre-rendered into `Node::Static` at compile time:
+
+```rust
+rsx! {
+    <div class="app">
+        <header class="navbar p-4 border-b">
+            <h1>"Application Yav"</h1>
+            <p>"Pre-folded at compile-time into static memory"</p>
+        </header>
+        <main>{dynamic_content}</main>
+    </div>
+}
+```
+The `<header>` block is evaluated at compile time, eliminating VDOM node construction and string allocations during SSR requests!
+
+#### I. `<Head>` Hoisting
+Declare page titles, canonical links, and Open Graph tags anywhere in your component tree:
+
+```rust
+rsx! {
+    <main>
+        <Head>
+            <title>"Page de Paramètres | Yav"</title>
+            <meta name="description" content="Gérez votre compte et préférences." />
+            <link rel="canonical" href="https://yav.rs/settings" />
+        </Head>
+        <h1>"Paramètres"</h1>
+    </main>
+}
+```
+Yav hoists all `<Head>` tags into the `<head>` of the final document shell during SSR with zero allocations.
+
 ### 2. Struct Components (with Component trait)
 
 ```rust
@@ -775,6 +862,120 @@ rsx! {
             action=Button::new("Réinitialiser les filtres").variant(yav::ui::Variant::Secondary) 
         />
     </div>
+}
+```
+
+---
+
+### Syntax Highlighting & Code (`<CodeBlock />`)
+High-performance code container with line numbers, language tag, copy button, and syntax styling:
+
+```rust
+use yav::ui::CodeBlock;
+
+let rust_code = r#"use yav::prelude::*;
+
+#[component]
+pub fn App() -> Node {
+    rsx! { <h1 class="font-bold">"Bonjour Yav!"</h1> }
+}"#;
+
+rsx! {
+    <CodeBlock language="rust" line_numbers=true class="my-6">
+        {rust_code}
+    </CodeBlock>
+}
+```
+
+---
+
+### Zero-JS Cursor & 3D Interactive Components
+
+Interactive mouse-aware components driven entirely by native passive pointer tracking:
+
+```rust
+use yav::ui::{CursorSpotlight, TiltPlate, Magnetic, CursorFollower};
+
+rsx! {
+    <div class="space-y-6">
+        // Radial spotlight glow following the cursor
+        <CursorSpotlight radius_px={450} class="p-8 rounded-2xl border bg-zinc-950">
+            // 3D Tilt perspective card with glare highlight
+            <TiltPlate max_deg={10.0} glare=true class="p-6 rounded-xl border bg-zinc-900">
+                <h3>"Carte 3D Interactive"</h3>
+                <p>"S'incline dynamiquement sous le curseur."</p>
+
+                // Magnetic button that snaps toward the cursor on hover
+                <Magnetic strength={0.4}>
+                    <button class="btn btn-primary mt-4">
+                        "Bouton Magnétique"
+                    </button>
+                </Magnetic>
+            </TiltPlate>
+        </CursorSpotlight>
+
+        // Smooth cursor follower orb
+        <CursorFollower size_px={24} smoothing={0.18} />
+    </div>
+}
+```
+
+---
+
+### Zero-JS Motion & Spring Physics (`<Motion />`, `<CountUp />`, `<AnimatedBar />`, `<TypewriterCode />`)
+
+High-performance physical spring motion, gesture states, viewport scroll reveals, and count-ups without hand-written JavaScript:
+
+```rust
+use yav::ui::{Motion, MotionState, Transition, CountUp, AnimatedBar, TypewriterCode};
+
+rsx! {
+    <div class="space-y-8">
+        // Physical Spring Motion with Gestures
+        <Motion
+            initial=MotionState::new().opacity(0.0).y(24.0)
+            animate=MotionState::new().opacity(1.0).y(0.0)
+            hover=MotionState::new().scale(1.03).y(-4.0)
+            tap=MotionState::new().scale(0.97)
+            transition=Transition::spring().stiffness(320.0).damping(18.0)
+            class="p-6 bg-zinc-900 rounded-xl"
+        >
+            <h3>"Motion Card"</h3>
+        </Motion>
+
+        // Viewport-triggered animated numeric counter
+        <div class="stat">
+            <span class="text-4xl font-black">
+                <CountUp to={124500.0} prefix="+" suffix=" req/s" duration_ms={1400} />
+            </span>
+        </div>
+
+        // Viewport-triggered expanding progress gauge
+        <AnimatedBar target_pct={98.4} duration_ms={1200} class="h-2 bg-zinc-800 rounded-full" />
+
+        // Syntax-preserving typewriter code animation
+        <TypewriterCode speed_ms={16} skip_on_click=true class="code-preview font-mono">
+            <div><span class="text-purple-400">"pub fn "</span><span class="text-blue-400">"run_server"</span>"() {"</div>
+            <div>"    println!(\"Serving with Yav\");"</div>
+            <div>"}"</div>
+        </TypewriterCode>
+    </div>
+}
+```
+
+---
+
+### Theme Switcher (`<ThemeSelector />`)
+Drop-in dropdown and switcher for the 8 built-in Yav design themes:
+
+```rust
+use yav::ui::{Theme, ThemeSelector};
+
+rsx! {
+    <header class="flex justify-between items-center p-4">
+        <h1>"Mon Projet"</h1>
+        <ThemeSelector default_theme="editorial-blueprint" />
+    </header>
 }
 ```
 

@@ -8,15 +8,24 @@ use crate::parser::{RsxAttrValue, RsxAttribute, RsxElement, RsxNode};
 
 /// Generate Rust code from an RSX AST node.
 pub fn generate(node: RsxNode) -> TokenStream {
-    gen_node(&node)
+    gen_node(&node, true)
 }
 
-fn gen_node(node: &RsxNode) -> TokenStream {
+fn gen_node(node: &RsxNode, is_root: bool) -> TokenStream {
+    if !is_root {
+        if let Some(static_html) = try_fold_static_node(node) {
+            return quote! {
+                ::yav::yav_core::Node::Static(#static_html)
+            };
+        }
+    }
+
     match node {
         RsxNode::Element(el) => gen_element(el),
         RsxNode::Text(text, _span) => {
+            let escaped = escape_html_compile_time(text);
             quote! {
-                ::yav::yav_core::Node::Text(#text.to_string())
+                ::yav::yav_core::Node::Static(#escaped)
             }
         }
         RsxNode::Expr(expr, _span) => {
@@ -25,9 +34,56 @@ fn gen_node(node: &RsxNode) -> TokenStream {
             }
         }
         RsxNode::Fragment(nodes) => {
-            let children: Vec<_> = nodes.iter().map(gen_node).collect();
+            let children: Vec<_> = nodes.iter().map(|n| gen_node(n, false)).collect();
             quote! {
                 ::yav::yav_core::Node::Fragment(vec![#(#children),*])
+            }
+        }
+        RsxNode::Raw(raw, _span) => {
+            quote! {
+                ::yav::yav_core::Node::Static(#raw)
+            }
+        }
+        RsxNode::RawExpr(expr, _span) => {
+            quote! {
+                ::yav::yav_core::Node::raw((#expr).to_string())
+            }
+        }
+        RsxNode::If {
+            cond,
+            then_branch,
+            else_branch,
+        } => {
+            let then_code = gen_node(then_branch, false);
+            if let Some(else_node) = else_branch {
+                let else_code = gen_node(else_node, false);
+                quote! {
+                    if #cond {
+                        #then_code
+                    } else {
+                        #else_code
+                    }
+                }
+            } else {
+                quote! {
+                    if #cond {
+                        #then_code
+                    } else {
+                        ::yav::yav_core::Node::Empty
+                    }
+                }
+            }
+        }
+        RsxNode::For { header, body } => {
+            let body_code = gen_node(body, false);
+            quote! {
+                ::yav::yav_core::Node::Fragment({
+                    let mut __yav_items = ::std::vec::Vec::new();
+                    for #header {
+                        __yav_items.push(#body_code);
+                    }
+                    __yav_items
+                })
             }
         }
     }
@@ -40,11 +96,46 @@ fn gen_element(el: &RsxElement) -> TokenStream {
 
     let tag = &el.tag;
 
-    // Generate attributes
-    let attrs: Vec<TokenStream> = el.attributes.iter().map(gen_attribute).collect();
+    // Check if there are any `class:name` conditional class directives
+    let has_class_directives = el
+        .attributes
+        .iter()
+        .any(|a| a.name.starts_with("class:") && a.name.len() > 6);
 
-    // Generate children
-    let children: Vec<TokenStream> = el.children.iter().map(gen_node).collect();
+    let mut attrs: Vec<TokenStream> = if has_class_directives {
+        gen_attributes_with_class_directives(&el.attributes)
+    } else {
+        el.attributes.iter().map(gen_attribute).collect()
+    };
+
+    // If `yav:initial` is present and no `style` attribute exists, inject anti-FOUC initial inline style
+    let has_style_attr = el.attributes.iter().any(|a| a.name == "style");
+    if !has_style_attr {
+        if let Some(init_attr) = el.attributes.iter().find(|a| a.name == "yav:initial") {
+            if let RsxAttrValue::Str(ref s, _) = init_attr.value {
+                if let Some(style_str) = compile_yav_initial_style(s) {
+                    attrs.push(quote! {
+                        ::yav::yav_core::Attribute {
+                            name: ::std::borrow::Cow::Borrowed("style"),
+                            value: ::yav::yav_core::AttributeValue::Static(#style_str),
+                        }
+                    });
+                }
+            }
+        }
+    }
+
+    // Generate children (allowing static subtree folding for children unless parent is <Head> template)
+    let is_head_template = tag == "template"
+        && el
+            .attributes
+            .iter()
+            .any(|a| a.name == "data-yav-head");
+    let children: Vec<TokenStream> = el
+        .children
+        .iter()
+        .map(|c| gen_node(c, is_head_template))
+        .collect();
 
     let self_closing = el.self_closing || is_void_element(tag);
 
@@ -56,6 +147,103 @@ fn gen_element(el: &RsxElement) -> TokenStream {
             self_closing: #self_closing,
         })
     }
+}
+
+fn gen_attributes_with_class_directives(attributes: &[RsxAttribute]) -> Vec<TokenStream> {
+    let mut out = Vec::new();
+    let mut class_push_stmts = Vec::new();
+
+    for attr in attributes {
+        if attr.name == "class" {
+            match &attr.value {
+                RsxAttrValue::Str(s, _) => {
+                    if !s.is_empty() {
+                        class_push_stmts.push(quote! {
+                            if !__yav_classes.is_empty() {
+                                __yav_classes.push(' ');
+                            }
+                            __yav_classes.push_str(#s);
+                        });
+                    }
+                }
+                RsxAttrValue::Expr(expr, _) => {
+                    class_push_stmts.push(quote! {
+                        match ::yav::yav_core::IntoAttributeValue::into_attribute_value(#expr) {
+                            ::yav::yav_core::AttributeValue::Static(s) => {
+                                if !s.is_empty() {
+                                    if !__yav_classes.is_empty() {
+                                        __yav_classes.push(' ');
+                                    }
+                                    __yav_classes.push_str(s);
+                                }
+                            }
+                            ::yav::yav_core::AttributeValue::String(s) => {
+                                if !s.is_empty() {
+                                    if !__yav_classes.is_empty() {
+                                        __yav_classes.push(' ');
+                                    }
+                                    __yav_classes.push_str(&s);
+                                }
+                            }
+                            _ => {}
+                        }
+                    });
+                }
+                RsxAttrValue::Bool(_) => {}
+            }
+        } else if let Some(cls_name) = attr.name.strip_prefix("class:") {
+            if !cls_name.is_empty() {
+                match &attr.value {
+                    RsxAttrValue::Expr(expr, _) => {
+                        class_push_stmts.push(quote! {
+                            if #expr {
+                                if !__yav_classes.is_empty() {
+                                    __yav_classes.push(' ');
+                                }
+                                __yav_classes.push_str(#cls_name);
+                            }
+                        });
+                    }
+                    RsxAttrValue::Bool(_) => {
+                        class_push_stmts.push(quote! {
+                            if !__yav_classes.is_empty() {
+                                __yav_classes.push(' ');
+                            }
+                            __yav_classes.push_str(#cls_name);
+                        });
+                    }
+                    RsxAttrValue::Str(s, _) => {
+                        if !s.is_empty() && s != "false" && s != "0" {
+                            class_push_stmts.push(quote! {
+                                if !__yav_classes.is_empty() {
+                                    __yav_classes.push(' ');
+                                }
+                                __yav_classes.push_str(#cls_name);
+                            });
+                        }
+                    }
+                }
+            }
+        } else {
+            out.push(gen_attribute(attr));
+        }
+    }
+
+    out.insert(
+        0,
+        quote! {
+            ::yav::yav_core::Attribute {
+                name: ::std::borrow::Cow::Borrowed("class"),
+                value: ::yav::yav_core::AttributeValue::String({
+                    let mut __yav_classes = ::std::string::String::new();
+                    #(#class_push_stmts)*
+                    __yav_classes
+                }),
+            }
+        },
+    );
+
+    out
 }
 
 fn gen_component(el: &RsxElement) -> TokenStream {
@@ -91,8 +279,13 @@ fn gen_component(el: &RsxElement) -> TokenStream {
         })
         .collect();
 
+    let is_head_component = tag == "Head" || tag.ends_with("::Head");
     let children_field = if !el.children.is_empty() {
-        let child_tokens: Vec<TokenStream> = el.children.iter().map(gen_node).collect();
+        let child_tokens: Vec<TokenStream> = el
+            .children
+            .iter()
+            .map(|c| gen_node(c, is_head_component))
+            .collect();
         quote! {
             children: vec![#(#child_tokens),*].into(),
         }
@@ -171,4 +364,160 @@ fn is_void_element(tag: &str) -> bool {
             | "track"
             | "wbr"
     )
+}
+
+fn is_url_attr(name: &str) -> bool {
+    matches!(
+        name.to_ascii_lowercase().as_str(),
+        "href" | "src" | "action" | "formaction" | "poster" | "data" | "cite" | "xlink:href"
+    )
+}
+
+fn is_safe_static_url(val: &str) -> bool {
+    let trimmed = val.trim();
+    if trimmed.is_empty() {
+        return true;
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    if lower.starts_with("javascript:") || lower.starts_with("vbscript:") || lower.starts_with("data:") {
+        return false;
+    }
+    true
+}
+
+fn escape_html_compile_time(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    for c in input.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&#x27;"),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
+fn compile_yav_initial_style(shorthand: &str) -> Option<String> {
+    let mut opacity = None;
+    let mut x = None;
+    let mut y = None;
+    let mut scale = None;
+    let mut rotate = None;
+
+    for pair in shorthand.split(',') {
+        let mut kv = pair.split(':');
+        if let (Some(k), Some(v)) = (kv.next(), kv.next()) {
+            let key = k.trim();
+            if let Ok(val) = v.trim().parse::<f64>() {
+                match key {
+                    "opacity" => opacity = Some(val),
+                    "x" => x = Some(val),
+                    "y" => y = Some(val),
+                    "scale" => scale = Some(val),
+                    "rotate" => rotate = Some(val),
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    let mut parts = Vec::new();
+    if let Some(op) = opacity {
+        parts.push(format!("opacity: {op};"));
+    }
+    let mut transforms = Vec::new();
+    if x.is_some() || y.is_some() {
+        transforms.push(format!(
+            "translate3d({}px, {}px, 0)",
+            x.unwrap_or(0.0),
+            y.unwrap_or(0.0)
+        ));
+    }
+    if let Some(sc) = scale {
+        transforms.push(format!("scale({sc})"));
+    }
+    if let Some(rot) = rotate {
+        transforms.push(format!("rotate({rot}deg)"));
+    }
+    if !transforms.is_empty() {
+        parts.push(format!("transform: {};", transforms.join(" ")));
+    }
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join(" "))
+    }
+}
+
+fn try_fold_static_node(node: &RsxNode) -> Option<String> {
+    match node {
+        RsxNode::Text(text, _) => Some(escape_html_compile_time(text)),
+        RsxNode::Raw(raw, _) => Some(raw.clone()),
+        RsxNode::Fragment(children) => {
+            let mut out = String::new();
+            for child in children {
+                out.push_str(&try_fold_static_node(child)?);
+            }
+            Some(out)
+        }
+        RsxNode::Element(el) => {
+            if el.is_component {
+                return None;
+            }
+            if matches!(el.tag.as_str(), "template" | "title" | "meta" | "link") {
+                return None;
+            }
+            if el
+                .attributes
+                .iter()
+                .any(|a| a.name.starts_with("class:") || a.name == "yav:initial")
+            {
+                return None;
+            }
+
+            let mut out = String::new();
+            out.push('<');
+            out.push_str(&el.tag);
+
+            for attr in &el.attributes {
+                match &attr.value {
+                    RsxAttrValue::Str(val, _) => {
+                        if is_url_attr(&attr.name) && !is_safe_static_url(val) {
+                            return None;
+                        }
+                        out.push(' ');
+                        out.push_str(&attr.name);
+                        out.push_str("=\"");
+                        out.push_str(&escape_html_compile_time(val));
+                        out.push('"');
+                    }
+                    RsxAttrValue::Bool(_) => {
+                        out.push(' ');
+                        out.push_str(&attr.name);
+                    }
+                    RsxAttrValue::Expr(_, _) => return None,
+                }
+            }
+
+            if is_void_element(&el.tag) {
+                out.push_str(" />");
+                return Some(out);
+            }
+
+            out.push('>');
+            for child in &el.children {
+                out.push_str(&try_fold_static_node(child)?);
+            }
+            out.push_str("</");
+            out.push_str(&el.tag);
+            out.push('>');
+            Some(out)
+        }
+        RsxNode::Expr(_, _) | RsxNode::RawExpr(_, _) | RsxNode::If { .. } | RsxNode::For { .. } => {
+            None
+        }
+    }
 }

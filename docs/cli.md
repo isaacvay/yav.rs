@@ -43,6 +43,9 @@ yav add drawer           # Sliding drawer / sheet overlay component
 yav add command-menu     # Spotlight / Command palette modal with shortcuts
 yav add stat-card        # KPI metric card with trend indicator and badge
 yav add carousel         # Responsive media carousel with swipe and dots
+yav add theme-selector   # Multi-theme dropdown & instant theme switcher (8 themes)
+yav add motion           # Spring-physics motion container & gestures
+yav add cursor-spotlight # Radial glow mouse-follower plate with CSS coordinates
 ```
 
 Once added, the component is automatically declared in `src/components/mod.rs` and can be imported immediately:
@@ -264,4 +267,49 @@ Installs or checks the status of the official Yav syntax highlighting and snippe
 ```bash
 yav ext install
 yav ext status
+```
+
+---
+
+### 18. `yav doctor`
+Diagnoses your local environment, Rust toolchains, project health, and runtime dependencies:
+- **Rust Toolchain**: Verifies `rustc` and `cargo` versions in `PATH`.
+- **Manifest Health**: Validates `package.yavml` structure, package name, version, and server bindings.
+- **Standalone Tailwind CSS**: Checks whether the cached standalone binary is present or ready for download.
+- **Routes Directory**: Audits `src/routes/` for root `index.rs` or `page.rs`, layouts, and missing route endpoints.
+- **Port Availability**: Checks if the configured HTTP port (e.g. `3000`) is free or currently bound by another process.
+- **Git Repository**: Validates git tracking status and clean working tree.
+
+```bash
+yav doctor
+```
+
+---
+
+### 19. `yav routes`
+Inspects all file-based routes discovered under `src/routes/` and displays a formatted table in the terminal:
+- **HTTP Methods**: Automatically detects `GET`, `POST`, `PUT`, `DELETE` handlers defined in each route file.
+- **URL Pattern**: Displays the final URL route pattern, including dynamic segments (`/users/:id`, `/docs/*slug`).
+- **Source File**: Links directly to the underlying file path (`src/routes/users/_id_.rs`).
+- **Active Layouts & Middlewares**: Lists the hierarchical chain of `_layout.rs` and `_middleware.rs` files wrapping each route.
+
+```bash
+yav routes
+```
+
+---
+
+### 20. `yav export`
+Performs **Static Site Generation (SSG)**, crawling and rendering all static routes into standalone `.html` files in `dist/` (or a custom directory):
+- **Pre-renders all static pages**: Generates directory-structured `index.html` files (e.g. `dist/about/index.html` for `/about`).
+- **Asset Bundling**: Copies all static assets from `public/` into `dist/`.
+- **Canonical URL Inlining**: Embeds the specified `--base-url` into `<link rel="canonical">` and Open Graph tags.
+- **Zero-Server Hosting**: Output is immediately ready for deployment on GitHub Pages, Cloudflare Pages, Netlify, Vercel, or AWS S3.
+
+```bash
+# Export to dist/ with default base URL
+yav export
+
+# Custom output directory and production base URL
+yav export --output build --base-url https://mon-site.fr
 ```

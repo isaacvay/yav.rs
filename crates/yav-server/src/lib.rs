@@ -26,14 +26,23 @@
 //! ```
 //!
 //! ## Modules
-//! - [`app`] — [`YavApp`] builder and server configuration
+//! - [`app`] — [`YavApp`] builder, routing, static export (`export_static`), state, and server configuration
+//! - [`cache`] — [`SsrCache`] and route-level caching (`get_cached`, `route_cached`)
+//! - [`forms`] — [`FormData`], [`FormErrors`], [`FromFormData`] typed validation, and [`CsrfToken`] with CSPRNG salting
+//! - [`ws`] — [`WsBroadcast`] real-time HTML fragment swapping over WebSockets
+//! - [`session`] — [`Session`] cryptographically signed HMAC-SHA256 sessions
+//! - [`flash`] — [`Flash`] one-time signed notification cookies
+//! - [`rate_limit`] — [`RateLimiter`] sliding-window DDoS protection
+//! - [`handler`] — Request handler helpers, [`HtmlPage`], and [`HtmlFragment`]
+//! - [`middleware`] — Security headers, CSRF, and request logging
+//! - [`openapi`] — OpenAPI 3.1 specification generation, Scalar and Swagger UI endpoints
+//! - [`static_files`] — Static asset resolution, pre-compressed Brotli/Gzip serving, and cache headers
+//! - [`streaming`] — Streaming HTML and async chunk transfer
 //! - [`error`] — [`YavError`] and HTML error page rendering
-//! - [`handler`] — Request handler helpers and [`HtmlPage`]
-//! - [`middleware`] — Security headers and request logging
-//! - [`static_files`] — Static asset resolution and serving
 
 pub mod action;
 pub mod app;
+pub mod cache;
 pub mod error;
 pub mod flash;
 pub mod forms;
@@ -48,12 +57,19 @@ pub mod sse;
 pub mod static_files;
 pub mod streaming;
 pub mod suspense;
+pub mod ws;
 
 // Route Context, Loaders & Actions
 pub use action::{ActionValidatorFn, BoxLoaderFn, FormAction, Loader, RouteContext};
 
 // Core YavApp types
 pub use app::{AppRoute, BoxedHandler, IntoBoxedHandler, YavApp};
+
+// SSR Cache & ISR
+pub use cache::{CacheEntry, CachePolicy, SsrCache};
+
+// WebSockets & Real-time Fragment Broadcasting
+pub use ws::{ws_node_frame, ws_swap_frame, WsBroadcast};
 
 // Error types
 pub use error::{render_error_page, YavError};
@@ -64,7 +80,7 @@ pub use flash::{Flash, FlashLevel, FlashMessage, FLASH_COOKIE_NAME};
 // Form validation & server actions
 pub use forms::{
     csrf_field, verify_csrf_token, ActionResponse, ActionResult, CsrfToken, FormData, FormErrors,
-    UploadedFile, CSRF_FIELD_NAME, CSRF_HEADER_NAME,
+    FromFormData, UploadedFile, CSRF_FIELD_NAME, CSRF_HEADER_NAME,
 };
 
 // Response and handler helpers
@@ -80,7 +96,7 @@ pub use health::{healthz, metrics_handler, readyz, HealthStatus, MetricsSnapshot
 // Middleware
 pub use middleware::{
     apply_default_security_headers, compute_etag, etag_middleware, request_logger_middleware,
-    security_headers_middleware, SecurityHeadersConfig,
+    security_headers_middleware, CspNonce, SecurityHeadersConfig,
 };
 
 // OpenAPI & API documentation
@@ -123,6 +139,7 @@ pub use axum::{
 pub mod prelude {
     pub use crate::action::{ActionValidatorFn, BoxLoaderFn, FormAction, Loader, RouteContext};
     pub use crate::app::{AppRoute, BoxedHandler, YavApp};
+    pub use crate::cache::{CacheEntry, CachePolicy, SsrCache};
     pub use crate::error::YavError;
     pub use crate::flash::{Flash, FlashLevel, FlashMessage};
     pub use crate::forms::{
@@ -142,6 +159,7 @@ pub mod prelude {
     pub use crate::static_files::{mime_type_for_path, resolve_static_path, serve_static_file};
     pub use crate::streaming::{streaming_html, StreamingHtml};
     pub use crate::suspense::Suspense;
+    pub use crate::ws::{ws_node_frame, ws_swap_frame, WsBroadcast};
 
     pub use axum::{
         extract::{Path, Query, Request},

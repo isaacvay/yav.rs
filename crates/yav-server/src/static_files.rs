@@ -278,11 +278,24 @@ pub async fn serve_static_file_with_encoding(
         .and_then(|n| n.to_str())
         .map(|name| {
             let parts: Vec<&str> = name.split('.').collect();
-            parts.len() >= 3
-                && parts[parts.len() - 2].len() == 8
-                && parts[parts.len() - 2]
-                    .chars()
-                    .all(|c| c.is_ascii_hexdigit())
+            if parts.len() >= 3 {
+                let candidate = parts[parts.len() - 2];
+                if (6..=32).contains(&candidate.len())
+                    && candidate.chars().all(|c| c.is_ascii_hexdigit())
+                {
+                    return true;
+                }
+            }
+            if let Some(stem) = name.rsplit_once('.').map(|(s, _)| s) {
+                if let Some((_, hash)) = stem.rsplit_once('-') {
+                    if (6..=32).contains(&hash.len())
+                        && hash.chars().all(|c| c.is_ascii_hexdigit())
+                    {
+                        return true;
+                    }
+                }
+            }
+            false
         })
         .unwrap_or(false);
 

@@ -53,6 +53,21 @@ pub const AVAILABLE_TEMPLATES: &[(&str, &str, &str)] = &[
         "carousel.rs",
         include_str!("../templates/Carousel.rs.txt"),
     ),
+    (
+        "theme-selector",
+        "theme_selector.rs",
+        include_str!("../templates/ThemeSelector.rs.txt"),
+    ),
+    (
+        "motion",
+        "motion.rs",
+        include_str!("../templates/Motion.rs.txt"),
+    ),
+    (
+        "cursor-spotlight",
+        "cursor_spotlight.rs",
+        include_str!("../templates/CursorSpotlight.rs.txt"),
+    ),
 ];
 
 /// Executes the `yav add <name>` command.

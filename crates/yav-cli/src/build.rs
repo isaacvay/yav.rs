@@ -7,24 +7,22 @@ use yav_build::BuildPipeline;
 
 /// Executes the `yav build` command.
 pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    println!("\x1b[1;36m╔═══════════════════════════════════════════════════╗\x1b[0m");
-    println!("\x1b[1;36m║            🏗️  YAV PRODUCTION BUILD               ║\x1b[0m");
-    println!("\x1b[1;36m╚═══════════════════════════════════════════════════╝\x1b[0m\n");
+    println!("\n  \x1b[1;36myav build\x1b[0m \x1b[90m— Production Build\x1b[0m\n");
 
     let pipeline = match BuildPipeline::from_root(".") {
         Ok(p) => p,
         Err(e) => {
-            eprintln!("\x1b[1;31m❌ Build failed: invalid package.yavml:\x1b[0m\n  {e}\n");
+            eprintln!("\x1b[1;31m✖ Build failed: invalid package.yavml:\x1b[0m\n  {e}\n");
             return Err(e.into());
         }
     };
     let config = pipeline.config();
 
     println!(
-        "📦 Project: \x1b[1m{}\x1b[0m v{}",
+        "  ● Project: \x1b[1m{}\x1b[0m v{}",
         config.project.name, config.project.version
     );
-    println!("🔨 Running release compilation and asset optimization...\n");
+    println!("  Compiling release target and optimizing assets...\n");
 
     let summary = pipeline.run_prod_build().await?;
 
@@ -45,7 +43,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         println!("  • Asset manifest written to: {}", manifest.display());
     }
     println!("  • Output directory: {}", config.build.out_dir);
-    println!("\n\x1b[1;32m🚀 Production build ready for deployment!\x1b[0m");
+    println!("\n\x1b[1;32m✔ Production build ready for deployment\x1b[0m");
 
     Ok(())
 }

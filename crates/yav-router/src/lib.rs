@@ -45,9 +45,32 @@ pub use route::{
 };
 pub use table::RouteTable;
 
+/// Helper to construct parameterised URLs safely (type-safe reverse routing).
+///
+/// Replaces `:param`, `*slug`, and `[param]` placeholders with supplied values.
+///
+/// # Examples
+/// ```
+/// use yav_router::url_for;
+///
+/// assert_eq!(url_for("/users/:id", &[("id", "42")]), "/users/42");
+/// assert_eq!(url_for("/files/*path", &[("path", "images/logo.png")]), "/files/images/logo.png");
+/// ```
+pub fn url_for(pattern: &str, params: &[(&str, &str)]) -> String {
+    let mut url = pattern.to_string();
+    for (k, v) in params {
+        let colon = format!(":{k}");
+        let star = format!("*{k}");
+        let bracket = format!("[{k}]");
+        url = url.replace(&colon, v).replace(&star, v).replace(&bracket, v);
+    }
+    url
+}
+
 /// Convenience prelude module.
 pub mod prelude {
     pub use crate::fs_router::{file_path_to_route_pattern, DiscoveredRoute, FileSystemRouter};
     pub use crate::route::{to_axum_pattern, Route, RouteMatch, RouteSegment};
     pub use crate::table::RouteTable;
+    pub use crate::url_for;
 }

@@ -78,19 +78,17 @@ pub fn validate_project_structure(root: &Path) -> ValidationResult {
 
 /// Executes the `yav check` command.
 pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    println!("\x1b[1;36m╔═══════════════════════════════════════════════════╗\x1b[0m");
-    println!("\x1b[1;36m║               🔍 YAV PROJECT CHECK                ║\x1b[0m");
-    println!("\x1b[1;36m╚═══════════════════════════════════════════════════╝\x1b[0m\n");
+    println!("\n  \x1b[1;36myav check\x1b[0m \x1b[90m— Project Verification\x1b[0m\n");
 
     let root = Path::new(".");
     let val = validate_project_structure(root);
 
     for warn in &val.warnings {
-        println!("\x1b[33m⚠️ Warning: {warn}\x1b[0m");
+        println!("\x1b[33m! Warning: {warn}\x1b[0m");
     }
 
     for err in &val.errors {
-        eprintln!("\x1b[31m❌ Error: {err}\x1b[0m");
+        eprintln!("\x1b[31m✖ Error: {err}\x1b[0m");
     }
 
     if !val.is_ok() {
@@ -106,7 +104,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
 
     if status.success() {
-        println!("\n\x1b[1;32m✨ All project checks passed successfully!\x1b[0m");
+        println!("\n\x1b[1;32m✔ All project checks passed successfully!\x1b[0m");
         Ok(())
     } else {
         Err(format!(

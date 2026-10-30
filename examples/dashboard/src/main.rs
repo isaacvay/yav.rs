@@ -13,7 +13,7 @@ async fn main() {
     let app = yav::auto_routes!(app);
 
     println!(
-        "🚀 Yav SaaS Dashboard running at http://{}:{}",
+        "  ➜  Dashboard: http://{}:{}",
         app.host, app.port
     );
     app.serve().await.unwrap();

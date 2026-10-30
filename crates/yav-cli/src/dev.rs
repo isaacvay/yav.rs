@@ -103,6 +103,24 @@ async fn kill_server_child(mut child: tokio::process::Child) {
     let _ = child.kill().await;
 }
 
+fn is_port_available(host: &str, port: u16) -> bool {
+    let check_host = if host == "0.0.0.0" { "127.0.0.1" } else { host };
+    std::net::TcpListener::bind((check_host, port)).is_ok()
+}
+
+fn find_available_port(host: &str, start_port: u16) -> (u16, bool) {
+    if is_port_available(host, start_port) {
+        return (start_port, false);
+    }
+    for offset in 1..=20 {
+        let candidate = start_port + offset;
+        if is_port_available(host, candidate) {
+            return (candidate, true);
+        }
+    }
+    (start_port, false)
+}
+
 async fn wait_for_server_ready(port: u16, max_duration: std::time::Duration) -> bool {
     let start = std::time::Instant::now();
     while start.elapsed() < max_duration {
@@ -123,7 +141,7 @@ pub async fn run(cli_port: u16) -> Result<(), Box<dyn std::error::Error>> {
     let manifest = match PackageYav::discover() {
         Ok(m) => m,
         Err(e) => {
-            eprintln!("\n\x1b[1;31m❌ Error in package.yavml:\x1b[0m\n  {e}\n");
+            eprintln!("\n\x1b[1;31m✖ Error in package.yavml:\x1b[0m\n  {e}\n");
             return Err(
                 format!("Cannot start dev server: package.yavml has syntax errors: {e}").into(),
             );
@@ -131,20 +149,25 @@ pub async fn run(cli_port: u16) -> Result<(), Box<dyn std::error::Error>> {
     };
     let config = manifest.to_config();
 
-    let server_port = if cli_port != 3000 {
+    let mut server_port = if cli_port != 3000 {
         cli_port
     } else {
         config.server.port
     };
 
-    println!("\x1b[1;36m╔═══════════════════════════════════════════════════╗\x1b[0m");
-    println!("\x1b[1;36m║               🚀 YAV DEV SERVER                   ║\x1b[0m");
-    println!("\x1b[1;36m╚═══════════════════════════════════════════════════╝\x1b[0m\n");
+    let initial_port = server_port;
+    let (available_port, changed) = find_available_port(&config.server.host, initial_port);
+    if changed {
+        println!("\x1b[33m  ! Port {initial_port} is in use, switched to {available_port}\x1b[0m");
+        server_port = available_port;
+    }
+
+    println!("\n  \x1b[1;36myav dev\x1b[0m \x1b[90m— Development Server\x1b[0m\n");
 
     // 2. Start Live Reload SSE Server
     let (reload_server, reload_port) = ReloadServer::start(35729).await?;
-    println!("\x1b[32m⚡ Live reload server listening on http://127.0.0.1:{reload_port}\x1b[0m");
-    println!("\x1b[90m   Live reload enabled automatically for browser sessions\x1b[0m");
+    println!("\x1b[32m  ➜  Live reload:  http://127.0.0.1:{reload_port}\x1b[0m");
+    println!("\x1b[90m     Live reload enabled automatically for browser sessions\x1b[0m");
 
     // 3. Initial Tailwind compile if enabled
     let tailwind_mgr = if config.tailwind.enabled {
@@ -180,18 +203,18 @@ pub async fn run(cli_port: u16) -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // 4. Start child application server
-    println!("\x1b[34m📦 Starting application server...\x1b[0m");
+    println!("\x1b[34m  ● Starting application server...\x1b[0m");
     let mut server_child: Option<tokio::process::Child> =
         match spawn_server(server_port, reload_port) {
             Ok(child) => {
                 println!(
-                    "\x1b[1;32m🌐 Application running at http://{}:{}\x1b[0m\n",
+                    "\x1b[1;32m  ➜  Local:        http://{}:{}\x1b[0m\n",
                     config.server.host, server_port
                 );
                 Some(child)
             }
             Err(e) => {
-                eprintln!("\x1b[31m❌ Failed to spawn cargo run: {e}\x1b[0m");
+                eprintln!("\x1b[31m✖ Failed to spawn cargo run: {e}\x1b[0m");
                 None
             }
         };
@@ -212,13 +235,13 @@ pub async fn run(cli_port: u16) -> Result<(), Box<dyn std::error::Error>> {
         debouncer
             .watcher()
             .watch(Path::new("src"), notify::RecursiveMode::Recursive)?;
-        println!("\x1b[35m👀 Watching src/ for changes\x1b[0m");
+        println!("\x1b[90m  ● Watching src/ for changes\x1b[0m");
     }
     if Path::new("public").is_dir() {
         debouncer
             .watcher()
             .watch(Path::new("public"), notify::RecursiveMode::Recursive)?;
-        println!("\x1b[35m👀 Watching public/ for changes\x1b[0m");
+        println!("\x1b[90m  ● Watching public/ for changes\x1b[0m");
     }
     if Path::new("package.yavml").is_file() {
         debouncer.watcher().watch(
@@ -242,7 +265,7 @@ pub async fn run(cli_port: u16) -> Result<(), Box<dyn std::error::Error>> {
     loop {
         tokio::select! {
             _ = tokio::signal::ctrl_c() => {
-                println!("\n\x1b[33m🛑 Shutting down dev server...\x1b[0m");
+                println!("\n\x1b[33m  Shutting down dev server...\x1b[0m");
                 if let Some(child) = server_child.take() {
                     kill_server_child(child).await;
                 }
@@ -270,7 +293,7 @@ pub async fn run(cli_port: u16) -> Result<(), Box<dyn std::error::Error>> {
                                 reload_server.notify_clear_error();
                             }
                             Err(e) => {
-                                eprintln!("\n\x1b[1;31m❌ Syntax error in package.yavml:\x1b[0m\n  {e}\n");
+                                eprintln!("\n\x1b[1;31m✖ Syntax error in package.yavml:\x1b[0m\n  {e}\n");
                                 reload_server.notify_error(format!("package.yavml syntax error:\n{e}"));
                                 continue;
                             }
@@ -283,11 +306,24 @@ pub async fn run(cli_port: u16) -> Result<(), Box<dyn std::error::Error>> {
                         let output_css = Path::new(&config.tailwind.output_css);
                         let content_paths = vec![Path::new("src"), Path::new("public")];
                         if let Err(e) = mgr.run_build(input_css, output_css, &content_paths, false).await {
-                            eprintln!("\x1b[33m⚠️ Tailwind compilation warning: {e}\x1b[0m");
+                            eprintln!("\x1b[33m! Tailwind compilation warning: {e}\x1b[0m");
                         }
                     }
 
-                    println!("\x1b[33m🔄 Code modified. Rebuilding and restarting server...\x1b[0m");
+                    println!("\x1b[33m  ➜  Code modified. Checking & rebuilding...\x1b[0m");
+                    if let Ok(check_out) = tokio::process::Command::new("cargo")
+                        .args(["check", "--color=never"])
+                        .output()
+                        .await
+                    {
+                        if !check_out.status.success() {
+                            let stderr = String::from_utf8_lossy(&check_out.stderr).trim().to_string();
+                            eprintln!("\n\x1b[31m✖ Compiler error:\x1b[0m\n{stderr}\n");
+                            reload_server.notify_error(stderr);
+                            continue;
+                        }
+                    }
+
                     if let Some(old) = server_child.take() {
                         kill_server_child(old).await;
                     }
@@ -300,11 +336,11 @@ pub async fn run(cli_port: u16) -> Result<(), Box<dyn std::error::Error>> {
                                 reload_server.notify_clear_error();
                                 reload_server.notify_reload();
                             } else {
-                                eprintln!("\x1b[33m⚠️ Server did not respond within 90s\x1b[0m");
+                                eprintln!("\x1b[33m! Server did not respond within 90s\x1b[0m");
                             }
                         }
                         Err(e) => {
-                            eprintln!("\x1b[31m❌ Failed to restart server: {e}\x1b[0m");
+                            eprintln!("\x1b[31m✖ Failed to restart server: {e}\x1b[0m");
                             reload_server.notify_error(format!("Failed to spawn cargo run: {e}"));
                         }
                     }
@@ -327,7 +363,7 @@ pub async fn run(cli_port: u16) -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
                 } else if changes.public_changed {
-                    println!("\x1b[35m📁 Static asset in public/ modified. Reloading browser...\x1b[0m");
+                    println!("\x1b[35m  ➜  Static asset modified. Reloading browser...\x1b[0m");
                     reload_server.notify_reload();
                 }
             }
@@ -340,14 +376,14 @@ pub async fn run(cli_port: u16) -> Result<(), Box<dyn std::error::Error>> {
                 server_child = None;
                 match status {
                     Ok(exit_status) => {
-                        eprintln!("\x1b[33m⚠️ Application server exited with: {exit_status}\x1b[0m");
+                        eprintln!("\x1b[33m! Application server exited with: {exit_status}\x1b[0m");
                         if !exit_status.success() {
                             reload_server.notify_error(format!("Application process exited with status: {exit_status}"));
                         }
                         println!("\x1b[90mWaiting for file changes to restart...\x1b[0m");
                     }
                     Err(e) => {
-                        eprintln!("\x1b[31m❌ Error in child server process: {e}\x1b[0m");
+                        eprintln!("\x1b[31m✖ Error in child server process: {e}\x1b[0m");
                     }
                 }
             }

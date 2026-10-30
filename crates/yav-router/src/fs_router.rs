@@ -165,7 +165,12 @@ impl FileSystemRouter {
                     .file_name()
                     .and_then(|n| n.to_str())
                     .unwrap_or("");
-                s == "layout.rs" || s == "layout.yav" || s == "layout.rsx"
+                s == "layout.rs"
+                    || s == "layout.yav"
+                    || s == "layout.rsx"
+                    || s == "_layout.rs"
+                    || s == "_layout.yav"
+                    || s == "_layout.rsx"
             })
             .map(|p| p.as_ref().to_path_buf())
             .collect();

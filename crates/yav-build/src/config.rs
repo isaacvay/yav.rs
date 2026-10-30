@@ -49,6 +49,9 @@ pub struct ServerConfig {
     /// Host address to bind to.
     #[serde(default = "default_host")]
     pub host: String,
+    /// Enable response compression (gzip, brotli).
+    #[serde(default)]
+    pub compression: bool,
 }
 
 impl Default for ServerConfig {
@@ -56,6 +59,7 @@ impl Default for ServerConfig {
         Self {
             port: default_port(),
             host: default_host(),
+            compression: false,
         }
     }
 }

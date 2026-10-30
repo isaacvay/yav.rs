@@ -235,7 +235,7 @@ self.addEventListener('fetch', (event) => {
     }
 
     println!();
-    println!("🎉 \x1b[1;32mPWA assets generated successfully!\x1b[0m");
+    println!("✔ \x1b[1;32mPWA assets generated successfully!\x1b[0m");
     println!("────────────────────────────────────────────────────────────");
     println!(
         "To activate the PWA in your application, add the following to your HTML <head> or layout:"

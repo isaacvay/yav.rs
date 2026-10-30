@@ -45,7 +45,7 @@ pub async fn download_with_progress(
     let version = mgr.version();
 
     println!(
-        "\x1b[36m📥 Downloading standalone Tailwind CSS compiler v{version} (~45 MB)...\x1b[0m"
+        "\x1b[36m  Downloading standalone Tailwind CSS compiler v{version} (~45 MB)...\x1b[0m"
     );
 
     let mut last_printed_pct = 0;
@@ -86,9 +86,9 @@ pub async fn prompt_and_install_in_new(version: &str) -> Result<bool, Box<dyn st
 
     let bin_path = mgr.binary_path()?;
 
-    println!("\n\x1b[1;36m💡 Tailwind CSS standalone compiler is needed to build styles.\x1b[0m");
+    println!("\n\x1b[1;36mℹ Tailwind CSS standalone compiler is needed to build styles.\x1b[0m");
     println!("   It runs standalone (~45 MB) and does not require Node.js or npm.");
-    print!("👉 Download Tailwind standalone compiler now? [Y/n]: ");
+    print!("› Download Tailwind standalone compiler now? [Y/n]: ");
     let _ = std::io::stdout().flush();
 
     let mut input = String::new();
@@ -103,7 +103,7 @@ pub async fn prompt_and_install_in_new(version: &str) -> Result<bool, Box<dyn st
             match download_with_progress(&mgr, &bin_path).await {
                 Ok(()) => return Ok(true),
                 Err(e) => {
-                    eprintln!("\x1b[33m⚠️ Could not download Tailwind compiler: {e}\x1b[0m");
+                    eprintln!("\x1b[33m! Could not download Tailwind compiler: {e}\x1b[0m");
                     eprintln!("   It will be retried when running 'yav dev'.\n");
                     return Ok(false);
                 }
@@ -125,9 +125,9 @@ pub async fn ensure_tailwind_in_dev(
 
     let bin_path = mgr.binary_path()?;
 
-    println!("\n\x1b[1;36m💡 Tailwind CSS standalone compiler is not yet installed on this machine.\x1b[0m");
+    println!("\n\x1b[1;36mℹ Tailwind CSS standalone compiler is not yet installed on this machine.\x1b[0m");
     println!("   It is required to compile utility classes into styles.css.");
-    print!("👉 Download Tailwind compiler now? [Y/n]: ");
+    print!("› Download Tailwind compiler now? [Y/n]: ");
     let _ = std::io::stdout().flush();
 
     let mut input = String::new();
@@ -142,14 +142,14 @@ pub async fn ensure_tailwind_in_dev(
             match download_with_progress(mgr, &bin_path).await {
                 Ok(()) => return Ok(true),
                 Err(e) => {
-                    eprintln!("\x1b[31m❌ Failed to download Tailwind compiler: {e}\x1b[0m");
+                    eprintln!("\x1b[31m✖ Failed to download Tailwind compiler: {e}\x1b[0m");
                     return Ok(false);
                 }
             }
         }
     }
 
-    println!("\x1b[33m⚠️ Skipping Tailwind compilation. Running with existing styles...\x1b[0m\n");
+    println!("\x1b[33m! Skipping Tailwind compilation. Running with existing styles...\x1b[0m\n");
     Ok(false)
 }
 

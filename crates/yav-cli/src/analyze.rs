@@ -182,18 +182,18 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     let report = analyze_project(&root)?;
 
     println!();
-    println!("🔍 \x1b[1;36mYav Project Analysis & Performance Audit\x1b[0m");
+    println!("  \x1b[1;36mYav Project Analysis & Performance Audit\x1b[0m");
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     println!(
-        "  📦 Project:      \x1b[1m{}\x1b[0m (v{})",
+        "  ● Project:      \x1b[1m{}\x1b[0m (v{})",
         report.package_name, report.package_version
     );
     println!(
-        "  📍 Routes:       {} ({} dynamic)",
+        "  ● Routes:       {} ({} dynamic)",
         report.route_count, report.dynamic_route_count
     );
     println!(
-        "  🧩 Components:   {} custom components",
+        "  ● Components:   {} custom components",
         report.component_count
     );
 
@@ -202,31 +202,31 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         let status = if css < 50 * 1024 {
             "\x1b[32m✔ Excellent (< 50 KB)\x1b[0m"
         } else if css < 150 * 1024 {
-            "\x1b[33m⚡ Good (< 150 KB)\x1b[0m"
+            "\x1b[33m✔ Good (< 150 KB)\x1b[0m"
         } else {
-            "\x1b[31m⚠ Large (> 150 KB, consider purging)\x1b[0m"
+            "\x1b[31m! Large (> 150 KB, consider purging)\x1b[0m"
         };
-        println!("  🎨 CSS Bundle:   {} - {}", format_size(css), status);
+        println!("  ● CSS Bundle:   {} - {}", format_size(css), status);
     } else {
         println!(
-            "  🎨 CSS Bundle:   \x1b[33mNot yet generated (run `yav build` or `yav dev`)\x1b[0m"
+            "  ● CSS Bundle:   \x1b[33mNot yet generated (run `yav build` or `yav dev`)\x1b[0m"
         );
     }
 
     // Static assets
     println!(
-        "  📁 Assets:       {} files ({})",
+        "  ● Assets:       {} files ({})",
         report.total_asset_count,
         format_size(report.total_asset_size_bytes)
     );
 
     // Binary
     if let Some(bin) = report.binary_size_bytes {
-        println!("  ⚙️  Binary Size:  {}", format_size(bin));
+        println!("  ● Binary Size:  {}", format_size(bin));
     }
 
     println!();
-    println!("📊 \x1b[1;34mReadiness & Best Practices Scorecard\x1b[0m");
+    println!("  \x1b[1;34mReadiness & Best Practices Scorecard\x1b[0m");
     println!("────────────────────────────────────────────────────────────");
 
     print_check(

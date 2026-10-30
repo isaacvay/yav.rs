@@ -14,9 +14,67 @@ yav build
 
 1. **Manifest Validation**: Validates `package.yavml` configuration, ports, assets, and script settings.
 2. **Tailwind Minification**: Executes standalone Tailwind CLI in production mode (`--minify`) to purge unused utility classes.
-3. **Asset Fingerprinting & Pre-Compression**: Copies files from `public/` into the output directory (`dist/`), computes SHA-256 content hashes, and generates pre-compressed `.gz` (Gzip) variants in a single in-memory pass.
+3. **Asset Fingerprinting & Pre-Compression**: Copies files from `public/` into the output directory (`dist/`), computes SHA-256 content hashes, and generates pre-compressed `.gz` (Gzip) and `.br` (Brotli) variants in a single in-memory pass.
 4. **Release Compilation**: Runs `cargo build --release` with optimization settings.
 5. **Manifest Generation**: Writes `dist/asset-manifest.json` mapping logical paths to fingerprinted filenames for long-term browser caching (`HtmlPage` automatically caches and resolves fingerprinted URLs in production via `OnceLock`).
+
+---
+
+## Static Site Generation (SSG)
+
+If your website consists entirely or partially of static content (documentation, blogs, marketing landing pages), you can pre-render every route to static HTML:
+
+```bash
+# Export all static routes to dist/
+yav export --output dist --base-url https://mon-site.com
+```
+
+Programmatically from Rust:
+```rust
+let app = YavApp::new().get("/", home_handler).get("/docs", docs_handler);
+let count = app.export_static(Path::new("dist"), "https://mon-site.com").await?;
+```
+The resulting `dist/` directory can be deployed directly to Cloudflare Pages, GitHub Pages, Netlify, or Vercel without requiring a running server process.
+
+---
+
+## In-Memory SSR Route Caching (`get_cached`)
+
+For dynamic servers handling high traffic loads, Yav provides sub-millisecond in-memory SSR caching:
+
+```rust
+use std::time::Duration;
+
+let app = YavApp::new()
+    .get_cached("/blog", Duration::from_secs(120), blog_index_handler);
+```
+- Completely bypasses template rendering, component execution, and database hits while the cache is fresh.
+- Automatically generates ETags and serves `304 Not Modified` responses when possible.
+
+---
+
+## Built-in Markdown Engine (`yav_build::markdown`)
+
+Yav includes a zero-dependency markdown parsing engine tailored for technical documentation and blogs:
+
+```rust
+use yav_build::markdown::parse_markdown;
+
+let raw_md = r#"---
+title: "Guide de Déploiement"
+slug: "deployment-guide"
+description: "Déployer Yav en production"
+---
+# Guide de Déploiement
+
+Déployez votre application avec **Docker** ou **Fly.io**.
+"#;
+
+let parsed = parse_markdown(raw_md);
+assert_eq!(parsed.title, "Guide de Déploiement");
+assert_eq!(parsed.slug, "deployment-guide");
+assert!(parsed.html.contains("<strong>Docker</strong>"));
+```
 
 ## Deployment Targets
 

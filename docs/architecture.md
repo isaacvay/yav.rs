@@ -129,21 +129,32 @@ Automated schema generation for hybrid SSR and REST API applications, with embed
 ### 4. Database Scaffolding & Migrations (`yav db`)
 CLI workflow for forward and rollback SQL migrations with timestamping and environment configuration.
 
-### 5. Motion Engine Architecture (`yav-motion`)
-Server-side declarative animations compiled to compact `data-motion` HTML5 datasets, powered on the client by the browser's native **Web Animations API** (WAAPI).
-- **Zero JS Dependencies**: Under 2KB total client footprint without Framer Motion, GSAP, or React.
-- **Spring Physics**: Accurate mass/damping/stiffness simulations executed directly on the browser's compositor thread.
-- **Micro-Script Hydration**: `motion_script()` initializes elements via `requestAnimationFrame` and `IntersectionObserver` for viewport reveal staggering.
+### 5. Motion Engine Architecture & Spring Solver
+Server-side declarative animations compiled to compact HTML5 datasets, powered on the client by the browser's native **Web Animations API** (WAAPI).
+- **Physical Spring Solver**: Accurate harmonic oscillator solver (`solveSpring(stiffness, damping, mass)`) generating natural springs without bulky JS dependencies.
+- **Micro-Script Hydration**: Viewport reveal staggering, scroll-spy, animated counters (`CountUp`), expanding gauges (`AnimatedBar`), and syntax-preserving typewriter code blocks.
+- **Compile-Time Anti-FOUC**: `yav:initial="opacity:0, y:24"` is pre-compiled directly into inline HTML `style="opacity: 0; transform: translate3d(0px, 24px, 0);"` during SSR to prevent flash of unstyled content before script execution.
 
-### 6. Static VDOM Folding & Zero-Allocation Rendering (`Node::Static`)
+### 6. SSR Tree-Shaking Runtimes (`append_tree_shaken_runtimes`)
+During HTML document serialization, `yav-core` inspects the DOM string and **tree-shakes client runtimes**:
+- Micro-actions runtime is injected only if `yav:toggle`, `yav:copy`, `yav:filter`, etc. are present.
+- Cursor tracking runtime is injected only if `yav:cursor`, `<CursorSpotlight>`, `<TiltPlate>`, etc. are present.
+- Motion physics runtime is injected only if `yav:animate`, `<Motion>`, `<CountUp>`, etc. are present.
+- Signals runtime is injected only if `yav:state`, `yav:bind`, `yav:text` are present.
+Pure static pages emit **zero** JavaScript bytes.
+
+### 7. Static VDOM Folding & Zero-Allocation Rendering (`Node::Static`)
 Compile-time static chunk folding in the `rsx!` procedural macro identifies immutable DOM subtrees and packs them into `Node::Static(&'static str)`. During SSR rendering, these branches bypass dynamic attribute serialization and string allocations, writing directly to pooled string buffers.
 
-### 7. Automatic HTTP ETag & Conditional Requests (`compute_etag`)
+### 8. Automatic HTTP ETag & Conditional Requests (`compute_etag`)
 Built-in caching middleware (`YavApp::etag(true)`) computes deterministic Blake3/SHA-256 ETags over rendered responses. When incoming requests include `If-None-Match`, Yav immediately halts pipeline execution and returns `304 Not Modified`, saving server bandwidth and client battery life.
 
-### 8. View Transitions API & Progressive Client Routing
+### 9. View Transitions API & Progressive Client Routing
 The client navigation engine (`client_router_script()`) integrates the browser's modern **View Transitions API** (`document.startViewTransition()`):
 - **Predictive Prefetching**: Prefetches target HTML over `<Link prefetch=true>` via hover or `IntersectionObserver`.
 - **Morphing Page Swaps**: Smooth cross-fades and shared element animations across page changes.
 - **100% Graceful Degradation**: Fallback to instant DOM swapping or standard MPA page reloads if JavaScript or View Transitions are unsupported.
+
+### 10. Real-Time WebSockets Live Swap (`WsBroadcast`)
+In-memory broadcast channel allowing async server events, background tasks, or pub/sub messages to push HTML fragments directly into client DOM selectors without hand-written client WebSocket handlers.
 

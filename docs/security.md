@@ -42,9 +42,11 @@ Headers emitted:
 - `X-RateLimit-Remaining`
 - `Retry-After` (upon HTTP 429)
 
-## 4. CSRF Protection for Forms
+## 4. CSRF Protection for Forms with CSPRNG Salt
 
 Yav includes built-in cryptographic CSRF token generation and constant-time verification via `CsrfToken`:
+- Each generated `CsrfToken` incorporates a cryptographically secure random (CSPRNG) per-token salt, ensuring two distinct tokens generated for the same or different sessions are unique and unpredictable.
+- Tokens are signed and verified in constant time (`constant_time_eq`) to prevent timing attacks.
 
 ```rust
 use yav::prelude::*;
@@ -72,7 +74,80 @@ pub async fn submit_handler(session: Session, form: FormData) -> Response {
 }
 ```
 
-## 5. Path Traversal & Static Asset Hardening
+---
+
+## 5. Typed Form Validation (`FromFormData` & `FormErrors`)
+
+Safely parse, deserialize, and validate user input before processing business logic:
+
+```rust
+use yav::server::{FormData, FormErrors, FromFormData};
+
+#[derive(Debug)]
+pub struct RegisterForm {
+    pub username: String,
+    pub email: String,
+}
+
+impl FromFormData for RegisterForm {
+    fn from_form(form: &FormData) -> Result<Self, FormErrors> {
+        let mut errors = FormErrors::new();
+        let username = form.get_or_empty("username");
+        let email = form.get_or_empty("email");
+
+        errors.require("username", username, "Le nom d'utilisateur est requis");
+        errors.require("email", email, "L'adresse email est requise");
+
+        if !email.is_empty() && !email.contains('@') {
+            errors.add("email", "L'adresse email est invalide");
+        }
+
+        if errors.has_errors() {
+            Err(errors)
+        } else {
+            Ok(Self {
+                username: username.to_string(),
+                email: email.to_string(),
+            })
+        }
+    }
+}
+
+// In your POST handler:
+pub async fn register_action(form: FormData) -> impl IntoResponse {
+    match form.parse_validated::<RegisterForm>() {
+        Ok(valid_user) => {
+            // Process clean, validated input safely
+            redirect("/welcome")
+        }
+        Err(validation_errors) => {
+            // Render form with specific field error messages
+            let msg = validation_errors.first("email").unwrap_or("Erreur de formulaire");
+            HtmlFragment::new(rsx! { <p class="text-red-500">{msg}</p> }).into_response()
+        }
+    }
+}
+```
+
+---
+
+## 6. XSS-Safe i18n JSON Serialization
+
+When passing server-side translation catalogs or data dictionaries into client-side `<script>` tags, malicious strings like `</script><script>alert(1)</script>` can break out of script contexts.
+
+Yav's `I18n::to_json()` automatically sanitizes forward slashes into `<\/script>`, rendering inline JSON dictionaries 100% immune to HTML tag injection:
+
+```rust
+use yav_core::I18n;
+
+let i18n = I18n::new("fr").add_translation("fr", "key", "Test </script> alert");
+let safe_json = i18n.to_json();
+assert!(safe_json.contains(r#"<\/script>"#));
+```
+
+---
+
+## 7. Path Traversal & Static Asset Hardening
 
 Static asset serving ([`crates/yav-server/src/static_files.rs`](file:///d:/deep/yav.rs/crates/yav-server/src/static_files.rs)) verifies that all resolved paths remain strictly bounded within the configured `public` directory:
 - Null bytes (`\0`) and absolute/prefix components are blocked.
@@ -81,7 +156,9 @@ Static asset serving ([`crates/yav-server/src/static_files.rs`](file:///d:/deep/
 - Static SVG files (`image/svg+xml`) are served with a strict `Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; sandbox` header to prevent stored XSS when navigated to directly.
 - Files larger than 1 MB are streamed asynchronously in 64 KB chunks to prevent memory exhaustion (OOM DoS).
 
-## 6. Default HTTP Security Headers
+---
+
+## 8. Default HTTP Security Headers
 
 Yav applies hardened OWASP security headers by default on every response via `security_headers_middleware`:
 - `X-Content-Type-Options: nosniff`

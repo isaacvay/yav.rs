@@ -13,12 +13,15 @@ mod db_cmd;
 mod deploy;
 mod dev;
 mod docker;
+mod doctor;
+mod export_cmd;
 mod ext;
 mod generate;
 mod icon_cmd;
 mod new;
 mod pwa;
 mod reload;
+mod routes_cmd;
 mod run_cmd;
 mod sitemap_cmd;
 mod spinner;
@@ -113,7 +116,7 @@ enum Commands {
     Check,
     /// Run tests
     Test,
-    /// Run a named script defined in package.yavml (like npm run <script>)
+    /// Run a named script defined in package.yavml (like `npm run <script>`)
     Run {
         /// Name of the script to execute (e.g. dev, build, test)
         script: String,
@@ -126,9 +129,22 @@ enum Commands {
         #[command(subcommand)]
         action: ext::ExtAction,
     },
+    /// Export website to standalone static HTML for CDN/Pages hosting (SSG)
+    Export {
+        /// Target output directory
+        #[arg(short, long, default_value = "dist")]
+        output: String,
+        /// Base canonical URL
+        #[arg(short, long, default_value = "https://example.com")]
+        base_url: String,
+    },
     /// Update the Yav CLI binary and current project dependencies (aliases: up, upgrade)
     #[command(alias = "up", alias = "upgrade")]
     Update(update_cmd::UpdateArgs),
+    /// Diagnose environment, Rust toolchain, manifest, and Tailwind CSS setup
+    Doctor,
+    /// Inspect discovered file-system routes, HTTP methods, layouts, and middlewares
+    Routes,
 }
 
 #[tokio::main]
@@ -206,8 +222,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Ext { action } => {
             ext::run(&action)?;
         }
+        Commands::Export { output, base_url } => {
+            export_cmd::run(&output, &base_url).await?;
+        }
         Commands::Update(args) => {
             update_cmd::run(&args).await?;
+        }
+        Commands::Doctor => {
+            doctor::run()?;
+        }
+        Commands::Routes => {
+            routes_cmd::run()?;
         }
     }
 

@@ -5,7 +5,7 @@
 /// Executes the `yav test` command.
 pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("\x1b[1;36m╔═══════════════════════════════════════════════════╗\x1b[0m");
-    println!("\x1b[1;36m║               🧪 RUNNING YAV TESTS                ║\x1b[0m");
+    println!("\x1b[1;36m║                 RUNNING YAV TESTS                 ║\x1b[0m");
     println!("\x1b[1;36m╚═══════════════════════════════════════════════════╝\x1b[0m\n");
 
     let status = tokio::process::Command::new("cargo")

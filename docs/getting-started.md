@@ -141,16 +141,22 @@ favicon = "public/favicon.ico"
 | `<tag>` | HTML element | `<div>...</div>` |
 | `<Tag />` | Component (PascalCase) | `<Button />` |
 | `class="..."` | String attribute | `class="text-lg"` |
+| `class:active={bool}` | Class directive | `class:active={is_active}` |
 | `attr={expr}` | Expression attribute | `id={my_id}` |
-| `disabled` | Boolean attribute | `<input disabled />` |
-| `"text"` | Text content | `"Hello, world!"` |
+| `disabled` | Short boolean attribute | `<input disabled required />` |
+| `"text"` | Text content (no quotes needed for plain text) | `<h1>Titre</h1>` or `"Hello"` |
 | `{expr}` | Rust expression | `{format!("Hi {}", name)}` |
-| `data-x="y"` | Hyphenated attribute | `data-testid="main"` |
+| `if cond { } else { }` | Native control flow | `if is_admin { <Badge /> }` |
+| `for x in iter { }` | Native iteration | `for item in items { <li>{item}</li> }` |
+| `<Head>` | Document head hoisting | `<Head><title>Page</title></Head>` |
+| `yav:*` | Zero-JS declarative actions & motion | `<button yav:toggle="drawer">` |
 
 ## Next Steps
 
+- [Zero-JS Declarative Interactivity & Motion](zero-js-interactions-and-motion.md)
+- [Multi-Theme System (8 Design Themes)](themes.md)
+- [Components Guide & RSX Control Flow](components.md)
+- [Routing & Reverse Routing](routing.md)
 - [Configuration Reference (package.yavml)](configuration.md)
-- [Components Guide](components.md)
-- [Routing](routing.md)
 - [Styling with Tailwind](styling.md)
-- [Icons](icons.md)
+- [CLI Reference](cli.md)

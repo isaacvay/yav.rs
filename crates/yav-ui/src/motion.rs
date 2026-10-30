@@ -632,8 +632,424 @@ pub fn ScrollProgressBar(props: ScrollProgressBarProps) -> Node {
     bar.render()
 }
 
-/// Returns the zero-dependency client script powering Yav Motion's spring physics,
-/// scroll reveal, gesture animations, and scroll progress tracking.
+/// An animated count-up number component triggered on viewport entry and replayable via `yav:replay`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CountUp {
+    to: f64,
+    decimals: Option<u8>,
+    duration_ms: u32,
+    prefix: String,
+    suffix: String,
+    class: String,
+}
+
+impl Default for CountUp {
+    fn default() -> Self {
+        Self {
+            to: 0.0,
+            decimals: None,
+            duration_ms: 1400,
+            prefix: String::new(),
+            suffix: String::new(),
+            class: String::new(),
+        }
+    }
+}
+
+impl CountUp {
+    /// Create a new [`CountUp`] counter targeting `to`.
+    pub fn new(to: f64) -> Self {
+        Self {
+            to,
+            ..Default::default()
+        }
+    }
+
+    /// Set decimal places (auto-detected if omitted).
+    pub fn decimals(mut self, decimals: u8) -> Self {
+        self.decimals = Some(decimals);
+        self
+    }
+
+    /// Set duration in milliseconds (default `1400`).
+    pub fn duration_ms(mut self, ms: u32) -> Self {
+        self.duration_ms = ms;
+        self
+    }
+
+    /// Set prefix string (e.g. `"$"` or `"("`).
+    pub fn prefix(mut self, prefix: impl Into<String>) -> Self {
+        self.prefix = prefix.into();
+        self
+    }
+
+    /// Set suffix string (e.g. `"%"` or `" ms"`).
+    pub fn suffix(mut self, suffix: impl Into<String>) -> Self {
+        self.suffix = suffix.into();
+        self
+    }
+
+    /// Add custom CSS classes.
+    pub fn class(mut self, class: impl Into<String>) -> Self {
+        self.class = class.into();
+        self
+    }
+
+    /// Render into a [`Node`].
+    pub fn render(self) -> Node {
+        let mut el = Element::new("span")
+            .attr("yav:count-to", self.to.to_string())
+            .attr("yav:count-duration", self.duration_ms.to_string());
+
+        if let Some(d) = self.decimals {
+            el = el.attr("yav:count-decimals", d.to_string());
+        }
+        if !self.prefix.is_empty() {
+            el = el.attr("yav:count-prefix", &self.prefix);
+        }
+        if !self.suffix.is_empty() {
+            el = el.attr("yav:count-suffix", &self.suffix);
+        }
+        if !self.class.is_empty() {
+            el = el.attr("class", &self.class);
+        }
+
+        let initial_str = match self.decimals {
+            Some(d) if d > 0 => format!("{}{:.prec$}{}", self.prefix, 0.0, self.suffix, prec = d as usize),
+            _ => format!("{}0{}", self.prefix, self.suffix),
+        };
+        el = el.child(Node::text(initial_str));
+        Node::Element(el)
+    }
+}
+
+impl IntoNode for CountUp {
+    fn into_node(self) -> Node {
+        self.render()
+    }
+}
+
+impl From<CountUp> for Node {
+    fn from(c: CountUp) -> Self {
+        c.render()
+    }
+}
+
+impl Component for CountUp {
+    fn render(&self) -> Node {
+        self.clone().render()
+    }
+}
+
+/// Convenience builder for [`CountUp`].
+pub fn count_up(to: f64) -> CountUp {
+    CountUp::new(to)
+}
+
+/// Props for `<CountUp />` in `rsx!`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CountUpProps {
+    pub to: f64,
+    pub decimals: u8,
+    pub duration_ms: u32,
+    pub prefix: String,
+    pub suffix: String,
+    pub class: String,
+}
+
+impl Default for CountUpProps {
+    fn default() -> Self {
+        Self {
+            to: 0.0,
+            decimals: 0,
+            duration_ms: 1400,
+            prefix: String::new(),
+            suffix: String::new(),
+            class: String::new(),
+        }
+    }
+}
+
+/// Functional component for `<CountUp />` in `rsx!`.
+#[allow(non_snake_case)]
+pub fn CountUp(props: CountUpProps) -> Node {
+    let mut c = CountUp::new(props.to)
+        .decimals(props.decimals)
+        .duration_ms(props.duration_ms);
+    if !props.prefix.is_empty() {
+        c = c.prefix(props.prefix);
+    }
+    if !props.suffix.is_empty() {
+        c = c.suffix(props.suffix);
+    }
+    if !props.class.is_empty() {
+        c = c.class(props.class);
+    }
+    c.render()
+}
+
+/// An animated horizontal bar/gauge that expands from `0%` to `target_pct` on viewport entry.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AnimatedBar {
+    target_pct: f64,
+    duration_ms: u32,
+    class: String,
+    bar_class: String,
+}
+
+impl Default for AnimatedBar {
+    fn default() -> Self {
+        Self {
+            target_pct: 100.0,
+            duration_ms: 1400,
+            class: "hbar".to_string(),
+            bar_class: String::new(),
+        }
+    }
+}
+
+impl AnimatedBar {
+    /// Create a new [`AnimatedBar`] targeting `target_pct` (0.0 to 100.0).
+    pub fn new(target_pct: f64) -> Self {
+        Self {
+            target_pct: target_pct.clamp(0.0, 100.0),
+            ..Default::default()
+        }
+    }
+
+    /// Set animation duration in milliseconds (default `1400`).
+    pub fn duration_ms(mut self, ms: u32) -> Self {
+        self.duration_ms = ms;
+        self
+    }
+
+    /// Set outer track CSS classes.
+    pub fn class(mut self, class: impl Into<String>) -> Self {
+        self.class = class.into();
+        self
+    }
+
+    /// Set inner bar CSS classes.
+    pub fn bar_class(mut self, class: impl Into<String>) -> Self {
+        self.bar_class = class.into();
+        self
+    }
+
+    /// Render into a [`Node`].
+    pub fn render(self) -> Node {
+        let mut inner = Element::new("i")
+            .attr("style", "display:block;width:0%")
+            .attr("yav:bar-to", format!("{}%", self.target_pct))
+            .attr("yav:bar-duration", self.duration_ms.to_string());
+        if !self.bar_class.is_empty() {
+            inner = inner.attr("class", &self.bar_class);
+        }
+
+        let outer = Element::new("div")
+            .attr("class", &self.class)
+            .child(Node::Element(inner));
+        Node::Element(outer)
+    }
+}
+
+impl IntoNode for AnimatedBar {
+    fn into_node(self) -> Node {
+        self.render()
+    }
+}
+
+impl From<AnimatedBar> for Node {
+    fn from(b: AnimatedBar) -> Self {
+        b.render()
+    }
+}
+
+impl Component for AnimatedBar {
+    fn render(&self) -> Node {
+        self.clone().render()
+    }
+}
+
+/// Convenience builder for [`AnimatedBar`].
+pub fn animated_bar(target_pct: f64) -> AnimatedBar {
+    AnimatedBar::new(target_pct)
+}
+
+/// Props for `<AnimatedBar />` in `rsx!`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AnimatedBarProps {
+    pub target_pct: f64,
+    pub duration_ms: u32,
+    pub class: String,
+    pub bar_class: String,
+}
+
+impl Default for AnimatedBarProps {
+    fn default() -> Self {
+        Self {
+            target_pct: 100.0,
+            duration_ms: 1400,
+            class: String::new(),
+            bar_class: String::new(),
+        }
+    }
+}
+
+/// Functional component for `<AnimatedBar />` in `rsx!`.
+#[allow(non_snake_case)]
+pub fn AnimatedBar(props: AnimatedBarProps) -> Node {
+    let mut b = AnimatedBar::new(props.target_pct).duration_ms(props.duration_ms);
+    if !props.class.is_empty() {
+        b = b.class(props.class);
+    }
+    if !props.bar_class.is_empty() {
+        b = b.bar_class(props.bar_class);
+    }
+    b.render()
+}
+
+/// A syntax-preserving typewriter code block component that types line-by-line with a blinking cursor.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TypewriterCode {
+    speed_ms: u32,
+    cursor: String,
+    skip_on_click: bool,
+    class: String,
+    children: Vec<Node>,
+}
+
+impl Default for TypewriterCode {
+    fn default() -> Self {
+        Self {
+            speed_ms: 14,
+            cursor: "▋".to_string(),
+            skip_on_click: true,
+            class: "code".to_string(),
+            children: Vec::new(),
+        }
+    }
+}
+
+impl TypewriterCode {
+    /// Create a new [`TypewriterCode`] container.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set typing delay per character in milliseconds (default `14`).
+    pub fn speed_ms(mut self, ms: u32) -> Self {
+        self.speed_ms = ms;
+        self
+    }
+
+    /// Set cursor character (default `"▋"`).
+    pub fn cursor(mut self, cursor: impl Into<String>) -> Self {
+        self.cursor = cursor.into();
+        self
+    }
+
+    /// Allow clicking the code block to skip typing and reveal all code immediately (default `true`).
+    pub fn skip_on_click(mut self, skip: bool) -> Self {
+        self.skip_on_click = skip;
+        self
+    }
+
+    /// Add custom CSS classes.
+    pub fn class(mut self, class: impl Into<String>) -> Self {
+        self.class = class.into();
+        self
+    }
+
+    /// Add a line node.
+    pub fn child(mut self, node: impl IntoNode) -> Self {
+        self.children.push(node.into_node());
+        self
+    }
+
+    /// Add multiple line nodes.
+    pub fn children(mut self, nodes: impl IntoIterator<Item = Node>) -> Self {
+        self.children.extend(nodes);
+        self
+    }
+
+    /// Render into a [`Node`].
+    pub fn render(self) -> Node {
+        let mut el = Element::new("div")
+            .attr("class", &self.class)
+            .attr("yav:typewriter", self.speed_ms.to_string())
+            .attr("yav:typewriter-cursor", &self.cursor);
+        if self.skip_on_click {
+            el = el.attr("yav:typewriter-skip", "click");
+        }
+        for child in self.children {
+            el = el.child(child);
+        }
+        Node::Element(el)
+    }
+}
+
+impl IntoNode for TypewriterCode {
+    fn into_node(self) -> Node {
+        self.render()
+    }
+}
+
+impl From<TypewriterCode> for Node {
+    fn from(t: TypewriterCode) -> Self {
+        t.render()
+    }
+}
+
+impl Component for TypewriterCode {
+    fn render(&self) -> Node {
+        self.clone().render()
+    }
+}
+
+/// Convenience builder for [`TypewriterCode`].
+pub fn typewriter_code() -> TypewriterCode {
+    TypewriterCode::new()
+}
+
+/// Props for `<TypewriterCode />` in `rsx!`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TypewriterCodeProps {
+    pub speed_ms: u32,
+    pub cursor: String,
+    pub skip_on_click: bool,
+    pub class: String,
+    pub children: Vec<Node>,
+}
+
+impl Default for TypewriterCodeProps {
+    fn default() -> Self {
+        Self {
+            speed_ms: 14,
+            cursor: "▋".to_string(),
+            skip_on_click: true,
+            class: String::new(),
+            children: Vec::new(),
+        }
+    }
+}
+
+/// Functional component for `<TypewriterCode />` in `rsx!`.
+#[allow(non_snake_case)]
+pub fn TypewriterCode(props: TypewriterCodeProps) -> Node {
+    let mut t = TypewriterCode::new()
+        .speed_ms(props.speed_ms)
+        .cursor(props.cursor)
+        .skip_on_click(props.skip_on_click)
+        .children(props.children);
+    if !props.class.is_empty() {
+        t = t.class(props.class);
+    }
+    t.render()
+}
+
+/// Returns the zero-dependency client script powering Yav Motion's harmonic oscillator spring physics,
+/// scroll reveal, gesture animations, count-up, bar gauges, typewriter, and scroll progress tracking.
+/// Note: Automatically injected by `yav-core` SSR tree-shaking when motion attributes are present.
 pub fn motion_script() -> Node {
     let script = r#"(function() {
   if (window.__YAV_MOTION_INSTALLED__) return;
@@ -642,31 +1058,65 @@ pub fn motion_script() -> Node {
   const prefersReducedMotion = () =>
     window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
+  function solveSpring(k, c, m) {
+    let pos = 0, v = 0, dt = 1 / 60, frames = [0];
+    for (let i = 0; i < 180; i++) {
+      const f = -k * (pos - 1) - c * v;
+      v += (f / (m || 1)) * dt;
+      pos += v * dt;
+      frames.push(pos);
+      if (i > 6 && Math.abs(pos - 1) < 0.0015 && Math.abs(v) < 0.0015) break;
+    }
+    frames.push(1);
+    return { frames, duration: Math.min(frames.length * 16.67, 1800) };
+  }
+
+  function buildTransform(target, p) {
+    const transforms = [];
+    if (target.x !== undefined || target.y !== undefined) {
+      transforms.push(`translate3d(${((target.x || 0) * p).toFixed(2)}px, ${((target.y || 0) * p).toFixed(2)}px, 0)`);
+    }
+    if (target.scale !== undefined) {
+      transforms.push(`scale(${(1 + (target.scale - 1) * p).toFixed(4)})`);
+    }
+    if (target.rotate !== undefined) {
+      transforms.push(`rotate(${(target.rotate * p).toFixed(2)}deg)`);
+    }
+    return transforms.join(' ');
+  }
+
   function animateTo(el, target, transition) {
     if (!target) return;
     const trans = transition || {};
-    const duration = prefersReducedMotion() ? 0 : (trans.duration_ms || 400);
+    if (prefersReducedMotion()) {
+      el.style.transition = 'none';
+      if (target.opacity !== undefined) el.style.opacity = target.opacity;
+      const tf = buildTransform(target, 1);
+      if (tf) el.style.transform = tf;
+      return;
+    }
+    if (trans.is_spring && typeof el.animate === 'function') {
+      const sp = solveSpring(trans.stiffness || 260, trans.damping || 20, trans.mass || 1);
+      const keyframes = sp.frames.map(p => {
+        const kf = { transform: buildTransform(target, p) || 'none' };
+        if (target.opacity !== undefined) kf.opacity = target.opacity;
+        return kf;
+      });
+      el.animate(keyframes, { duration: sp.duration, fill: 'forwards', easing: 'linear' });
+      return;
+    }
+    const duration = trans.duration_ms || 400;
     const ease = trans.is_spring
       ? 'cubic-bezier(0.175, 0.885, 0.32, 1.275)'
       : (trans.ease || 'cubic-bezier(0.16, 1, 0.3, 1)');
 
-    const transforms = [];
-    if (target.x !== undefined || target.y !== undefined) {
-      transforms.push(`translate3d(${target.x || 0}px, ${target.y || 0}px, 0)`);
-    }
-    if (target.scale !== undefined) {
-      transforms.push(`scale(${target.scale})`);
-    }
-    if (target.rotate !== undefined) {
-      transforms.push(`rotate(${target.rotate}deg)`);
-    }
-
+    const tf = buildTransform(target, 1);
     el.style.transition = duration > 0 ? `all ${duration}ms ${ease}` : 'none';
     if (target.opacity !== undefined) {
       el.style.opacity = target.opacity;
     }
-    if (transforms.length > 0) {
-      el.style.transform = transforms.join(' ');
+    if (tf) {
+      el.style.transform = tf;
     }
     if (target.blur !== undefined) {
       el.style.filter = `blur(${target.blur}px)`;
@@ -675,12 +1125,13 @@ pub fn motion_script() -> Node {
 
   let scrollBound = false;
   function updateProgress() {
-    const progressBars = document.querySelectorAll('[data-scroll-progress]');
+    const progressBars = document.querySelectorAll('[data-scroll-progress], [yav\\:scroll-progress]');
     if (progressBars.length === 0) return;
     const scrollTop = window.scrollY || document.documentElement.scrollTop;
     const docHeight = document.documentElement.scrollHeight - window.innerHeight;
     const progress = docHeight > 0 ? Math.min(Math.max(scrollTop / docHeight, 0), 1) : 0;
     progressBars.forEach(bar => {
+      bar.style.setProperty('--progress', progress);
       bar.style.transform = `scaleX(${progress})`;
     });
   }
@@ -716,7 +1167,7 @@ pub fn motion_script() -> Node {
   }, { threshold: 0.15 }) : null;
 
   function initYavMotion() {
-    if (!scrollBound && document.querySelector('[data-scroll-progress]')) {
+    if (!scrollBound && document.querySelector('[data-scroll-progress], [yav\\:scroll-progress]')) {
       scrollBound = true;
       window.addEventListener('scroll', updateProgress, { passive: true });
     }
@@ -753,11 +1204,11 @@ pub fn motion_script() -> Node {
 
         if (hoverState) {
           el.addEventListener('mouseenter', () => animateTo(el, hoverState, trans));
-          el.addEventListener('mouseleave', () => animateTo(el, animState || { x: 0, y: 0, scale: 1, opacity: 1 }, trans));
+          el.addEventListener('mouseleave', () => animateTo(el, animState || { x: 0, y: 0, scale: 1, rotate: 0, opacity: 1 }, trans));
         }
         if (tapState) {
           el.addEventListener('mousedown', () => animateTo(el, tapState, { duration_ms: 100 }));
-          el.addEventListener('mouseup', () => animateTo(el, hoverState || animState || { scale: 1 }, trans));
+          el.addEventListener('mouseup', () => animateTo(el, hoverState || animState || { scale: 1, rotate: 0 }, trans));
         }
       } catch (_) {}
     });

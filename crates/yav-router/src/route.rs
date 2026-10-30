@@ -190,7 +190,7 @@ impl Route {
         self
     }
 
-    /// Alias for [`with_metadata`].
+    /// Alias for [`Self::with_metadata`].
     pub fn with_meta(mut self, metadata: PageMeta) -> Self {
         self.metadata = metadata;
         self

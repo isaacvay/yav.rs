@@ -7,10 +7,11 @@ mod layouts;
 #[path = "../src/routes/mod.rs"]
 mod routes;
 
-use routes::components_gallery::components_gallery;
-use routes::icons_catalog::icons_catalog;
+use routes::components::components as components_gallery;
+use routes::icons::icons as icons_catalog;
 use routes::index::index;
-use routes::projects::{project_detail, projects_list};
+use routes::projects::_id_::_id_ as project_detail;
+use routes::projects::index::index as projects_list;
 use routes::settings::{settings_get, settings_post};
 
 fn test_app() -> axum::Router {

@@ -9,7 +9,7 @@ use axum::{
 };
 use serde::Serialize;
 use std::sync::OnceLock;
-use yav_core::{document_shell_with_lang, render_to_string, Element, Node, PageMeta};
+use yav_core::{render_to_string, Element, Node, PageMeta};
 
 static ASSET_MANIFEST: OnceLock<Option<yav_build::assets::AssetManifest>> = OnceLock::new();
 
@@ -196,6 +196,8 @@ pub struct HtmlPage {
     pub head_extra: String,
     /// Language attribute for the root `<html>` tag (default: `"en"`).
     pub lang: String,
+    /// Whether `.lang(...)` was explicitly called on this `HtmlPage`.
+    pub lang_explicit: bool,
     /// Root body virtual DOM node.
     pub body: Node,
     /// Scripts or extra markup injected right before `</body>`.
@@ -212,6 +214,7 @@ impl HtmlPage {
             title: String::from("Yav App"),
             head_extra: format!(r#"<link rel="stylesheet" href="{default_css}" />"#),
             lang: String::from("en"),
+            lang_explicit: false,
             body: body.into(),
             body_end: String::new(),
             status: StatusCode::OK,
@@ -227,6 +230,7 @@ impl HtmlPage {
     /// Set the HTML document language code (e.g. `"en"`, `"fr"`, `"es"`).
     pub fn lang(mut self, lang: impl Into<String>) -> Self {
         self.lang = lang.into();
+        self.lang_explicit = true;
         self
     }
 
@@ -318,7 +322,16 @@ impl HtmlPage {
 
     /// Render the entire document to an HTML string.
     pub fn render(&self) -> String {
-        let rendered_body = render_to_string(&self.body);
+        let transformed_body: Option<Node> = yav_core::use_context::<yav_core::SsrLayoutChain>()
+            .map(|chain| (chain.0)(self.body.clone()));
+        let body_ref: &Node = transformed_body.as_ref().unwrap_or(&self.body);
+
+        let effective_lang = if self.lang_explicit {
+            self.lang.clone()
+        } else {
+            yav_core::use_context::<String>().unwrap_or_else(|| self.lang.clone())
+        };
+
         let mut body_end = self.body_end.clone();
         if std::env::var("YAV_DEV").is_ok() {
             let reload_port: u16 = std::env::var("YAV_RELOAD_PORT")
@@ -330,32 +343,40 @@ impl HtmlPage {
             ));
         }
 
-        let trimmed = rendered_body.trim_start();
-        if trimmed.starts_with("<!DOCTYPE")
-            || trimmed.starts_with("<!doctype")
-            || trimmed.starts_with("<html")
-        {
-            // Already a complete HTML document: inject body_end before </body> without double-wrapping
-            if body_end.is_empty() {
-                rendered_body
-            } else if let Some(pos) = rendered_body.rfind("</body>") {
-                let mut full = rendered_body;
-                full.insert_str(pos, &body_end);
-                full
-            } else {
-                let mut full = rendered_body;
-                full.push_str(&body_end);
-                full
+        // Check if body_ref is already a full raw HTML document
+        let raw_doc: Option<&str> = match body_ref {
+            Node::Raw(s) => Some(s.as_str()),
+            Node::Static(s) => Some(s),
+            _ => None,
+        };
+        if let Some(raw_doc) = raw_doc {
+            let trimmed = raw_doc.trim_start();
+            if trimmed.starts_with("<!DOCTYPE")
+                || trimmed.starts_with("<!doctype")
+                || trimmed.starts_with("<html")
+            {
+                let rendered_body = raw_doc.to_string();
+                return if body_end.is_empty() {
+                    rendered_body
+                } else if let Some(pos) = rendered_body.rfind("</body>") {
+                    let mut full = rendered_body;
+                    full.insert_str(pos, &body_end);
+                    full
+                } else {
+                    let mut full = rendered_body;
+                    full.push_str(&body_end);
+                    full
+                };
             }
-        } else {
-            document_shell_with_lang(
-                &self.title,
-                &self.head_extra,
-                &rendered_body,
-                &body_end,
-                &self.lang,
-            )
         }
+
+        yav_core::render_node_document_with_lang(
+            &self.title,
+            &self.head_extra,
+            body_ref,
+            &body_end,
+            &effective_lang,
+        )
     }
 }
 

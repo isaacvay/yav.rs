@@ -40,6 +40,14 @@ pub struct ContextMap {
     data: Arc<HashMap<TypeId, Arc<dyn Any + Send + Sync>>>,
 }
 
+impl std::fmt::Debug for ContextMap {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ContextMap")
+            .field("len", &self.data.len())
+            .finish()
+    }
+}
+
 impl ContextMap {
     /// Create an empty context map.
     pub fn new() -> Self {
@@ -62,6 +70,17 @@ impl ContextMap {
     /// Check if a type `T` is registered in this context map.
     pub fn contains<T: 'static>(&self) -> bool {
         self.data.contains_key(&TypeId::of::<T>())
+    }
+
+    /// Merge all entries from another [`ContextMap`] into this map.
+    pub fn extend(&mut self, other: &ContextMap) {
+        if other.data.is_empty() {
+            return;
+        }
+        let target = Arc::make_mut(&mut self.data);
+        for (k, v) in other.data.iter() {
+            target.insert(*k, v.clone());
+        }
     }
 }
 
@@ -94,11 +113,21 @@ where
     f()
 }
 
+/// SSR layout wrapper chain injected by `auto_routes!` when `_layout.rs` files exist.
+#[derive(Clone)]
+pub struct SsrLayoutChain(pub Arc<dyn Fn(crate::Node) -> crate::Node + Send + Sync>);
+
 /// Retrieve a value of type `T` from the current rendering context.
 ///
 /// Returns `None` if no context of this type was provided.
 pub fn use_context<T: Clone + 'static>() -> Option<T> {
-    CONTEXT_STACK.with(|stack| stack.borrow().last().and_then(|map| map.get::<T>()))
+    CONTEXT_STACK.with(|stack| {
+        stack
+            .borrow()
+            .iter()
+            .rev()
+            .find_map(|map| map.get::<T>())
+    })
 }
 
 /// Capture a clone of the current active context map, suitable for transfer across async tasks or threads.
@@ -165,6 +194,11 @@ where
 /// Retrieve a value of type `T`, or return a fallback default if absent.
 pub fn use_context_or_default<T: Clone + Default + 'static>() -> T {
     use_context::<T>().unwrap_or_default()
+}
+
+/// Retrieve an application-level shared state of type `T` (injected via `YavApp::state` or `provide_context`).
+pub fn use_state<T: Clone + Send + Sync + 'static>() -> Option<T> {
+    use_context::<T>()
 }
 
 #[cfg(test)]

@@ -40,8 +40,38 @@ pub fn scaffold_project(target_dir: &Path, name: &str) -> Result<(), Box<dyn std
     // 2. Generate Cargo.toml
     let yav_dep = if target_dir.join("../crates/yav").exists() {
         r#"yav = { path = "../crates/yav" }"#.to_string()
+    } else if target_dir.join("../yav.rs/crates/yav").exists() {
+        r#"yav = { path = "../yav.rs/crates/yav" }"#.to_string()
+    } else if let Ok(path) = std::env::var("YAV_CRATE_PATH") {
+        format!(r#"yav = {{ path = "{}" }}"#, path.replace('\\', "/"))
     } else {
         format!(r#"yav = "{}""#, env!("CARGO_PKG_VERSION"))
+    };
+
+    // If scaffolded inside an existing Cargo workspace, declare an empty [workspace]
+    // table to isolate the new project from parent workspace collisions.
+    let is_inside_workspace = {
+        let mut has_parent_ws = false;
+        let mut curr = target_dir.parent();
+        while let Some(p) = curr {
+            let manifest = p.join("Cargo.toml");
+            if manifest.exists() {
+                if let Ok(content) = std::fs::read_to_string(&manifest) {
+                    if content.contains("[workspace]") {
+                        has_parent_ws = true;
+                        break;
+                    }
+                }
+            }
+            curr = p.parent();
+        }
+        has_parent_ws
+    };
+
+    let workspace_section = if is_inside_workspace {
+        "\n[workspace]\n"
+    } else {
+        ""
     };
 
     let cargo_toml = format!(
@@ -49,13 +79,20 @@ pub fn scaffold_project(target_dir: &Path, name: &str) -> Result<(), Box<dyn std
 name = "{name}"
 version = "0.1.0"
 edition = "2021"
-
+{workspace_section}
 [dependencies]
 {yav_dep}
 axum = "0.8"
 tokio = {{ version = "1", features = ["full"] }}
 tracing = "0.1"
 tracing-subscriber = {{ version = "0.3", features = ["env-filter"] }}
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
 "#
     );
     std::fs::write(target_dir.join("Cargo.toml"), cargo_toml)?;
@@ -113,12 +150,20 @@ async fn main() {
     // Initialize tracing
     tracing_subscriber::fmt::init();
 
+    // Read PORT from environment (e.g. Render, Railway, Fly.io, Heroku) or default to 3000
+    let port = std::env::var("PORT")
+        .ok()
+        .and_then(|p| p.parse::<u16>().ok())
+        .unwrap_or(3000);
+
     // YavApp automatically loads [server] configuration from package.yavml
     // and auto_routes! discovers and registers all routes under src/routes
-    let app = yav::server::YavApp::new().static_dir("public");
+    let app = yav::server::YavApp::new()
+        .port(port)
+        .static_dir("public");
     let app = yav::auto_routes!(app);
 
-    println!("🚀 Yav server running at http://{}:{}", app.host, app.port);
+    println!("  ➜  Local:   http://{}:{}", app.host, app.port);
     app.serve().await.unwrap();
 }
 "#;
@@ -131,10 +176,9 @@ pub use app_layout::*;
 "#;
     std::fs::write(target_dir.join("src/layouts/mod.rs"), layouts_mod)?;
 
-    let app_layout_rs = r##"//! Default application layout with navigation and footer.
+    let app_layout_rs = r##"//! Minimal Editorial Blueprint application shell.
 
 use yav::prelude::*;
-use yav::icons::{render_icon, IconSize};
 
 #[derive(Clone, Default)]
 pub struct AppLayoutProps {
@@ -143,84 +187,48 @@ pub struct AppLayoutProps {
 
 #[component]
 pub fn AppLayout(props: AppLayoutProps) -> Node {
-    let anti_fouc = anti_fouc_script();
-
     rsx! {
-        <div class="min-h-screen bg-[#fafafa] text-zinc-900 antialiased selection:bg-amber-500 selection:text-white dark:bg-[#0c0c0e] dark:text-zinc-100 flex flex-col justify-between font-sans">
-            {anti_fouc}
+        <div class="page-frame min-h-screen flex flex-col justify-between relative overflow-hidden">
+            <Head>
+                <meta name="theme-color" content="#0b0b0c" />
+                <link rel="icon" type="image/svg+xml" href="/public/favicon.svg" />
+                <link rel="alternate icon" type="image/x-icon" href="/favicon.ico" />
+                <link rel="preconnect" href="https://fonts.googleapis.com" />
+                <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+                <link href="https://fonts.googleapis.com/css2?family=Geist:wght@300..800&family=Geist+Mono:wght@400..700&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet" />
+                <link rel="stylesheet" href="/public/styles.css" />
+            </Head>
 
-            <header class="sticky top-0 z-50 w-full border-b border-zinc-200/80 bg-white/90 backdrop-blur-md dark:border-zinc-800/80 dark:bg-[#0c0c0e]/90 transition-colors">
-                <div class="mx-auto flex h-14 max-w-4xl items-center justify-between px-6">
-                    <div class="flex items-center gap-6">
-                        <a href="/" class="flex items-center gap-2.5 hover:opacity-90 transition-opacity">
-                            <img src="/public/favicon.svg" class="h-6 w-6" alt="Yav logo" />
-                            <span class="font-bold tracking-tight text-zinc-900 dark:text-white text-base">"yav"</span>
-                            <span class="rounded bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 px-1.5 py-0.5 text-[11px] font-mono font-medium">"v0.1.0"</span>
-                        </a>
+            <div class="bp-grid" aria-hidden="true"></div>
+            <div class="rails" aria-hidden="true"></div>
 
-                        <nav class="hidden sm:flex items-center gap-5 text-sm text-zinc-600 dark:text-zinc-400 font-medium">
-                            <a href="/" class="hover:text-zinc-900 dark:hover:text-white transition-colors flex items-center gap-1.5">
-                                {render_icon("home", IconSize::Sm, Some("w-3.5 h-3.5 opacity-70"), None)}
-                                <span>"Overview"</span>
-                            </a>
-                            <a href="/about" class="hover:text-zinc-900 dark:hover:text-white transition-colors flex items-center gap-1.5">
-                                {render_icon("layers", IconSize::Sm, Some("w-3.5 h-3.5 opacity-70"), None)}
-                                <span>"Architecture"</span>
-                            </a>
-                        </nav>
-                    </div>
-
-                    <div class="flex items-center gap-3">
-                        <button
-                            onclick="navigator.clipboard.writeText('http://127.0.0.1:3000'); const el=this.querySelector('.copy-txt'); el.innerText='copied!'; setTimeout(()=>el.innerText='127.0.0.1:3000', 1200);"
-                            class="hidden sm:inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-zinc-100 hover:bg-zinc-200/80 dark:bg-zinc-800/80 dark:hover:bg-zinc-700/80 text-[11px] font-mono text-zinc-600 dark:text-zinc-300 transition-colors cursor-pointer border border-zinc-200 dark:border-zinc-700/60"
-                            title="Click to copy local URL"
-                        >
-                            <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
-                            <span class="copy-txt">"127.0.0.1:3000"</span>
-                            {render_icon("copy", IconSize::Sm, Some("w-3 h-3 opacity-60 ml-0.5"), None)}
-                        </button>
-
-                        <a
-                            href="https://github.com/isaacvay/yav.rs"
-                            target="_blank"
-                            rel="noreferrer"
-                            class="inline-flex items-center gap-1.5 text-xs text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white transition-colors font-mono"
-                        >
-                            {render_icon("minimal:github", IconSize::Sm, Some("w-3.5 h-3.5"), None)}
-                            <span>"GitHub"</span>
-                            {render_icon("external-link", IconSize::Sm, Some("w-2.5 h-2.5 opacity-60"), None)}
-                        </a>
-                        <div class="border-l border-zinc-200 dark:border-zinc-800 pl-3">
-                            <ThemeToggle />
-                        </div>
-                    </div>
-                </div>
-            </header>
-
-            <main class="flex-grow max-w-4xl mx-auto w-full px-6 py-10 sm:py-14">
+            <main class="flex-1 flex flex-col items-center justify-center px-6 py-16 relative z-10">
                 {props.children}
             </main>
 
-            <footer class="border-t border-zinc-200 dark:border-zinc-800/80 py-8 text-xs text-zinc-500 dark:text-zinc-400">
-                <div class="mx-auto flex max-w-4xl flex-col sm:flex-row items-center justify-between gap-4 px-6">
-                    <div class="flex items-center gap-2">
-                        <img src="/public/favicon-flat.svg" class="h-3.5 w-3.5 opacity-70" alt="Yav" />
-                        <span class="font-medium text-zinc-700 dark:text-zinc-300">"yav.rs"</span>
-                        <span>"•"</span>
-                        <span>"High-Velocity Rust Web Framework"</span>
-                    </div>
-                    <div class="flex items-center gap-5 font-mono">
-                        <a href="https://github.com/isaacvay/yav.rs" target="_blank" rel="noreferrer" class="hover:underline flex items-center gap-1">
-                            {render_icon("minimal:github", IconSize::Sm, Some("w-3 h-3 opacity-70"), None)}
-                            <span>"GitHub"</span>
-                        </a>
-                        <a href="/about" class="hover:underline flex items-center gap-1">
-                            {render_icon("layers", IconSize::Sm, Some("w-3 h-3 opacity-70"), None)}
-                            <span>"Architecture"</span>
-                        </a>
-                        <span>"MIT License"</span>
-                    </div>
+            <footer class="border-t border-rule py-5 px-6 relative z-10 bg-ink/80 backdrop-blur-sm">
+                <div class="wrap flex flex-wrap items-center justify-center gap-x-8 gap-y-2 text-xs font-mono text-mute">
+                    <a href="/" class="hover:text-paper transition-colors inline-flex items-center gap-1.5">
+                        <span class="text-oxide">"01"</span>
+                        <span>"Home"</span>
+                    </a>
+                    <a href="/about" class="hover:text-paper transition-colors inline-flex items-center gap-1.5">
+                        <span class="text-oxide">"02"</span>
+                        <span>"Architecture"</span>
+                    </a>
+                    <a href="/health" class="hover:text-paper transition-colors inline-flex items-center gap-1.5">
+                        <span class="dot dot-ok"></span>
+                        <span>"Health JSON"</span>
+                    </a>
+                    <a
+                        href="https://github.com/isaacvay/yav.rs"
+                        target="_blank"
+                        rel="noreferrer"
+                        class="hover:text-paper transition-colors inline-flex items-center gap-1"
+                    >
+                        <span>"Go to yav.rs"</span>
+                        <span class="text-dim">"→"</span>
+                    </a>
                 </div>
             </footer>
         </div>
@@ -231,549 +239,554 @@ pub fn AppLayout(props: AppLayoutProps) -> Node {
 
     // 6. Generate src/routes/mod.rs
     let routes_mod = r#"pub mod about;
+pub mod health;
 pub mod index;
+pub mod not_found;
 "#;
     std::fs::write(target_dir.join("src/routes/mod.rs"), routes_mod)?;
 
-    // 7. Generate src/routes/index.rs
+    // 7. Generate src/routes/index.rs (Minimal Next.js-style starter in Editorial Blueprint)
     let index_rs = r##"use yav::prelude::*;
-use yav::icons::{render_icon, IconSize};
 use axum::extract::Request;
 use crate::layouts::*;
 
 pub async fn index(_req: Request) -> yav::server::HtmlPage {
     let page = rsx! {
         <AppLayout>
-            <div class="space-y-12">
-                // 1. Hero Section
-                <div class="space-y-4">
-                    <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/60 text-xs font-mono text-emerald-700 dark:text-emerald-400">
-                        {render_icon("terminal", IconSize::Sm, Some("w-3.5 h-3.5 text-emerald-500"), None)}
-                        <span>"dev server listening on 127.0.0.1:3000"</span>
+            <div class="w-full max-w-lg space-y-8">
+                // Brand Mark
+                <div class="flex items-center justify-between">
+                    <div class="brand">
+                        <img src="/public/favicon.svg" class="w-7 h-7" alt="Yav logo" />
+                        <span class="text-lg tracking-tight">"yav.rs"</span>
+                        <span class="tag">"v0.1.4"</span>
                     </div>
-
-                    <h1 class="text-3xl sm:text-4xl font-bold tracking-tight text-zinc-900 dark:text-zinc-50">
-                        "Your Yav application is ready."
-                    </h1>
-
-                    <p class="text-base text-zinc-600 dark:text-zinc-400 max-w-2xl leading-relaxed">
-                        "Full-stack Rust with Axum 0.8 and RSX templates. Edit "
-                        <code class="px-1.5 py-0.5 rounded bg-zinc-200/70 dark:bg-zinc-800 font-mono text-xs text-zinc-900 dark:text-zinc-100 border border-zinc-300/80 dark:border-zinc-700">
-                            "src/routes/index.rs"
-                        </code>
-                        " to start building your user interface."
-                    </p>
+                    <span class="chip">
+                        <span class="dot dot-ok"></span>
+                        <span>"127.0.0.1:3000"</span>
+                    </span>
                 </div>
 
-                // 2. Interactive Workbench (Dual Tab: Live Preview + RSX Source)
-                <div class="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/60 shadow-sm overflow-hidden">
-                    <div class="px-5 py-3 border-b border-zinc-200 dark:border-zinc-800 bg-zinc-50/80 dark:bg-zinc-900/80 flex items-center justify-between flex-wrap gap-2">
-                        <div class="flex items-center gap-1.5 p-1 rounded-lg bg-zinc-200/60 dark:bg-zinc-800 text-xs font-medium">
-                            <button
-                                id="tab-btn-preview"
-                                onclick="document.getElementById('tab-preview').classList.remove('hidden'); document.getElementById('tab-code').classList.add('hidden'); this.className='inline-flex items-center gap-1.5 px-3 py-1 rounded-md bg-white dark:bg-zinc-900 text-zinc-900 dark:text-white shadow-xs font-medium cursor-pointer transition-all'; document.getElementById('tab-btn-code').className='inline-flex items-center gap-1.5 px-3 py-1 rounded-md text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white cursor-pointer transition-all';"
-                                class="inline-flex items-center gap-1.5 px-3 py-1 rounded-md bg-white dark:bg-zinc-900 text-zinc-900 dark:text-white shadow-xs font-medium cursor-pointer transition-all"
-                            >
-                                {render_icon("play", IconSize::Sm, Some("w-3.5 h-3.5"), None)}
-                                <span>"Live Preview"</span>
-                            </button>
-                            <button
-                                id="tab-btn-code"
-                                onclick="document.getElementById('tab-code').classList.remove('hidden'); document.getElementById('tab-preview').classList.add('hidden'); this.className='inline-flex items-center gap-1.5 px-3 py-1 rounded-md bg-white dark:bg-zinc-900 text-zinc-900 dark:text-white shadow-xs font-medium cursor-pointer transition-all'; document.getElementById('tab-btn-preview').className='inline-flex items-center gap-1.5 px-3 py-1 rounded-md text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white cursor-pointer transition-all';"
-                                class="inline-flex items-center gap-1.5 px-3 py-1 rounded-md text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white cursor-pointer transition-all"
-                            >
-                                {render_icon("code", IconSize::Sm, Some("w-3.5 h-3.5"), None)}
-                                <span>"RSX Source"</span>
-                            </button>
-                        </div>
+                // Steps Card (Editorial Blueprint Plate)
+                <div class="plate">
+                    <span class="tick tl"></span>
+                    <span class="tick tr"></span>
+                    <span class="tick bl"></span>
+                    <span class="tick br"></span>
 
-                        <div class="flex items-center gap-2">
-                            <span class="text-xs font-mono text-zinc-400">"src/routes/index.rs"</span>
-                        </div>
-                    </div>
-
-                    // Tab 1: Live Interactive Preview
-                    <div id="tab-preview" class="p-6 space-y-6">
-                        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-lg bg-zinc-50 dark:bg-zinc-950/60 border border-zinc-200/80 dark:border-zinc-800/80">
-                            <div>
-                                <div class="flex items-center gap-1.5">
-                                    {render_icon("cpu", IconSize::Sm, Some("w-4 h-4 text-amber-500"), None)}
-                                    <span class="text-xs font-mono uppercase tracking-wider text-zinc-400 dark:text-zinc-500 font-medium">
-                                        "Client Island"
-                                    </span>
-                                </div>
-                                <h3 class="text-sm font-semibold text-zinc-900 dark:text-zinc-100 mt-0.5">
-                                    "Interactive State Counter"
-                                </h3>
-                                <p class="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
-                                    "Test reactive micro-interactions without hydration penalty"
-                                </p>
-                            </div>
-
-                            <div class="flex items-center gap-2">
-                                <button
-                                    onclick="const el = document.getElementById('workbench-count'); el.innerText = Math.max(0, parseInt(el.innerText) - 1);"
-                                    class="w-8 h-8 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-700 font-mono text-sm font-semibold text-zinc-800 dark:text-zinc-200 flex items-center justify-center transition-colors cursor-pointer active:scale-95"
-                                    aria-label="decrement"
-                                >
-                                    "-"
-                                </button>
-
-                                <div class="px-4 py-1.5 rounded-lg bg-white dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 font-mono text-sm font-bold text-zinc-900 dark:text-white min-w-[70px] text-center shadow-xs">
-                                    <span id="workbench-count">"0"</span>
-                                </div>
-
-                                <button
-                                    onclick="const el = document.getElementById('workbench-count'); el.innerText = parseInt(el.innerText) + 1;"
-                                    class="w-8 h-8 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-700 font-mono text-sm font-semibold text-zinc-800 dark:text-zinc-200 flex items-center justify-center transition-colors cursor-pointer active:scale-95"
-                                    aria-label="increment"
-                                >
-                                    "+"
-                                </button>
-
-                                <button
-                                    onclick="document.getElementById('workbench-count').innerText = '0';"
-                                    class="px-2.5 py-1.5 rounded-lg text-xs font-mono text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white transition-colors cursor-pointer"
-                                >
-                                    "Reset"
-                                </button>
-                            </div>
-                        </div>
-
-                        // Live Greeting Input
-                        <div class="p-4 rounded-lg bg-zinc-50 dark:bg-zinc-950/60 border border-zinc-200/80 dark:border-zinc-800/80 space-y-3">
-                            <div class="flex items-center justify-between">
-                                <div class="flex items-center gap-1.5">
-                                    {render_icon("sparkles", IconSize::Sm, Some("w-4 h-4 text-amber-500"), None)}
-                                    <span class="text-xs font-mono uppercase tracking-wider text-zinc-400 dark:text-zinc-500 font-medium">
-                                        "Reactive Binding"
-                                    </span>
-                                </div>
-                                <span class="text-[11px] font-mono text-zinc-400">"Instant DOM update"</span>
-                            </div>
-
-                            <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
-                                <input
-                                    type="text"
-                                    id="greeting-input"
-                                    placeholder="Type your name..."
-                                    oninput="document.getElementById('greeting-target').innerText = this.value || 'Rust Developer';"
-                                    class="flex-1 px-3 py-2 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-xs text-zinc-900 dark:text-white placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-amber-500/50"
-                                />
-                                <div class="px-4 py-2 rounded-lg bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/60 text-xs font-medium text-amber-800 dark:text-amber-300">
-                                    <span>"Hello, "</span>
-                                    <span id="greeting-target" class="font-bold">"Rust Developer"</span>
-                                    <span>"!"</span>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    // Tab 2: RSX Source Code
-                    <div id="tab-code" class="hidden">
-                        <div class="p-5 font-mono text-xs overflow-x-auto bg-[#121215] text-zinc-300 leading-relaxed border-t border-zinc-800/40">
-                            <span class="text-zinc-500">"// src/routes/index.rs"</span><br />
-                            <span class="text-amber-400">"use"</span>" yav::prelude::*;"<br />
-                            <span class="text-amber-400">"use"</span>" axum::extract::Request;"<br /><br />
-                            <span class="text-amber-400">"pub async fn"</span>" index(_req: Request) -> yav::server::HtmlPage {"<br />
-                            "    let page = "<span class="text-sky-400">"rsx!"</span>" {"<br />
-                            "        <AppLayout>"<br />
-                            "            <h1 class=\"text-3xl font-bold\">\"Your Yav application is ready.\"</h1>"<br />
-                            "            <p>\"Full-stack Rust with Axum 0.8 and RSX templates.\"</p>"<br />
-                            "        </AppLayout>"<br />
-                            "    };"<br /><br />
-                            "    yav::server::HtmlPage::new(page)"<br />
-                            "        .title(\"Yav — Rust Web Framework\")"<br />
-                            "        .favicon(\"/public/favicon.svg\")"<br />
-                            "}"
-                        </div>
-                    </div>
+                    <ol class="p-6 space-y-3.5 font-mono text-xs sm:text-sm text-paper-2 leading-relaxed">
+                        <li class="flex items-start gap-3">
+                            <span class="text-oxide select-none">"1."</span>
+                            <span>
+                                "Get started by editing "
+                                <code class="px-1.5 py-0.5 bg-sunk border border-rule text-paper">"src/routes/index.rs"</code>
+                                "."
+                            </span>
+                        </li>
+                        <li class="flex items-start gap-3">
+                            <span class="text-oxide select-none">"2."</span>
+                            <span>
+                                "Save and see your changes instantly with "
+                                <code class="px-1.5 py-0.5 bg-sunk border border-rule text-oxide">"yav dev"</code>
+                                "."
+                            </span>
+                        </li>
+                    </ol>
                 </div>
 
-                // 3. Project Anatomy (Interactive File Explorer)
-                <div class="space-y-4">
-                    <div class="flex items-center justify-between">
-                        <h2 class="text-xs font-mono uppercase tracking-wider text-zinc-500 dark:text-zinc-400 font-semibold">
-                            "Project Anatomy"
-                        </h2>
-                        <span class="text-xs font-mono text-zinc-400">"5 core files"</span>
-                    </div>
-
-                    <div class="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/30 divide-y divide-zinc-100 dark:divide-zinc-800/60 overflow-hidden font-mono text-xs shadow-xs">
-                        <div class="p-4 flex items-center justify-between hover:bg-zinc-50/80 dark:hover:bg-zinc-800/40 transition-colors">
-                            <div class="flex items-center gap-3">
-                                {render_icon("file-code", IconSize::Sm, Some("w-4 h-4 text-amber-500"), None)}
-                                <span class="text-amber-600 dark:text-amber-400 font-semibold">"src/routes/index.rs"</span>
-                                <span class="text-zinc-400">"→"</span>
-                                <span class="text-zinc-700 dark:text-zinc-300 font-sans text-xs">"Home route handler returning HtmlPage"</span>
-                            </div>
-                            <span class="px-2 py-0.5 rounded bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400 font-sans text-[11px] font-semibold">"GET / (Current)"</span>
-                        </div>
-
-                        <div class="p-4 flex items-center justify-between hover:bg-zinc-50/80 dark:hover:bg-zinc-800/40 transition-colors">
-                            <div class="flex items-center gap-3">
-                                {render_icon("file-code", IconSize::Sm, Some("w-4 h-4 text-amber-500"), None)}
-                                <span class="text-amber-600 dark:text-amber-400 font-semibold">"src/routes/about.rs"</span>
-                                <span class="text-zinc-400">"→"</span>
-                                <a href="/about" class="text-zinc-700 dark:text-zinc-300 font-sans text-xs hover:underline flex items-center gap-1">
-                                    "Architecture specifications and pipeline breakdown"
-                                </a>
-                            </div>
-                            <a href="/about" class="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-800 dark:text-zinc-200 text-xs font-sans font-medium transition-colors">
-                                <span>"GET /about"</span>
-                                {render_icon("arrow-right", IconSize::Sm, Some("w-3 h-3"), None)}
-                            </a>
-                        </div>
-
-                        <div class="p-4 flex items-center justify-between hover:bg-zinc-50/80 dark:hover:bg-zinc-800/40 transition-colors">
-                            <div class="flex items-center gap-3">
-                                {render_icon("system:layout", IconSize::Sm, Some("w-4 h-4 text-sky-500"), None)}
-                                <span class="text-zinc-800 dark:text-zinc-300 font-semibold">"src/layouts/app_layout.rs"</span>
-                                <span class="text-zinc-400">"→"</span>
-                                <span class="text-zinc-700 dark:text-zinc-300 font-sans text-xs">"Shared application frame, navigation, and theme switch"</span>
-                            </div>
-                            <span class="text-zinc-400 font-sans text-xs">"Layout"</span>
-                        </div>
-
-                        <div class="p-4 flex items-center justify-between hover:bg-zinc-50/80 dark:hover:bg-zinc-800/40 transition-colors">
-                            <div class="flex items-center gap-3">
-                                {render_icon("play", IconSize::Sm, Some("w-4 h-4 text-emerald-500"), None)}
-                                <span class="text-zinc-800 dark:text-zinc-300 font-semibold">"src/main.rs"</span>
-                                <span class="text-zinc-400">"→"</span>
-                                <span class="text-zinc-700 dark:text-zinc-300 font-sans text-xs">"Axum router registration, static asset serving, and server listen"</span>
-                            </div>
-                            <span class="text-zinc-400 font-sans text-xs">"Entrypoint"</span>
-                        </div>
-
-                        <div class="p-4 flex items-center justify-between hover:bg-zinc-50/80 dark:hover:bg-zinc-800/40 transition-colors">
-                            <div class="flex items-center gap-3">
-                                <img src="/public/yav-document.png" class="w-4 h-4 object-contain shrink-0" alt="package.yavml icon" />
-                                <span class="text-zinc-800 dark:text-zinc-300 font-semibold">"package.yavml"</span>
-                                <span class="text-zinc-400">"→"</span>
-                                <span class="text-zinc-700 dark:text-zinc-300 font-sans text-xs">"Project manifest for port, host, and Tailwind compiler"</span>
-                            </div>
-                            <span class="text-zinc-400 font-sans text-xs">"Manifest"</span>
-                        </div>
-                    </div>
-                </div>
-
-                // 4. CLI Workflow Commands
-                <div class="space-y-4">
-                    <h2 class="text-xs font-mono uppercase tracking-wider text-zinc-500 dark:text-zinc-400 font-semibold">
-                        "Development Workflow"
-                    </h2>
-
-                    <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                        <button
-                            onclick="navigator.clipboard.writeText('yav dev'); const el = this.querySelector('.cmd-copy'); el.innerText='copied!'; setTimeout(()=>el.innerText='click to copy', 1500);"
-                            class="text-left rounded-xl border border-zinc-200 dark:border-zinc-800 p-4 bg-white dark:bg-zinc-900/40 hover:border-zinc-300 dark:hover:border-zinc-700 transition-all cursor-pointer group shadow-xs"
-                        >
-                            <div class="flex items-center justify-between">
-                                <div class="flex items-center gap-2">
-                                    {render_icon("terminal", IconSize::Sm, Some("w-4 h-4 text-amber-500"), None)}
-                                    <span class="font-mono text-xs font-bold text-zinc-900 dark:text-zinc-100">
-                                        "$ yav dev"
-                                    </span>
-                                </div>
-                                <span class="cmd-copy text-[10px] font-mono text-zinc-400 group-hover:text-amber-500 transition-colors flex items-center gap-1">
-                                    {render_icon("copy", IconSize::Sm, Some("w-3 h-3"), None)}
-                                    <span>"copy"</span>
-                                </span>
-                            </div>
-                            <p class="text-xs text-zinc-500 dark:text-zinc-400 leading-relaxed font-sans mt-2">
-                                "Starts dev server with automatic CSS rebuilds and live reload."
-                            </p>
-                        </button>
-
-                        <button
-                            onclick="navigator.clipboard.writeText('yav build --release'); const el = this.querySelector('.cmd-copy'); el.innerText='copied!'; setTimeout(()=>el.innerText='click to copy', 1500);"
-                            class="text-left rounded-xl border border-zinc-200 dark:border-zinc-800 p-4 bg-white dark:bg-zinc-900/40 hover:border-zinc-300 dark:hover:border-zinc-700 transition-all cursor-pointer group shadow-xs"
-                        >
-                            <div class="flex items-center justify-between">
-                                <div class="flex items-center gap-2">
-                                    {render_icon("package", IconSize::Sm, Some("w-4 h-4 text-sky-500"), None)}
-                                    <span class="font-mono text-xs font-bold text-zinc-900 dark:text-zinc-100">
-                                        "$ yav build --release"
-                                    </span>
-                                </div>
-                                <span class="cmd-copy text-[10px] font-mono text-zinc-400 group-hover:text-amber-500 transition-colors flex items-center gap-1">
-                                    {render_icon("copy", IconSize::Sm, Some("w-3 h-3"), None)}
-                                    <span>"copy"</span>
-                                </span>
-                            </div>
-                            <p class="text-xs text-zinc-500 dark:text-zinc-400 leading-relaxed font-sans mt-2">
-                                "Compiles a single, optimized standalone native binary."
-                            </p>
-                        </button>
-
-                        <button
-                            onclick="navigator.clipboard.writeText('cargo test'); const el = this.querySelector('.cmd-copy'); el.innerText='copied!'; setTimeout(()=>el.innerText='click to copy', 1500);"
-                            class="text-left rounded-xl border border-zinc-200 dark:border-zinc-800 p-4 bg-white dark:bg-zinc-900/40 hover:border-zinc-300 dark:hover:border-zinc-700 transition-all cursor-pointer group shadow-xs"
-                        >
-                            <div class="flex items-center justify-between">
-                                <div class="flex items-center gap-2">
-                                    {render_icon("check-circle", IconSize::Sm, Some("w-4 h-4 text-emerald-500"), None)}
-                                    <span class="font-mono text-xs font-bold text-zinc-900 dark:text-zinc-100">
-                                        "$ cargo test"
-                                    </span>
-                                </div>
-                                <span class="cmd-copy text-[10px] font-mono text-zinc-400 group-hover:text-amber-500 transition-colors flex items-center gap-1">
-                                    {render_icon("copy", IconSize::Sm, Some("w-3 h-3"), None)}
-                                    <span>"copy"</span>
-                                </span>
-                            </div>
-                            <p class="text-xs text-zinc-500 dark:text-zinc-400 leading-relaxed font-sans mt-2">
-                                "Runs your integration tests and RSX compile-time verification."
-                            </p>
-                        </button>
-                    </div>
+                // Primary Actions
+                <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+                    <a
+                        href="https://github.com/isaacvay/yav.rs"
+                        target="_blank"
+                        rel="noreferrer"
+                        class="btn btn-oxide justify-center"
+                    >
+                        <span>"Read Documentation"</span>
+                        <span>"↗"</span>
+                    </a>
+                    <a href="/about" class="btn btn-line justify-center">
+                        <span>"Inspect Architecture"</span>
+                        <span>"→"</span>
+                    </a>
                 </div>
             </div>
         </AppLayout>
     };
 
-    let head_extra = r#"<link rel="icon" type="image/svg+xml" href="/public/favicon.svg">
-<link rel="alternate icon" type="image/x-icon" href="/favicon.ico">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-<script src="https://cdn.tailwindcss.com"></script>
-<script>
-  tailwind.config = {
-    darkMode: 'class',
-    theme: {
-      extend: {
-        fontFamily: {
-          sans: ['Inter', 'system-ui', '-apple-system', 'sans-serif'],
-          mono: ['JetBrains Mono', 'monospace'],
-        },
-      },
-    },
-  }
-</script>
-<link rel="stylesheet" href="/public/styles.css" />"#;
-
     yav::server::HtmlPage::new(page)
         .title("Yav — Rust Web Framework")
-        .head_extra(head_extra)
         .favicon("/public/favicon.svg")
 }
 "##;
     std::fs::write(target_dir.join("src/routes/index.rs"), index_rs)?;
 
-    // 8. Generate src/routes/about.rs
+    // 8. Generate src/routes/about.rs (Minimal Architecture overview)
     let about_rs = r##"use yav::prelude::*;
-use yav::icons::{render_icon, IconSize};
 use axum::extract::Request;
 use crate::layouts::*;
 
 pub async fn about(_req: Request) -> yav::server::HtmlPage {
     let page = rsx! {
         <AppLayout>
-            <div class="space-y-12">
-                <div class="space-y-3">
-                    <a
-                        href="/"
-                        class="inline-flex items-center gap-1.5 text-xs font-mono text-zinc-500 hover:text-zinc-900 dark:hover:text-white transition-colors"
-                    >
-                        {render_icon("arrow-left", IconSize::Sm, Some("w-3.5 h-3.5"), None)}
-                        <span>"Back to Overview"</span>
-                    </a>
-
-                    <h1 class="text-3xl font-bold tracking-tight text-zinc-900 dark:text-zinc-50">
-                        "Architecture & Runtime"
+            <div class="w-full max-w-lg space-y-6">
+                <div class="space-y-1.5">
+                    <span class="label-oxide">"02 / Architecture"</span>
+                    <h1 class="text-2xl font-semibold tracking-tight text-paper">
+                        "Single-binary Rust SSR. "
+                        <span class="serif text-oxide">"Zero VDOM."</span>
                     </h1>
-                    <p class="text-base text-zinc-600 dark:text-zinc-400 max-w-2xl leading-relaxed">
-                        "Yav combines Axum 0.8 HTTP routing with compile-time RSX macro templates and the standalone Tailwind compiler into a single native binary."
-                    </p>
                 </div>
 
-                // Request Flow
-                <div class="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/40 p-6 space-y-4 shadow-xs">
-                    <div class="flex items-center justify-between">
-                        <div class="flex items-center gap-2">
-                            {render_icon("cpu", IconSize::Sm, Some("w-4 h-4 text-amber-500"), None)}
-                            <h2 class="text-xs font-mono uppercase tracking-wider text-zinc-500 dark:text-zinc-400 font-semibold">
-                                "Request Pipeline"
-                            </h2>
-                        </div>
-                        <span class="text-xs font-mono text-zinc-400">"Sub-millisecond processing"</span>
-                    </div>
+                <div class="plate">
+                    <span class="tick tl"></span>
+                    <span class="tick tr"></span>
+                    <span class="tick bl"></span>
+                    <span class="tick br"></span>
 
-                    <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs font-mono">
-                        <div class="p-4 rounded-lg bg-zinc-50 dark:bg-zinc-950/60 border border-zinc-200/80 dark:border-zinc-800/80 flex flex-col justify-between">
-                            <div class="flex items-center justify-between">
-                                <span class="text-[10px] text-zinc-400 uppercase tracking-wider font-semibold">"Stage 01"</span>
-                                {render_icon("server", IconSize::Sm, Some("w-3.5 h-3.5 text-zinc-400"), None)}
-                            </div>
-                            <div class="my-2.5">
-                                <span class="font-semibold text-zinc-900 dark:text-zinc-100 text-sm">"Axum Router"</span>
-                                <p class="text-[11px] text-zinc-500 font-sans mt-1 leading-relaxed">
-                                    "Matchit radix tree resolves route paths in nanoseconds."
-                                </p>
-                            </div>
-                            <span class="text-[10px] text-zinc-400">"HTTP / TCP Socket"</span>
+                    <div class="divide-y divide-rule font-mono text-xs bg-sunk">
+                        <div class="px-5 py-3.5 flex items-center justify-between">
+                            <span class="text-mute">"HTTP Router"</span>
+                            <span class="text-paper">"Axum 0.8 & Tokio"</span>
                         </div>
-
-                        <div class="p-4 rounded-lg bg-zinc-50 dark:bg-zinc-950/60 border border-zinc-200/80 dark:border-zinc-800/80 flex flex-col justify-between">
-                            <div class="flex items-center justify-between">
-                                <span class="text-[10px] text-amber-500 uppercase tracking-wider font-semibold">"Stage 02"</span>
-                                {render_icon("code", IconSize::Sm, Some("w-3.5 h-3.5 text-amber-500"), None)}
-                            </div>
-                            <div class="my-2.5">
-                                <span class="font-semibold text-amber-600 dark:text-amber-400 text-sm">"RSX Streaming Buffer"</span>
-                                <p class="text-[11px] text-zinc-500 font-sans mt-1 leading-relaxed">
-                                    "Zero-allocation streaming HTML generation verified at compile time."
-                                </p>
-                            </div>
-                            <span class="text-[10px] text-zinc-400">"rustc verified"</span>
+                        <div class="px-5 py-3.5 flex items-center justify-between">
+                            <span class="text-mute">"Templates"</span>
+                            <span class="text-oxide">"Compile-time rsx! {}"</span>
                         </div>
-
-                        <div class="p-4 rounded-lg bg-zinc-50 dark:bg-zinc-950/60 border border-zinc-200/80 dark:border-zinc-800/80 flex flex-col justify-between">
-                            <div class="flex items-center justify-between">
-                                <span class="text-[10px] text-emerald-500 uppercase tracking-wider font-semibold">"Stage 03"</span>
-                                {render_icon("zap", IconSize::Sm, Some("w-3.5 h-3.5 text-emerald-500"), None)}
-                            </div>
-                            <div class="my-2.5">
-                                <span class="font-semibold text-emerald-600 dark:text-emerald-400 text-sm">"Native Byte Stream"</span>
-                                <p class="text-[11px] text-zinc-500 font-sans mt-1 leading-relaxed">
-                                    "Pre-escaped bytes transmitted directly to the client with optional gzip/brotli."
-                                </p>
-                            </div>
-                            <span class="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium">"Zero Node.js Overhead"</span>
+                        <div class="px-5 py-3.5 flex items-center justify-between">
+                            <span class="text-mute">"Styling"</span>
+                            <span class="text-paper">"Standalone Tailwind CLI"</span>
+                        </div>
+                        <div class="px-5 py-3.5 flex items-center justify-between">
+                            <span class="text-mute">"Client JS"</span>
+                            <span class="text-ok">"0 KB Hydration"</span>
                         </div>
                     </div>
                 </div>
 
-                // Technical Specifications
-                <div class="space-y-4">
-                    <div class="flex items-center gap-2">
-                        {render_icon("layers", IconSize::Sm, Some("w-4 h-4 text-zinc-400"), None)}
-                        <h2 class="text-xs font-mono uppercase tracking-wider text-zinc-500 dark:text-zinc-400 font-semibold">
-                            "System Composition"
-                        </h2>
-                    </div>
-
-                    <div class="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/30 divide-y divide-zinc-100 dark:divide-zinc-800/60 text-xs overflow-hidden shadow-xs">
-                        <div class="px-5 py-3.5 flex items-center justify-between">
-                            <div class="flex items-center gap-2.5 text-zinc-600 dark:text-zinc-400 font-medium">
-                                {render_icon("globe", IconSize::Sm, Some("w-3.5 h-3.5 text-zinc-400"), None)}
-                                <span>"Core HTTP Framework"</span>
-                            </div>
-                            <span class="font-mono font-medium text-zinc-900 dark:text-white">"Axum 0.8 & Hyper 1.x"</span>
-                        </div>
-                        <div class="px-5 py-3.5 flex items-center justify-between">
-                            <div class="flex items-center gap-2.5 text-zinc-600 dark:text-zinc-400 font-medium">
-                                {render_icon("cpu", IconSize::Sm, Some("w-3.5 h-3.5 text-zinc-400"), None)}
-                                <span>"Asynchronous Runtime"</span>
-                            </div>
-                            <span class="font-mono font-medium text-zinc-900 dark:text-white">"Tokio Multi-threaded"</span>
-                        </div>
-                        <div class="px-5 py-3.5 flex items-center justify-between">
-                            <div class="flex items-center gap-2.5 text-zinc-600 dark:text-zinc-400 font-medium">
-                                {render_icon("code", IconSize::Sm, Some("w-3.5 h-3.5 text-zinc-400"), None)}
-                                <span>"Component Templating"</span>
-                            </div>
-                            <span class="font-mono font-medium text-zinc-900 dark:text-white">"yav-macros (rsx!)"</span>
-                        </div>
-                        <div class="px-5 py-3.5 flex items-center justify-between">
-                            <div class="flex items-center gap-2.5 text-zinc-600 dark:text-zinc-400 font-medium">
-                                {render_icon("system:layout", IconSize::Sm, Some("w-3.5 h-3.5 text-zinc-400"), None)}
-                                <span>"CSS Pipeline"</span>
-                            </div>
-                            <span class="font-mono font-medium text-zinc-900 dark:text-white">"Standalone Tailwind CLI"</span>
-                        </div>
-                        <div class="px-5 py-3.5 flex items-center justify-between">
-                            <div class="flex items-center gap-2.5 text-zinc-600 dark:text-zinc-400 font-medium">
-                                {render_icon("check-circle", IconSize::Sm, Some("w-3.5 h-3.5 text-emerald-500"), None)}
-                                <span>"Runtime Engine"</span>
-                            </div>
-                            <span class="font-mono font-medium text-emerald-600 dark:text-emerald-400">"None (Native Machine Code)"</span>
-                        </div>
-                    </div>
-                </div>
-
-                // Code Example: How to add a new route
-                <div class="space-y-4">
-                    <div class="flex items-center gap-2">
-                        {render_icon("terminal", IconSize::Sm, Some("w-4 h-4 text-zinc-400"), None)}
-                        <h2 class="text-xs font-mono uppercase tracking-wider text-zinc-500 dark:text-zinc-400 font-semibold">
-                            "Defining a New Route"
-                        </h2>
-                    </div>
-
-                    <div class="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-[#121215] text-zinc-300 p-5 font-mono text-xs overflow-x-auto shadow-xs leading-relaxed">
-                        <span class="text-zinc-500">"// 1. Create src/routes/hello.rs"</span><br />
-                        <span class="text-amber-400">"use"</span>" yav::prelude::*;"<br />
-                        <span class="text-amber-400">"use"</span>" axum::extract::Path;"<br /><br />
-                        <span class="text-amber-400">"pub async fn"</span>" hello(Path(name): Path<String>) -> yav::server::HtmlPage {"<br />
-                        "    let page = "<span class="text-sky-400">"rsx!"</span>" {"<br />
-                        "        <AppLayout>"<br />
-                        "            <h1 class=\"text-2xl font-bold\">\"Hello, \" {name} \"!\"</h1>"<br />
-                        "        </AppLayout>"<br />
-                        "    };"<br />
-                        "    yav::server::HtmlPage::new(page)"<br />
-                        "}"
-                    </div>
+                <div>
+                    <a href="/" class="btn btn-line">
+                        <span>"← Back to Home"</span>
+                    </a>
                 </div>
             </div>
         </AppLayout>
     };
 
-    let head_extra = r#"<link rel="icon" type="image/svg+xml" href="/public/favicon.svg">
-<link rel="alternate icon" type="image/x-icon" href="/favicon.ico">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-<script src="https://cdn.tailwindcss.com"></script>
-<script>
-  tailwind.config = {
-    darkMode: 'class',
-    theme: {
-      extend: {
-        fontFamily: {
-          sans: ['Inter', 'system-ui', '-apple-system', 'sans-serif'],
-          mono: ['JetBrains Mono', 'monospace'],
-        },
-      },
-    },
-  }
-</script>
-<link rel="stylesheet" href="/public/styles.css" />"#;
-
     yav::server::HtmlPage::new(page)
-        .title("Architecture — Yav Framework")
-        .head_extra(head_extra)
+        .title("Architecture — Yav")
         .favicon("/public/favicon.svg")
 }
 "##;
     std::fs::write(target_dir.join("src/routes/about.rs"), about_rs)?;
+
+    // 8b. Generate src/routes/health.rs (production health check endpoint)
+    let health_rs = r#"use yav::prelude::*;
+use axum::response::Response;
+
+/// Production health check endpoint returning HTTP 200 with JSON status payload.
+/// Compatible with container orchestrators (Kubernetes, Docker), uptime monitors, and cloud hosts.
+pub async fn health() -> Response {
+    json_response(
+        StatusCode::OK,
+        &HealthStatus {
+            status: "ok",
+            service: "yav",
+            version: env!("CARGO_PKG_VERSION"),
+        },
+    )
+}
+"#;
+    std::fs::write(target_dir.join("src/routes/health.rs"), health_rs)?;
+
+    // 8c. Generate src/routes/not_found.rs (Minimal Next.js-style 404 page in Editorial Blueprint)
+    let not_found_rs = r##"use yav::prelude::*;
+use axum::extract::Request;
+use crate::layouts::*;
+
+/// Custom 404 Not Found fallback page.
+pub async fn not_found(_req: Request) -> yav::server::HtmlPage {
+    let page = rsx! {
+        <AppLayout>
+            <div class="w-full max-w-md text-center space-y-6">
+                <div class="inline-flex items-center gap-4 font-mono">
+                    <span class="text-2xl font-bold text-oxide pr-4 border-r border-rule">"404"</span>
+                    <span class="text-sm text-paper-2">"This page could not be found."</span>
+                </div>
+
+                <div>
+                    <a href="/" class="btn btn-line">
+                        <span>"← Back to Home"</span>
+                    </a>
+                </div>
+            </div>
+        </AppLayout>
+    };
+
+    yav::server::HtmlPage::new(page)
+        .status(axum::http::StatusCode::NOT_FOUND)
+        .title("404 — Page Not Found | Yav")
+        .favicon("/public/favicon.svg")
+}
+"##;
+    std::fs::write(target_dir.join("src/routes/not_found.rs"), not_found_rs)?;
 
     // 9. Generate src/components/mod.rs
     let components_mod = r#"//! Reusable UI components.
 "#;
     std::fs::write(target_dir.join("src/components/mod.rs"), components_mod)?;
 
-    // 10. Generate src/styles/app.css
-    let app_css = r#"@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+    // 10. Generate src/styles/app.css (Editorial Blueprint Design System)
+    let app_css = r#"@import url('https://fonts.googleapis.com/css2?family=Geist:wght@300..800&family=Geist+Mono:wght@400..700&family=Instrument+Serif:ital@0;1&display=swap');
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-@layer base {
-  body {
-    font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  }
+:root {
+  color-scheme: dark;
+  --ink: #0b0b0c;
+  --ink-2: #111112;
+  --ink-3: #171718;
+  --ink-sunk: #080809;
+  --paper: #ece9e3;
+  --paper-2: #c9c5bd;
+  --mute: #8d8982;
+  --dim: #5d5a55;
+  --faint: #3a3936;
+  --rule: rgba(236, 233, 227, 0.08);
+  --rule-2: rgba(236, 233, 227, 0.14);
+  --rule-3: rgba(236, 233, 227, 0.24);
+  --oxide: #e0592f;
+  --oxide-hi: #f07448;
+  --oxide-soft: rgba(224, 89, 47, 0.1);
+  --ok: #9cc69b;
+  --bad: #d77a6a;
+  --sans: 'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --mono: 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --serif: 'Instrument Serif', Georgia, serif;
+  --max: 1280px;
+  --pad: clamp(1.25rem, 3.5vw, 3rem);
+}
 
-  code, pre, .font-mono {
-    font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
-  }
+html {
+  background-color: var(--ink);
+  color: var(--paper);
+  font-family: var(--sans);
+  scroll-behavior: smooth;
+}
+
+body {
+  background-color: var(--ink);
+  color: var(--paper);
+  font-family: var(--sans);
+  overflow-x: hidden;
+  selection-background-color: var(--oxide);
+}
+
+::selection {
+  background: var(--oxide);
+  color: #fff;
+}
+
+.wrap {
+  max-width: var(--max);
+  margin-left: auto;
+  margin-right: auto;
+  padding-left: var(--pad);
+  padding-right: var(--pad);
+}
+
+.rails {
+  pointer-events: none;
+  position: fixed;
+  inset: 0;
+  z-index: 5;
+  max-width: var(--max);
+  margin: 0 auto;
+  border-left: 1px solid var(--rule);
+  border-right: 1px solid var(--rule);
+}
+
+.site-header {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  background: rgba(11, 11, 12, 0.84);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--rule);
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.625rem;
+  font-family: var(--mono);
+  font-weight: 600;
+  font-size: 0.9375rem;
+  color: var(--paper);
+}
+
+.brand .tag {
+  font-size: 0.6875rem;
+  font-weight: 500;
+  color: var(--mute);
+  padding: 0.1rem 0.4rem;
+  border: 1px solid var(--rule-2);
+  background: var(--ink-2);
+}
+
+.nav-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0 0.75rem;
+  height: 100%;
+  font-size: 0.8125rem;
+  color: var(--mute);
+  border-bottom: 2px solid transparent;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+.nav-link .num {
+  font-family: var(--mono);
+  font-size: 0.6875rem;
+  color: var(--dim);
+}
+
+.nav-link:hover,
+.nav-link[aria-current="page"] {
+  color: var(--paper);
+}
+
+.nav-link[aria-current="page"] {
+  border-bottom-color: var(--oxide);
+}
+
+.nav-link[aria-current="page"] .num {
+  color: var(--oxide);
+}
+
+.display {
+  font-family: var(--sans);
+  font-weight: 600;
+  font-size: clamp(2.5rem, 5.4vw, 4.5rem);
+  line-height: 0.98;
+  letter-spacing: -0.035em;
+  color: var(--paper);
+}
+
+.serif {
+  font-family: var(--serif);
+  font-style: italic;
+  font-weight: 400;
+}
+
+.lede {
+  font-size: clamp(1rem, 1.2vw, 1.125rem);
+  line-height: 1.65;
+  color: var(--paper-2);
+}
+
+.label {
+  font-family: var(--mono);
+  font-size: 0.6875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--mute);
+}
+
+.label-oxide {
+  font-family: var(--mono);
+  font-size: 0.6875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--oxide);
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.625rem 1.125rem;
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  font-weight: 500;
+  border: 1px solid transparent;
+  transition: all 0.15s ease;
+  cursor: pointer;
+}
+
+.btn-oxide {
+  background: var(--oxide);
+  color: #fff;
+  border-color: var(--oxide);
+}
+
+.btn-oxide:hover {
+  background: var(--oxide-hi);
+}
+
+.btn-line {
+  background: var(--ink-2);
+  color: var(--paper);
+  border-color: var(--rule-2);
+}
+
+.btn-line:hover {
+  border-color: var(--oxide);
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.25rem 0.625rem;
+  font-family: var(--mono);
+  font-size: 0.6875rem;
+  color: var(--paper-2);
+  background: var(--ink-2);
+  border: 1px solid var(--rule-2);
+}
+
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+}
+
+.dot-ok {
+  background: var(--ok);
+  box-shadow: 0 0 8px var(--ok);
+}
+
+.dot-oxide {
+  background: var(--oxide);
+}
+
+.bp-grid {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(to right, rgba(236, 233, 227, 0.035) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(236, 233, 227, 0.035) 1px, transparent 1px);
+  background-size: 48px 48px;
+  pointer-events: none;
+}
+
+.hero-glow {
+  position: absolute;
+  top: -120px;
+  right: 10%;
+  width: 520px;
+  height: 520px;
+  background: radial-gradient(circle, rgba(224, 89, 47, 0.11) 0%, transparent 70%);
+  pointer-events: none;
+}
+
+.plate {
+  position: relative;
+  background: var(--ink-2);
+  border: 1px solid var(--rule-2);
+}
+
+.plate-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.65rem 1rem;
+  border-bottom: 1px solid var(--rule);
+  background: var(--ink-3);
+  font-family: var(--mono);
+  font-size: 0.6875rem;
+  color: var(--mute);
+}
+
+.tick {
+  position: absolute;
+  width: 6px;
+  height: 6px;
+  border-color: var(--oxide);
+  pointer-events: none;
+}
+
+.tick.tl { top: -1px; left: -1px; border-top: 1.5px solid var(--oxide); border-left: 1.5px solid var(--oxide); }
+.tick.tr { top: -1px; right: -1px; border-top: 1.5px solid var(--oxide); border-right: 1.5px solid var(--oxide); }
+.tick.bl { bottom: -1px; left: -1px; border-bottom: 1.5px solid var(--oxide); border-left: 1.5px solid var(--oxide); }
+.tick.br { bottom: -1px; right: -1px; border-bottom: 1.5px solid var(--oxide); border-right: 1.5px solid var(--oxide); }
+
+.sec-head {
+  display: flex;
+  align-items: center;
+  gap: 0.875rem;
+  margin-bottom: 2rem;
+  font-family: var(--mono);
+}
+
+.sec-head .n {
+  font-size: 0.75rem;
+  color: var(--oxide);
+  font-weight: 600;
+}
+
+.sec-head .t {
+  font-size: 0.875rem;
+  color: var(--paper);
+  font-weight: 600;
+}
+
+.sec-head .sec-rule {
+  flex: 1;
+  height: 1px;
+  background: var(--rule-2);
+}
+
+.sec-head .r {
+  font-size: 0.6875rem;
+  color: var(--dim);
+}
+
+.cells {
+  display: grid;
+  gap: 1px;
+  background: var(--rule-2);
+  border: 1px solid var(--rule-2);
+}
+
+.cell {
+  background: var(--ink);
+  padding: 1.5rem;
+  position: relative;
+}
+
+.term-window {
+  background: var(--ink-sunk);
+  border: 1px solid var(--rule-2);
+}
+
+.term-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.6rem 1rem;
+  border-bottom: 1px solid var(--rule);
+  background: var(--ink-2);
+}
+
+.wordmark {
+  font-family: var(--sans);
+  font-weight: 800;
+  font-size: clamp(4rem, 14vw, 11rem);
+  line-height: 0.85;
+  letter-spacing: -0.05em;
+  color: transparent;
+  -webkit-text-stroke: 1px rgba(236, 233, 227, 0.08);
 }
 "#;
     std::fs::write(target_dir.join("src/styles/app.css"), app_css)?;
 
-    // 11. Generate tailwind.config.js for class-based dark mode
+    // 11. Generate tailwind.config.js with Editorial Blueprint tokens
     let tailwind_config_js = r#"/** @type {import('tailwindcss').Config} */
 module.exports = {
   darkMode: 'class',
@@ -783,9 +796,26 @@ module.exports = {
   ],
   theme: {
     extend: {
+      colors: {
+        ink: '#0b0b0c',
+        'ink-2': '#111112',
+        'ink-3': '#171718',
+        sunk: '#080809',
+        paper: '#ece9e3',
+        'paper-2': '#c9c5bd',
+        mute: '#8d8982',
+        dim: '#5d5a55',
+        faint: '#3a3936',
+        oxide: '#e0592f',
+        'oxide-hi': '#f07448',
+        ok: '#9cc69b',
+        bad: '#d77a6a',
+        rule: 'rgba(236, 233, 227, 0.08)',
+      },
       fontFamily: {
-        sans: ['Inter', 'system-ui', '-apple-system', 'sans-serif'],
-        mono: ['JetBrains Mono', 'monospace'],
+        sans: ['Geist', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'sans-serif'],
+        mono: ['Geist Mono', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
+        serif: ['Instrument Serif', 'Georgia', 'serif'],
       },
     },
   },
@@ -800,10 +830,8 @@ Allow: /
 "#;
     std::fs::write(target_dir.join("public/robots.txt"), robots_txt)?;
 
-    // 10b. Generate initial public/styles.css fallback
-    let styles_css = r#"/* Yav Compiled Stylesheet */
-"#;
-    std::fs::write(target_dir.join("public/styles.css"), styles_css)?;
+    // 10b. Generate initial public/styles.css fallback with Editorial Blueprint design system
+    std::fs::write(target_dir.join("public/styles.css"), app_css)?;
 
     // 11. Generate public/favicon.ico, public/favicon.svg (gradient), and public/favicon-flat.svg
     #[rustfmt::skip]
@@ -1114,7 +1142,7 @@ pub async fn run(name: &str) -> Result<(), Box<dyn std::error::Error>> {
     println!("\x1b[34mCreating new Yav project:\x1b[0m \x1b[1m{name}\x1b[0m");
     scaffold_project(target_dir, name)?;
 
-    println!("\n\x1b[1;32m🎉 Successfully created project '{name}'!\x1b[0m");
+    println!("\n\x1b[1;32m[OK] Successfully created project '{name}'\x1b[0m");
 
     // Check and offer/install Yav editor extension
     crate::ext::prompt_and_install_if_needed();
@@ -1122,9 +1150,9 @@ pub async fn run(name: &str) -> Result<(), Box<dyn std::error::Error>> {
     // Check and offer/install Tailwind CSS standalone compiler
     let _ = crate::tailwind_setup::prompt_and_install_in_new("3.4.17").await;
 
-    println!("👉 To get started:");
-    println!("   cd {name}");
-    println!("   yav dev\n");
+    println!("  Next steps:");
+    println!("    cd {name}");
+    println!("    yav dev\n");
 
     Ok(())
 }
@@ -1160,6 +1188,8 @@ mod tests {
         assert!(temp_dir.join("src/routes/mod.rs").is_file());
         assert!(temp_dir.join("src/routes/index.rs").is_file());
         assert!(temp_dir.join("src/routes/about.rs").is_file());
+        assert!(temp_dir.join("src/routes/health.rs").is_file());
+        assert!(temp_dir.join("src/routes/not_found.rs").is_file());
         assert!(temp_dir.join("src/components/mod.rs").is_file());
         assert!(temp_dir.join("src/styles/app.css").is_file());
         assert!(temp_dir.join("public/robots.txt").is_file());
@@ -1173,10 +1203,29 @@ mod tests {
         let main_content = std::fs::read_to_string(temp_dir.join("src/main.rs")).unwrap();
         assert!(main_content.contains("app.host"));
         assert!(main_content.contains("app.port"));
-        assert!(!main_content.contains(".port("));
+        assert!(main_content.contains("std::env::var(\"PORT\")"));
+        assert!(main_content.contains(".port(port)"));
 
         let cargo_content = std::fs::read_to_string(temp_dir.join("Cargo.toml")).unwrap();
         assert!(cargo_content.contains("name = \"test-site\""));
+        assert!(cargo_content.contains("[profile.release]"));
+        assert!(cargo_content.contains("lto = true"));
+
+        let css_content = std::fs::read_to_string(temp_dir.join("src/styles/app.css")).unwrap();
+        assert!(css_content.contains("--oxide: #e0592f"));
+        assert!(css_content.contains("Instrument Serif"));
+        assert!(css_content.contains(".plate"));
+        assert!(css_content.contains(".wordmark"));
+
+        let layout_content = std::fs::read_to_string(temp_dir.join("src/layouts/app_layout.rs")).unwrap();
+        assert!(layout_content.contains("<Head>"));
+        assert!(layout_content.contains("bp-grid"));
+        assert!(layout_content.contains("rails"));
+
+        let index_content = std::fs::read_to_string(temp_dir.join("src/routes/index.rs")).unwrap();
+        assert!(index_content.contains("Get started by editing"));
+        assert!(index_content.contains("src/routes/index.rs"));
+        assert!(index_content.contains("yav dev"));
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }

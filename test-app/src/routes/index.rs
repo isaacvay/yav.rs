@@ -158,7 +158,7 @@ pub async fn index(_req: Request) -> yav::server::HtmlPage {
                         <h2 class="text-xs font-mono uppercase tracking-wider text-zinc-500 dark:text-zinc-400 font-semibold">
                             "Project Anatomy"
                         </h2>
-                        <span class="text-xs font-mono text-zinc-400">"5 core files"</span>
+                        <span class="text-xs font-mono text-zinc-400">"7 core files"</span>
                     </div>
 
                     <div class="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/30 divide-y divide-zinc-100 dark:divide-zinc-800/60 overflow-hidden font-mono text-xs shadow-xs">
@@ -189,6 +189,31 @@ pub async fn index(_req: Request) -> yav::server::HtmlPage {
 
                         <div class="p-4 flex items-center justify-between hover:bg-zinc-50/80 dark:hover:bg-zinc-800/40 transition-colors">
                             <div class="flex items-center gap-3">
+                                {render_icon("check-circle", IconSize::Sm, Some("w-4 h-4 text-emerald-500"), None)}
+                                <span class="text-amber-600 dark:text-amber-400 font-semibold">"src/routes/health.rs"</span>
+                                <span class="text-zinc-400">"→"</span>
+                                <a href="/health" class="text-zinc-700 dark:text-zinc-300 font-sans text-xs hover:underline flex items-center gap-1">
+                                    "Production health check endpoint returning JSON status"
+                                </a>
+                            </div>
+                            <a href="/health" class="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-800 dark:text-zinc-200 text-xs font-sans font-medium transition-colors">
+                                <span>"GET /health"</span>
+                                {render_icon("arrow-right", IconSize::Sm, Some("w-3 h-3"), None)}
+                            </a>
+                        </div>
+
+                        <div class="p-4 flex items-center justify-between hover:bg-zinc-50/80 dark:hover:bg-zinc-800/40 transition-colors">
+                            <div class="flex items-center gap-3">
+                                {render_icon("alert-circle", IconSize::Sm, Some("w-4 h-4 text-amber-500"), None)}
+                                <span class="text-amber-600 dark:text-amber-400 font-semibold">"src/routes/not_found.rs"</span>
+                                <span class="text-zinc-400">"→"</span>
+                                <span class="text-zinc-700 dark:text-zinc-300 font-sans text-xs">"Custom styled 404 fallback page replacing Axum plain text"</span>
+                            </div>
+                            <span class="px-2 py-0.5 rounded bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 font-sans text-[11px] font-semibold">"404 Fallback"</span>
+                        </div>
+
+                        <div class="p-4 flex items-center justify-between hover:bg-zinc-50/80 dark:hover:bg-zinc-800/40 transition-colors">
+                            <div class="flex items-center gap-3">
                                 {render_icon("system:layout", IconSize::Sm, Some("w-4 h-4 text-sky-500"), None)}
                                 <span class="text-zinc-800 dark:text-zinc-300 font-semibold">"src/layouts/app_layout.rs"</span>
                                 <span class="text-zinc-400">"→"</span>
@@ -202,7 +227,7 @@ pub async fn index(_req: Request) -> yav::server::HtmlPage {
                                 {render_icon("play", IconSize::Sm, Some("w-4 h-4 text-emerald-500"), None)}
                                 <span class="text-zinc-800 dark:text-zinc-300 font-semibold">"src/main.rs"</span>
                                 <span class="text-zinc-400">"→"</span>
-                                <span class="text-zinc-700 dark:text-zinc-300 font-sans text-xs">"Axum router registration, static asset serving, and server listen"</span>
+                                <span class="text-zinc-700 dark:text-zinc-300 font-sans text-xs">"Axum router registration, PORT binding, and server listen"</span>
                             </div>
                             <span class="text-zinc-400 font-sans text-xs">"Entrypoint"</span>
                         </div>

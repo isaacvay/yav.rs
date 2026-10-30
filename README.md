@@ -37,21 +37,24 @@ yav dev
 ## Features
 
 - 🦀 **Rust-first & Zero-Allocation VDOM** — Write your entire application in Rust with full type-safety and `Cow<'static, str>` zero-copy rendering
-- 🎨 **JSX-like syntax** — Declarative UI with the `rsx!` macro and `<> ... </>` fragments
-- 🎬 **Motion & Animations** — Framer Motion-inspired animations (`yav-motion`), spring physics, gestures & scroll reveals (<2KB WAAPI runtime)
-- 🖥️ **Server-Side Rendering & Streaming** — HTML-first with instant initial render and async chunk streaming
-- 📁 **File-based & Route Groups** — Next.js-inspired file routing with Route Groups `(auth)`, hierarchical layouts, native **View Transitions API**, and predictive prefetching
-- 🧩 **Rich UI component library** — 40+ primitives: Drawers, Command Palette (⌘K), Carousels, Popovers, Tooltips, Sliders, Steppers, and KPI StatCards
+- 🎨 **JSX-like syntax with Native Control Flow** — Declarative UI with `rsx!`, native `if`/`else` and `for` loops, short boolean attributes, class directives (`class:active={is_active}`), and compile-time static subtree folding (`Node::Static`)
+- 🎬 **Zero-JS Motion & Spring Physics** — Damped harmonic oscillator solver (`solveSpring`), gestures, scroll reveals, scroll-spy, count-up numbers, animated gauges, and syntax-preserving typewriter code blocks (<2KB WAAPI runtime, SSR tree-shaken)
+- 🎯 **Cursor Tracking & Reactive 3D Effects** — Native mouse coordinate CSS variables (`--yav-mouse-x/y`), cursor spotlight, 3D tilt plates, magnetic hover attraction, and smooth cursor followers
+- 🎭 **8 Built-in Design Themes** — Seamless switching between Editorial Blueprint, Obsidian Minimal, Nordic Paper, Cyber Terminal, Solarized Lab, Glass Aurora, Neo Brutalism, and Sunset Velvet (`ThemeSelector`, theme cookies, zero-FOUC)
+- 🖥️ **Server-Side Rendering & Streaming** — HTML-first with instant initial render, async chunk streaming, automatic locale injection, and zero-clone `<head>` hoisting (`<Head>`)
+- 📁 **File-based & Reverse Routing** — Next.js-inspired file routing with Route Groups `(auth)`, hierarchical layouts (`route_with_layout`), type-safe reverse routing (`url_for!`), native **View Transitions API**, and predictive prefetching
+- 🧩 **Rich UI component library** — 45+ primitives: Drawers, Command Palette (⌘K), Carousels, Popovers, Tooltips, Sliders, Steppers, KPI StatCards, Syntax CodeBlock, and Interactive Themes
 - 🎯 **Built-in icons** — 13,000+ icons embedded directly in the binary across three design systems: **Lucide** (Classic), **MynaUI** (Minimal), and **Phosphor** (System)
 - 🌊 **Tailwind CSS** — Standalone CLI, zero Node.js / npm dependencies required
-- 🗜️ **Asset Pre-Compression** — Automatic transparent Brotli (`.br`) & Gzip (`.gz`) serving based on client `Accept-Encoding`
-- 📥 **Validated File Uploads** — `UploadedFile` with built-in MIME-type, extension, and file size validation
-- 🌐 **Async Context & i18n** — Scoped context across async/thread boundaries and pluralization catalogs
-- ⚡ **Hot reload & Error Overlay** — Automatic browser refresh and live dark-mode compiler error overlay
+- 🗜️ **Asset Pre-Compression & SSG** — Automatic transparent Brotli (`.br`) & Gzip (`.gz`) serving, plus full Static Site Generation via `yav export`
+- 📥 **Validated Forms & Uploads** — `FromFormData` trait and derive for typed validation, `UploadedFile` with MIME-type, extension, and file size enforcement
+- 🌐 **Async Context, i18n & Micro-Signals** — Scoped request state (`AppState` / `use_state`), XSS-safe translation catalogs (`t!`), and declarative micro-signals (`yav:state`)
+- ⚡ **Hot reload, Error Overlay & WebSocket Live Swap** — Live browser reload, compiler error overlay, and real-time DOM pushing with `WsBroadcast`
 - 📦 **Single-file manifest** — `package.yavml` configures metadata, server, Tailwind, scripts & deps
-- 🚀 **Automatic HTTP Caching** — Intelligent Blake3/SHA-256 ETags with 304 Not Modified conditional responses
-- 🛡️ **Production-Ready Security** — HMAC session cookies, sliding-window rate limiting, and security headers
-- ♿ **Accessible** — Semantic HTML and full ARIA compliance
+- 🚀 **Automatic HTTP & SSR Caching** — In-memory SSR route caching (`get_cached`), Blake3/SHA-256 ETags with 304 Not Modified conditional responses
+- 🛡️ **Production-Ready Security** — HMAC-SHA256 session cookies, CSPRNG CSRF token salting, sliding-window rate limiting, and security headers
+- 🩺 **Developer Diagnostics & Route Inspection** — `yav doctor` for full system auditing and `yav routes` for tabular inspection of routes and handlers
+- ♿ **Accessible** — Semantic HTML, keyboard micro-actions (`yav:hotkey`), and full ARIA compliance
 
 ## Writing Components & Motion
 
@@ -88,8 +91,11 @@ pub fn Hero() -> Node {
 |---------|-------------|
 | `yav new <name>` | Create a new project with Tailwind & file routing |
 | `yav dev` | Start development server with live reload and error overlay |
+| `yav doctor` | Run diagnostic audit on toolchains, tailwind, git, and project health |
+| `yav routes` | Inspect file-based route table, HTTP handlers, dynamic parameters, and layouts |
+| `yav export` | Static site generation (SSG) - export HTML pages to `dist/` |
 | `yav update` | Update the `yav` CLI binary and current project dependencies (`aliases: up, upgrade`) |
-| `yav add <component>` | Add UI templates (`drawer`, `command-menu`, `stat-card`, `carousel`, etc.) |
+| `yav add <component>` | Add UI templates (`drawer`, `command-menu`, `theme-selector`, `motion`, `cursor-spotlight`, etc.) |
 | `yav run <script>` | Run a custom script defined in `package.yavml` |
 | `yav codegen --ts` | Generate TypeScript definitions from Rust structs |
 | `yav codegen --openapi`| Export OpenAPI 3.1 specifications |
@@ -125,11 +131,13 @@ Comprehensive guides are available in the [`docs/`](docs/) directory:
 
 - [Architecture & Design Principles](docs/architecture.md)
 - [Getting Started](docs/getting-started.md)
-- [Routing & Dynamic Routes](docs/routing.md)
-- [Components Guide (40+ primitives)](docs/components.md)
+- [Zero-JS Declarative Interactivity & Motion Engine](docs/zero-js-interactions-and-motion.md)
+- [Multi-Theme System (8 Design Themes)](docs/themes.md)
+- [Routing, Layouts & Static Site Generation](docs/routing.md)
+- [Components Guide (45+ primitives & RSX Control Flow)](docs/components.md)
 - [Icons System (Lucide, MynaUI & Phosphor)](docs/icons.md)
 - [Styling & Tailwind CSS Engine](docs/styling.md)
-- [Interactivity & Client Islands](docs/interactivity-and-htmx.md)
+- [Interactivity, HTMX & WebSocket Live Swap](docs/interactivity-and-htmx.md)
 - [SEO, Open Graph & Structured Data](docs/seo-and-metadata.md)
 - [Development Server & HMR](docs/development-server.md)
 - [Production Optimization & Deployment](docs/production.md)

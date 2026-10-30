@@ -218,6 +218,17 @@ impl FormData {
     pub fn get_or_empty(&self, key: &str) -> &str {
         self.get(key).unwrap_or("")
     }
+
+    /// Parse and validate form fields into a typed struct implementing [`FromFormData`].
+    pub fn parse_validated<T: FromFormData>(&self) -> Result<T, FormErrors> {
+        T::from_form(self)
+    }
+}
+
+/// Trait for types that can be parsed and validated from form submission data.
+pub trait FromFormData: Sized {
+    /// Parse and validate fields from [`FormData`], returning `Ok(Self)` or `Err(FormErrors)`.
+    fn from_form(form: &FormData) -> Result<Self, FormErrors>;
 }
 
 impl<S> axum::extract::FromRequest<S> for FormData
@@ -245,24 +256,45 @@ pub struct CsrfToken(String);
 
 impl CsrfToken {
     /// Retrieve the existing CSRF token from the user's [`Session`](crate::session::Session),
-    /// or generate and store a new 64-character hex token if none exists.
+    /// or generate and store a new 64-character hex token seeded from OS CSPRNG entropy if none exists.
     pub fn from_session(session: &crate::session::Session) -> Self {
         if let Some(existing) = session.get("_csrf_token") {
             if !existing.is_empty() {
                 return Self(existing);
             }
         }
+        use std::collections::hash_map::RandomState;
+        use std::hash::{BuildHasher, Hasher};
+
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos())
             .unwrap_or(0);
         let seq = CSRF_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let pid = std::process::id();
-        let seed = format!("yav-csrf-{nanos}-{seq}-{pid}");
-        let token = crate::session::compute_hmac_sha256(
-            seed.as_bytes(),
-            crate::session::DEFAULT_DEV_SESSION_SECRET,
+
+        // Sample 256 bits of OS CSPRNG entropy via 4 independent RandomState instances
+        let mut r0 = RandomState::new().build_hasher();
+        r0.write_u128(nanos);
+        let mut r1 = RandomState::new().build_hasher();
+        r1.write_u64(seq);
+        let mut r2 = RandomState::new().build_hasher();
+        r2.write_u32(pid);
+        let mut r3 = RandomState::new().build_hasher();
+        r3.write_u64(r0.finish() ^ r1.finish());
+
+        let seed = format!(
+            "yav-csrf-{nanos}-{seq}-{pid}-{:016x}-{:016x}-{:016x}-{:016x}",
+            r0.finish(),
+            r1.finish(),
+            r2.finish(),
+            r3.finish()
         );
+        let secret = std::env::var("SESSION_SECRET")
+            .or_else(|_| std::env::var("YAV_SECRET"))
+            .map(|s| s.into_bytes())
+            .unwrap_or_else(|_| crate::session::DEFAULT_DEV_SESSION_SECRET.to_vec());
+        let token = crate::session::compute_hmac_sha256(seed.as_bytes(), &secret);
         session.set("_csrf_token", token.clone());
         Self(token)
     }

@@ -1,0 +1,20 @@
+use yav::prelude::*;
+
+/// Editorial Blueprint multi-theme switcher component (`yav add theme-selector`).
+#[component]
+pub fn CustomThemeSelector(default_theme: String) -> Node {
+    let active = if default_theme.is_empty() {
+        "editorial-blueprint".to_string()
+    } else {
+        default_theme
+    };
+
+    rsx! {
+        <div class="inline-flex items-center gap-2 font-mono text-xs" style="border: 1px solid var(--rule, rgba(236, 233, 227, 0.11)); padding: 4px 10px; background: var(--ink-2, #111113); color: var(--paper, #ece9e3);">
+            { Theme::inject_all_themes_css() }
+            <span style="color: var(--oxide, #e0592f);">"//"</span>
+            <span style="color: var(--paper-2, #a39e93);">"theme:"</span>
+            <ThemeSelector default_theme={active} />
+        </div>
+    }
+}

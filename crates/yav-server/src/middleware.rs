@@ -17,6 +17,34 @@ use axum::{
 use sha2::{Digest, Sha256};
 use std::time::Instant;
 
+/// Per-request cryptographic Content-Security-Policy (CSP) nonce.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CspNonce(pub String);
+
+impl CspNonce {
+    /// Generate a fresh 128-bit cryptographic hex nonce seeded from OS CSPRNG entropy.
+    pub fn generate() -> Self {
+        use std::collections::hash_map::RandomState;
+        use std::hash::{BuildHasher, Hasher};
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let mut h1 = RandomState::new().build_hasher();
+        h1.write_u128(now);
+        let mut h2 = RandomState::new().build_hasher();
+        h2.write_u64(h1.finish());
+
+        Self(format!("{:016x}{:016x}", h1.finish(), h2.finish()))
+    }
+
+    /// Return the nonce string slice.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
 /// Configuration options for HTTP security headers.
 #[derive(Debug, Clone)]
 pub struct SecurityHeadersConfig {
@@ -34,6 +62,8 @@ pub struct SecurityHeadersConfig {
     pub hsts: Option<String>,
     /// Optional value for `Cross-Origin-Opener-Policy` header (default: `"same-origin"`).
     pub coop: Option<String>,
+    /// Optional value for `Content-Security-Policy` header. Supports `{nonce}` placeholder.
+    pub content_security_policy: Option<String>,
 }
 
 impl Default for SecurityHeadersConfig {
@@ -50,6 +80,91 @@ impl Default for SecurityHeadersConfig {
                 None
             },
             coop: Some("same-origin".to_string()),
+            content_security_policy: None,
+        }
+    }
+}
+
+impl SecurityHeadersConfig {
+    /// Create a new default security headers configuration.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set the `Content-Security-Policy` header value (supports `{nonce}` interpolation).
+    pub fn csp(mut self, policy: impl Into<String>) -> Self {
+        self.content_security_policy = Some(policy.into());
+        self
+    }
+
+    /// Set the `X-Frame-Options` header value.
+    pub fn frame_options(mut self, val: impl Into<String>) -> Self {
+        self.frame_options = Some(val.into());
+        self
+    }
+
+    /// Apply configured security headers to an outgoing [`HeaderMap`](axum::http::HeaderMap).
+    pub fn apply(&self, headers: &mut axum::http::HeaderMap, nonce: Option<&str>) {
+        if let Some(ref v) = self.content_type_options {
+            if !headers.contains_key(header::X_CONTENT_TYPE_OPTIONS) {
+                if let Ok(hv) = HeaderValue::from_str(v) {
+                    headers.insert(header::X_CONTENT_TYPE_OPTIONS, hv);
+                }
+            }
+        }
+        if let Some(ref v) = self.frame_options {
+            if !headers.contains_key(header::X_FRAME_OPTIONS) {
+                if let Ok(hv) = HeaderValue::from_str(v) {
+                    headers.insert(header::X_FRAME_OPTIONS, hv);
+                }
+            }
+        }
+        if let Some(ref v) = self.xss_protection {
+            if !headers.contains_key("x-xss-protection") {
+                if let Ok(hv) = HeaderValue::from_str(v) {
+                    headers.insert(HeaderName::from_static("x-xss-protection"), hv);
+                }
+            }
+        }
+        if let Some(ref v) = self.referrer_policy {
+            if !headers.contains_key(header::REFERRER_POLICY) {
+                if let Ok(hv) = HeaderValue::from_str(v) {
+                    headers.insert(header::REFERRER_POLICY, hv);
+                }
+            }
+        }
+        if let Some(ref v) = self.permissions_policy {
+            if !headers.contains_key("permissions-policy") {
+                if let Ok(hv) = HeaderValue::from_str(v) {
+                    headers.insert(HeaderName::from_static("permissions-policy"), hv);
+                }
+            }
+        }
+        if let Some(ref v) = self.coop {
+            if !headers.contains_key("cross-origin-opener-policy") {
+                if let Ok(hv) = HeaderValue::from_str(v) {
+                    headers.insert(HeaderName::from_static("cross-origin-opener-policy"), hv);
+                }
+            }
+        }
+        if let Some(ref v) = self.hsts {
+            if !headers.contains_key(header::STRICT_TRANSPORT_SECURITY) {
+                if let Ok(hv) = HeaderValue::from_str(v) {
+                    headers.insert(header::STRICT_TRANSPORT_SECURITY, hv);
+                }
+            }
+        }
+        if let Some(ref csp) = self.content_security_policy {
+            if !headers.contains_key(header::CONTENT_SECURITY_POLICY) {
+                let resolved = if let Some(n) = nonce {
+                    csp.replace("{nonce}", n)
+                } else {
+                    csp.clone()
+                };
+                if let Ok(hv) = HeaderValue::from_str(&resolved) {
+                    headers.insert(header::CONTENT_SECURITY_POLICY, hv);
+                }
+            }
         }
     }
 }
@@ -64,11 +179,23 @@ impl Default for SecurityHeadersConfig {
 /// - `Permissions-Policy: camera=(), microphone=(), geolocation=()`
 /// - `Cross-Origin-Opener-Policy: same-origin`
 /// - `Strict-Transport-Security: max-age=63072000; includeSubDomains` (in production mode)
+/// - `Content-Security-Policy` (when configured via `SecurityHeadersConfig`)
 ///
 /// If a response already contains any of these headers, the existing value is preserved.
-pub async fn security_headers_middleware(req: Request, next: Next) -> Response {
+pub async fn security_headers_middleware(mut req: Request, next: Next) -> Response {
+    let nonce = req
+        .extensions()
+        .get::<CspNonce>()
+        .cloned()
+        .unwrap_or_else(CspNonce::generate);
+    req.extensions_mut().insert(nonce.clone());
+    let config = req.extensions().get::<SecurityHeadersConfig>().cloned();
+
     let mut response = next.run(req).await;
-    apply_default_security_headers(response.headers_mut());
+    match config {
+        Some(cfg) => cfg.apply(response.headers_mut(), Some(nonce.as_str())),
+        None => apply_default_security_headers(response.headers_mut()),
+    }
     response
 }
 

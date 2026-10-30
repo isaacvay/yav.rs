@@ -273,7 +273,7 @@ fn is_yav_project_dir() -> bool {
 /// Executes the `yav update` command.
 pub async fn run(args: &UpdateArgs) -> Result<(), Box<dyn std::error::Error>> {
     println!("\x1b[1;36m╔═══════════════════════════════════════════════════╗\x1b[0m");
-    println!("\x1b[1;36m║                 🔄 YAV UPDATER                    ║\x1b[0m");
+    println!("\x1b[1;36m║                  YAV UPDATER                      ║\x1b[0m");
     println!("\x1b[1;36m╚═══════════════════════════════════════════════════╝\x1b[0m\n");
 
     let update_cli = !args.project;

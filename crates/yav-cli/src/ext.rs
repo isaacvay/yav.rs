@@ -200,9 +200,9 @@ pub fn prompt_and_install_if_needed() {
         return;
     }
 
-    println!("\n\x1b[1;36m💡 Yav VS Code / Cursor extension is not installed yet.\x1b[0m");
+    println!("\n\x1b[1;36mℹ Yav VS Code / Cursor extension is not installed yet.\x1b[0m");
     println!("   It provides syntax coloring (.yav, .rsx, .yavml), icons, snippets, and schema validation.");
-    print!("👉 Install the Yav extension now? [Y/n]: ");
+    print!("› Install the Yav extension now? [Y/n]: ");
     let _ = std::io::stdout().flush();
 
     let mut input = String::new();
@@ -216,14 +216,14 @@ pub fn prompt_and_install_if_needed() {
         {
             match install_extension(true) {
                 Ok(installed) => {
-                    println!("\x1b[1;32m🎉 Yav extension installed successfully!\x1b[0m");
+                    println!("\x1b[1;32m✔ Yav extension installed successfully!\x1b[0m");
                     for item in installed {
                         println!("   • {item}");
                     }
                     println!("\x1b[90m(Your editor will automatically recognize it on next reload)\x1b[0m\n");
                 }
                 Err(e) => {
-                    eprintln!("\x1b[33m⚠️ Could not auto-install extension: {e}\x1b[0m");
+                    eprintln!("\x1b[33m! Could not auto-install extension: {e}\x1b[0m");
                     eprintln!(
                         "   You can install it anytime with: \x1b[1myav ext install\x1b[0m\n"
                     );
@@ -241,7 +241,7 @@ pub fn run(action: &ExtAction) -> Result<(), Box<dyn std::error::Error>> {
     match action {
         ExtAction::Install { force } => {
             println!("\x1b[1;36m╔═══════════════════════════════════════════════════╗\x1b[0m");
-            println!("\x1b[1;36m║          🧩 YAV EDITOR EXTENSION INSTALLER        ║\x1b[0m");
+            println!("\x1b[1;36m║          YAV EDITOR EXTENSION INSTALLER           ║\x1b[0m");
             println!("\x1b[1;36m╚═══════════════════════════════════════════════════╝\x1b[0m\n");
 
             let results = install_extension(*force)?;
@@ -249,7 +249,7 @@ pub fn run(action: &ExtAction) -> Result<(), Box<dyn std::error::Error>> {
             for res in results {
                 println!("  • {res}");
             }
-            println!("\n\x1b[35m✨ Supported features:\x1b[0m");
+            println!("\n\x1b[35m● Supported features:\x1b[0m");
             println!("  • .yav & .rsx RSX / JSX syntax highlighting & Emmet expansion");
             println!("  • .yavml TOML manifest syntax highlighting & JSON schema validation");
             println!("  • Custom Yav & YavML file icons");
@@ -257,7 +257,7 @@ pub fn run(action: &ExtAction) -> Result<(), Box<dyn std::error::Error>> {
         }
         ExtAction::Status => {
             println!("\x1b[1;36m╔═══════════════════════════════════════════════════╗\x1b[0m");
-            println!("\x1b[1;36m║           🧩 YAV EXTENSION STATUS                 ║\x1b[0m");
+            println!("\x1b[1;36m║           YAV EXTENSION STATUS                    ║\x1b[0m");
             println!("\x1b[1;36m╚═══════════════════════════════════════════════════╝\x1b[0m\n");
 
             let targets = get_editor_targets();
@@ -277,7 +277,7 @@ pub fn run(action: &ExtAction) -> Result<(), Box<dyn std::error::Error>> {
                     );
                 }
             }
-            println!("\n👉 Run \x1b[1myav ext install\x1b[0m to install or update in all editors.");
+            println!("\n  Run \x1b[1myav ext install\x1b[0m to install or update in all editors.");
         }
     }
     Ok(())

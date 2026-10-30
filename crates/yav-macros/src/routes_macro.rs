@@ -57,6 +57,146 @@ pub fn include_routes_impl(input: IncludeRoutesInput) -> syn::Result<TokenStream
     Ok(tokens)
 }
 
+/// Parse input for `typed_routes!()` or `typed_routes!("src/routes")`.
+pub struct TypedRoutesInput {
+    pub path: Option<LitStr>,
+}
+
+impl syn::parse::Parse for TypedRoutesInput {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        if input.is_empty() {
+            Ok(Self { path: None })
+        } else {
+            let lit: LitStr = input.parse()?;
+            Ok(Self { path: Some(lit) })
+        }
+    }
+}
+
+pub fn typed_routes_impl(input: TypedRoutesInput) -> syn::Result<TokenStream> {
+    let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
+    let rel_dir = input
+        .path
+        .map(|lit| lit.value())
+        .unwrap_or_else(|| "src/routes".to_string());
+    let routes_dir = PathBuf::from(&manifest_dir).join(&rel_dir);
+
+    let mut route_entries = Vec::new();
+    if routes_dir.exists() && routes_dir.is_dir() {
+        collect_routes_recursive(&routes_dir, &routes_dir, &mut route_entries);
+    }
+    route_entries.sort_by(|a, b| a.0.cmp(&b.0));
+
+    let mut const_items = Vec::new();
+    let mut used_names = std::collections::HashSet::new();
+    for (url_pattern, rel_path) in route_entries {
+        let stripped = rel_path
+            .trim_end_matches(".rs")
+            .trim_end_matches(".yav")
+            .trim_end_matches(".rsx");
+        let without_index = stripped
+            .strip_suffix("/index")
+            .or_else(|| stripped.strip_suffix("/page"))
+            .unwrap_or(stripped);
+        let raw_clean: String = without_index
+            .chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() {
+                    c.to_ascii_uppercase()
+                } else if c == '/' || c == '\\' || c == '-' || c == '.' || c == '_' {
+                    '_'
+                } else {
+                    // Strip '[', ']', '(', ')'
+                    '\0'
+                }
+            })
+            .filter(|&c| c != '\0')
+            .collect();
+        let collapsed: String = raw_clean
+            .split('_')
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>()
+            .join("_");
+
+        let base_name = if collapsed.is_empty() || collapsed == "INDEX" || collapsed == "PAGE" {
+            "ROOT".to_string()
+        } else if collapsed.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+            format!("ROUTE_{collapsed}")
+        } else {
+            collapsed
+        };
+
+        let mut final_name = base_name.clone();
+        let mut suffix = 2usize;
+        while !used_names.insert(final_name.clone()) {
+            final_name = format!("{base_name}_{suffix}");
+            suffix += 1;
+        }
+
+        let const_ident = syn::parse_str::<syn::Ident>(&final_name).unwrap_or_else(|_| {
+            syn::Ident::new(
+                &format!("ROUTE_{}", used_names.len()),
+                proc_macro2::Span::call_site(),
+            )
+        });
+        let fn_name_str = final_name.to_ascii_lowercase();
+        let fn_ident = syn::parse_str::<syn::Ident>(&fn_name_str).unwrap_or_else(|_| {
+            syn::Ident::new(
+                &format!("route_{}", used_names.len()),
+                proc_macro2::Span::call_site(),
+            )
+        });
+
+        let pattern_str = url_pattern.as_str();
+        let mut param_names = Vec::new();
+        for seg in pattern_str.split('/') {
+            if let Some(p) = seg.strip_prefix(':').or_else(|| seg.strip_prefix('*')) {
+                if !p.is_empty() {
+                    param_names.push(p.to_string());
+                }
+            }
+        }
+
+        let fn_item = if param_names.is_empty() {
+            quote! {
+                pub fn #fn_ident() -> String {
+                    #pattern_str.to_string()
+                }
+            }
+        } else {
+            let param_idents: Vec<syn::Ident> = param_names
+                .iter()
+                .map(|p| sanitize_module_ident(p))
+                .collect();
+            let pairs: Vec<TokenStream> = param_names
+                .iter()
+                .zip(param_idents.iter())
+                .map(|(raw_p, id)| {
+                    quote! { (#raw_p, &#id.to_string()) }
+                })
+                .collect();
+            quote! {
+                pub fn #fn_ident(#( #param_idents: impl ::std::fmt::Display ),*) -> String {
+                    let __pairs: &[(&str, &str)] = &[ #( #pairs ),* ];
+                    ::yav::router::url_for(#pattern_str, __pairs)
+                }
+            }
+        };
+
+        const_items.push(quote! {
+            pub const #const_ident: &'static str = #pattern_str;
+            #fn_item
+        });
+    }
+
+    Ok(quote! {
+        pub struct Routes;
+        impl Routes {
+            #( #const_items )*
+        }
+    })
+}
+
 /// Parse input for `auto_routes!(app)` or `auto_routes!(app, "src/routes")`.
 pub struct AutoRoutesInput {
     pub app_expr: syn::Expr,
@@ -113,11 +253,21 @@ pub fn auto_routes_impl(input: AutoRoutesInput) -> syn::Result<TokenStream> {
                     if let Ok(rsx_node) = crate::parser::parse_rsx(tpl_tokens) {
                         let generated = crate::codegen::generate(rsx_node);
                         let pattern = url_pattern.as_str();
+
+                        // Nested layout hierarchy wrapping
+                        let layouts = find_layout_modules(&routes_dir, &rel_path_str);
+                        let mut wrapped_node = quote! { #generated };
+                        for layout_mod in layouts {
+                            wrapped_node = quote! {
+                                routes::#( #layout_mod )::* ::layout(#wrapped_node)
+                            };
+                        }
+
                         registrations.push(quote! {
                             .get(#pattern, |_req: ::axum::extract::Request| async move {
                                 const _: &[u8] = include_bytes!(#abs_str);
                                 #fm_tokens
-                                let __node = #generated;
+                                let __node = #wrapped_node;
                                 ::yav::server::HtmlPage::new(__node)
                             })
                         });
@@ -127,21 +277,11 @@ pub fn auto_routes_impl(input: AutoRoutesInput) -> syn::Result<TokenStream> {
                 let mod_path_segments: Vec<syn::Ident> = rel_path_str
                     .trim_end_matches(".rs")
                     .split('/')
-                    .map(|seg| {
-                        let clean = seg.replace(['[', ']'], "").replace('.', "_");
-                        let safe_ident = if clean.chars().next().is_some_and(|c| c.is_ascii_digit())
-                        {
-                            format!("route_{clean}")
-                        } else if clean.is_empty() {
-                            "param".to_string()
-                        } else {
-                            clean
-                        };
-                        syn::parse_str::<syn::Ident>(&safe_ident).unwrap_or_else(|_| {
-                            syn::Ident::new("param", proc_macro2::Span::call_site())
-                        })
-                    })
+                    .map(sanitize_module_ident)
                     .collect();
+
+                let layouts = find_layout_modules(&routes_dir, &rel_path_str);
+                let middlewares = find_middleware_modules(&routes_dir, &rel_path_str);
 
                 let stem = rel_path_str
                     .split('/')
@@ -152,6 +292,9 @@ pub fn auto_routes_impl(input: AutoRoutesInput) -> syn::Result<TokenStream> {
                 for item in syntax_file.items {
                     if let syn::Item::Fn(fn_item) = item {
                         if matches!(fn_item.vis, syn::Visibility::Public(_)) {
+                            let param_count = fn_item.sig.inputs.len();
+                            let single_non_req = param_count == 1
+                                && !is_axum_request_param(fn_item.sig.inputs.first().unwrap());
                             let fn_ident = fn_item.sig.ident;
                             let fn_name = fn_ident.to_string();
 
@@ -197,12 +340,142 @@ pub fn auto_routes_impl(input: AutoRoutesInput) -> syn::Result<TokenStream> {
                                 };
 
                             if let Some((pattern, method_ident)) = method_and_pattern {
-                                registrations.push(quote! {
-                                    .route(#pattern, ::axum::http::Method::#method_ident, routes::#( #mod_path_segments )::* :: #fn_ident)
-                                });
+                                let fn_path = quote! { routes::#( #mod_path_segments )::* :: #fn_ident };
+                                let handler_expr = if param_count == 2 {
+                                    quote! { ::yav::server::BoxedHandler::from_extractor2(#fn_path) }
+                                } else if single_non_req {
+                                    quote! { ::yav::server::BoxedHandler::from_extractor1(#fn_path) }
+                                } else if !middlewares.is_empty() {
+                                    if param_count == 0 {
+                                        quote! { ::yav::server::BoxedHandler::from_zero_arg(#fn_path) }
+                                    } else {
+                                        quote! { ::yav::server::BoxedHandler::new(#fn_path) }
+                                    }
+                                } else {
+                                    fn_path
+                                };
+
+                                let mut mw_wrapped = handler_expr;
+                                for mw_mod in &middlewares {
+                                    mw_wrapped = quote! {
+                                        #mw_wrapped.with_middleware(routes::#( #mw_mod )::* ::middleware)
+                                    };
+                                }
+
+                                if layouts.is_empty() {
+                                    registrations.push(quote! {
+                                        .route(#pattern, ::axum::http::Method::#method_ident, #mw_wrapped)
+                                    });
+                                } else {
+                                    let mut wrapped_node = quote! { __node };
+                                    for layout_mod in &layouts {
+                                        wrapped_node = quote! {
+                                            routes::#( #layout_mod )::* ::layout(#wrapped_node)
+                                        };
+                                    }
+                                    registrations.push(quote! {
+                                        .route_with_layout(
+                                            #pattern,
+                                            ::axum::http::Method::#method_ident,
+                                            #mw_wrapped,
+                                            |__node| #wrapped_node
+                                        )
+                                    });
+                                }
                             }
                         }
                     }
+                }
+            }
+        }
+    }
+
+    // Check for not_found handler in routes_dir
+    let not_found_rs = routes_dir.join("not_found.rs");
+    let not_found_yav = routes_dir.join("not_found.yav");
+    let not_found_rsx = routes_dir.join("not_found.rsx");
+
+    if not_found_rs.exists() {
+        if let Ok(content) = fs::read_to_string(&not_found_rs) {
+            if let Ok(syntax_file) = syn::parse_file(&content) {
+                let mut not_found_fn = None;
+                for item in syntax_file.items {
+                    if let syn::Item::Fn(fn_item) = item {
+                        if matches!(fn_item.vis, syn::Visibility::Public(_)) {
+                            let ident = fn_item.sig.ident;
+                            let name = ident.to_string();
+                            if name == "not_found"
+                                || name == "handler"
+                                || name == "page"
+                                || name == "get"
+                                || name == "not_found_handler"
+                            {
+                                not_found_fn = Some(ident);
+                                break;
+                            }
+                        }
+                    }
+                }
+                if let Some(fn_ident) = not_found_fn {
+                    let nf_layouts = find_layout_modules(&routes_dir, "not_found.rs");
+                    if nf_layouts.is_empty() {
+                        registrations.push(quote! {
+                            .not_found_handler(routes::not_found::#fn_ident)
+                        });
+                    } else {
+                        let mut wrapped_node = quote! { __node };
+                        for layout_mod in &nf_layouts {
+                            wrapped_node = quote! {
+                                routes::#( #layout_mod )::* ::layout(#wrapped_node)
+                            };
+                        }
+                        registrations.push(quote! {
+                            .not_found_handler_with_layout(
+                                routes::not_found::#fn_ident,
+                                |__node| #wrapped_node
+                            )
+                        });
+                    }
+                }
+            }
+        }
+    } else if not_found_yav.exists() || not_found_rsx.exists() {
+        let nf_path = if not_found_yav.exists() {
+            not_found_yav
+        } else {
+            not_found_rsx
+        };
+        if let Ok(content) = fs::read_to_string(&nf_path) {
+            let abs_str = nf_path
+                .canonicalize()
+                .unwrap_or_else(|_| nf_path.clone())
+                .to_string_lossy()
+                .to_string();
+            let (fm, template) = crate::file_component::split_frontmatter(&content);
+            let fm_tokens: TokenStream = if let Some(fm_str) = fm {
+                let transpiled = crate::file_component::transpile_frontmatter(fm_str);
+                transpiled.parse().unwrap_or_default()
+            } else {
+                TokenStream::new()
+            };
+            if let Ok(tpl_tokens) = template.parse::<TokenStream>() {
+                if let Ok(rsx_node) = crate::parser::parse_rsx(tpl_tokens) {
+                    let generated = crate::codegen::generate(rsx_node);
+                    let nf_layouts = find_layout_modules(&routes_dir, "not_found.yav");
+                    let mut wrapped_node = quote! { #generated };
+                    for layout_mod in nf_layouts {
+                        wrapped_node = quote! {
+                            routes::#( #layout_mod )::* ::layout(#wrapped_node)
+                        };
+                    }
+                    registrations.push(quote! {
+                        .not_found_handler(|_req: ::axum::extract::Request| async move {
+                            const _: &[u8] = include_bytes!(#abs_str);
+                            #fm_tokens
+                            let __node = #wrapped_node;
+                            ::yav::server::HtmlPage::new(__node).status(::axum::http::StatusCode::NOT_FOUND)
+                        })
+                    });
                 }
             }
         }
@@ -212,6 +485,21 @@ pub fn auto_routes_impl(input: AutoRoutesInput) -> syn::Result<TokenStream> {
         #app_expr
             #( #registrations )*
     })
+}
+
+fn sanitize_module_ident(seg: &str) -> syn::Ident {
+    let clean = seg
+        .replace(['[', ']', '(', ')'], "")
+        .replace(['.', '-'], "_");
+    let safe_ident = if clean.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+        format!("route_{clean}")
+    } else if clean.is_empty() {
+        "param".to_string()
+    } else {
+        clean
+    };
+    syn::parse_str::<syn::Ident>(&safe_ident)
+        .unwrap_or_else(|_| syn::Ident::new("param", proc_macro2::Span::call_site()))
 }
 
 fn collect_routes_recursive(base_dir: &Path, current_dir: &Path, acc: &mut Vec<(String, String)>) {
@@ -229,6 +517,7 @@ fn collect_routes_recursive(base_dir: &Path, current_dir: &Path, acc: &mut Vec<(
                     || file_name == "layout.rs"
                     || file_name == "layout.yav"
                     || file_name == "layout.rsx"
+                    || file_name == "middleware.rs"
                     || file_name == "loading.rs"
                     || file_name == "loading.yav"
                     || file_name == "loading.rsx"
@@ -250,6 +539,84 @@ fn collect_routes_recursive(base_dir: &Path, current_dir: &Path, acc: &mut Vec<(
             }
         }
     }
+}
+
+fn find_layout_modules(routes_dir: &Path, rel_path: &str) -> Vec<Vec<syn::Ident>> {
+    let mut layouts = Vec::new();
+    let rel = Path::new(rel_path);
+    let mut current = rel.parent();
+
+    while let Some(dir) = current {
+        let dir_str = dir.to_string_lossy().replace('\\', "/");
+        if !dir_str.is_empty() {
+            let layout_rs = routes_dir.join(dir).join("_layout.rs");
+            let alt_layout_rs = routes_dir.join(dir).join("layout.rs");
+            if layout_rs.exists() || alt_layout_rs.exists() {
+                let layout_file_name = if layout_rs.exists() { "_layout" } else { "layout" };
+                let mut segments: Vec<syn::Ident> = dir_str
+                    .split('/')
+                    .map(sanitize_module_ident)
+                    .collect();
+                segments.push(syn::Ident::new(layout_file_name, proc_macro2::Span::call_site()));
+                layouts.push(segments);
+            }
+        }
+        current = dir.parent();
+    }
+
+    // Check root layout in routes_dir
+    let root_layout_rs = routes_dir.join("_layout.rs");
+    let alt_root_layout_rs = routes_dir.join("layout.rs");
+    if root_layout_rs.exists() || alt_root_layout_rs.exists() {
+        let root_name = if root_layout_rs.exists() { "_layout" } else { "layout" };
+        layouts.push(vec![syn::Ident::new(root_name, proc_macro2::Span::call_site())]);
+    }
+
+    layouts
+}
+
+fn find_middleware_modules(routes_dir: &Path, rel_path: &str) -> Vec<Vec<syn::Ident>> {
+    let mut middlewares = Vec::new();
+    let rel = Path::new(rel_path);
+    let mut current = rel.parent();
+
+    while let Some(dir) = current {
+        let dir_str = dir.to_string_lossy().replace('\\', "/");
+        if !dir_str.is_empty() {
+            let mw_rs = routes_dir.join(dir).join("_middleware.rs");
+            let alt_mw_rs = routes_dir.join(dir).join("middleware.rs");
+            if mw_rs.exists() || alt_mw_rs.exists() {
+                let mw_file_name = if mw_rs.exists() { "_middleware" } else { "middleware" };
+                let mut segments: Vec<syn::Ident> = dir_str
+                    .split('/')
+                    .map(sanitize_module_ident)
+                    .collect();
+                segments.push(syn::Ident::new(mw_file_name, proc_macro2::Span::call_site()));
+                middlewares.push(segments);
+            }
+        }
+        current = dir.parent();
+    }
+
+    let root_mw_rs = routes_dir.join("_middleware.rs");
+    let alt_root_mw_rs = routes_dir.join("middleware.rs");
+    if root_mw_rs.exists() || alt_root_mw_rs.exists() {
+        let root_name = if root_mw_rs.exists() { "_middleware" } else { "middleware" };
+        middlewares.push(vec![syn::Ident::new(root_name, proc_macro2::Span::call_site())]);
+    }
+
+    middlewares
+}
+
+fn is_axum_request_param(arg: &syn::FnArg) -> bool {
+    if let syn::FnArg::Typed(pat_type) = arg {
+        if let syn::Type::Path(type_path) = &*pat_type.ty {
+            if let Some(last) = type_path.path.segments.last() {
+                return last.ident == "Request" && matches!(last.arguments, syn::PathArguments::None);
+            }
+        }
+    }
+    false
 }
 
 fn file_path_to_pattern(rel: &Path) -> String {
@@ -339,6 +706,34 @@ mod tests {
         assert_eq!(acc.len(), 2);
         assert_eq!(acc[0], ("/".to_string(), "page.rs".to_string()));
         assert_eq!(acc[1], ("/sub".to_string(), "sub/page.rs".to_string()));
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_auto_routes_impl_with_not_found() {
+        let temp_dir =
+            std::env::temp_dir().join(format!("yav_routes_macro_nf_{}", std::process::id()));
+        let _ = fs::create_dir_all(&temp_dir);
+        fs::write(
+            temp_dir.join("not_found.rs"),
+            "pub async fn not_found() -> String { \"404\".into() }",
+        )
+        .unwrap();
+
+        let input_path = syn::LitStr::new(
+            temp_dir.to_str().unwrap().replace('\\', "/").as_str(),
+            proc_macro2::Span::call_site(),
+        );
+        let app_expr: syn::Expr = syn::parse_str("app").unwrap();
+        let input = AutoRoutesInput {
+            app_expr,
+            path: Some(input_path),
+        };
+
+        let generated = auto_routes_impl(input).unwrap().to_string();
+        assert!(generated.contains("not_found_handler"));
+        assert!(generated.contains("routes :: not_found :: not_found"));
 
         let _ = fs::remove_dir_all(&temp_dir);
     }

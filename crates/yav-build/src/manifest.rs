@@ -147,6 +147,9 @@ pub struct ServerSection {
     /// Path to TLS private key file.
     #[serde(default)]
     pub tls_key: String,
+    /// Enable HTTP response compression (gzip, brotli). Default: `false`.
+    #[serde(default)]
+    pub compression: bool,
 }
 
 impl Default for ServerSection {
@@ -158,6 +161,7 @@ impl Default for ServerSection {
             https: false,
             tls_cert: String::new(),
             tls_key: String::new(),
+            compression: false,
         }
     }
 }
@@ -488,7 +492,7 @@ impl PackageYav {
         Self::discover_in(".")
     }
 
-    /// Convert a legacy [`YavConfig`] (`yav.toml`) into a [`PackageYav`].
+    /// Convert a legacy [`super::config::YavConfig`] (`yav.toml`) into a [`PackageYav`].
     pub fn from_legacy(cfg: &super::config::YavConfig) -> Self {
         Self {
             package: PackageMeta {
@@ -521,7 +525,7 @@ impl PackageYav {
         }
     }
 
-    /// Convert this [`PackageYav`] into a [`YavConfig`] for backwards compatibility.
+    /// Convert this [`PackageYav`] into a [`super::config::YavConfig`] for backwards compatibility.
     pub fn to_config(&self) -> super::config::YavConfig {
         super::config::YavConfig {
             project: super::config::ProjectConfig {
@@ -531,6 +535,7 @@ impl PackageYav {
             server: super::config::ServerConfig {
                 port: self.server.port,
                 host: self.server.host.clone(),
+                compression: self.server.compression,
             },
             tailwind: super::config::TailwindConfig {
                 enabled: self.tailwind.enabled,
@@ -727,6 +732,7 @@ mod tests {
             server: super::super::config::ServerConfig {
                 port: 4000,
                 host: "0.0.0.0".into(),
+                compression: false,
             },
             tailwind: super::super::config::TailwindConfig::default(),
             build: super::super::config::BuildConfig::default(),

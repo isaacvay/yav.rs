@@ -37,6 +37,21 @@ pub enum RsxNode {
     Expr(TokenStream, Span),
     /// Multiple sibling nodes
     Fragment(Vec<RsxNode>),
+    /// Raw unescaped text content (used for `<script>` and `<style>` blocks)
+    Raw(String, Span),
+    /// Dynamic expression evaluated as raw unescaped content inside `<script>` or `<style>`
+    RawExpr(TokenStream, Span),
+    /// Native conditional control flow: `if cond { ... } else { ... }`
+    If {
+        cond: TokenStream,
+        then_branch: Box<RsxNode>,
+        else_branch: Option<Box<RsxNode>>,
+    },
+    /// Native loop control flow: `for pat in expr { ... }`
+    For {
+        header: TokenStream,
+        body: Box<RsxNode>,
+    },
 }
 
 /// An element in the RSX tree.
@@ -208,6 +223,12 @@ fn parse_node(reader: &mut TokenReader) -> Result<RsxNode> {
             }
         }
 
+        // Native `if cond { ... } [else ...]` control flow
+        Some(TokenTree::Ident(id)) if id == "if" && can_start_if(reader) => parse_if(reader),
+
+        // Native `for pat in expr { ... }` control flow
+        Some(TokenTree::Ident(id)) if id == "for" && can_start_for(reader) => parse_for(reader),
+
         // Raw text (words, identifiers, punctuation e.g. `Voir détails` or `Compteur :`)
         Some(_) => parse_raw_text(reader),
 
@@ -216,6 +237,169 @@ fn parse_node(reader: &mut TokenReader) -> Result<RsxNode> {
             "unexpected end of rsx! input",
         )),
     }
+}
+
+fn body_looks_like_rsx(stream: &TokenStream) -> bool {
+    let mut iter = stream.clone().into_iter();
+    match iter.next() {
+        None => true,
+        Some(TokenTree::Punct(p)) if p.as_char() == '<' => true,
+        Some(TokenTree::Literal(_)) => true,
+        Some(TokenTree::Group(g)) if g.delimiter() == Delimiter::Brace => true,
+        Some(TokenTree::Ident(id)) if id == "if" || id == "for" => true,
+        _ => false,
+    }
+}
+
+fn can_start_if(reader: &TokenReader) -> bool {
+    if !matches!(reader.peek(), Some(TokenTree::Ident(id)) if id == "if") {
+        return false;
+    }
+    let mut idx = 1;
+    while let Some(tt) = reader.peek_nth(idx) {
+        if matches!(
+            (reader.peek_nth(idx), reader.peek_nth(idx + 1)),
+            (Some(TokenTree::Punct(p1)), Some(TokenTree::Punct(p2)))
+                if p1.as_char() == '<' && p2.as_char() == '/'
+        ) {
+            return false;
+        }
+        if let TokenTree::Group(g) = tt {
+            if g.delimiter() == Delimiter::Brace {
+                return idx > 1 && body_looks_like_rsx(&g.stream());
+            }
+        }
+        idx += 1;
+    }
+    false
+}
+
+fn can_start_for(reader: &TokenReader) -> bool {
+    if !matches!(reader.peek(), Some(TokenTree::Ident(id)) if id == "for") {
+        return false;
+    }
+    let mut idx = 1;
+    let mut found_in = None;
+    while let Some(tt) = reader.peek_nth(idx) {
+        if matches!(
+            (reader.peek_nth(idx), reader.peek_nth(idx + 1)),
+            (Some(TokenTree::Punct(p1)), Some(TokenTree::Punct(p2)))
+                if p1.as_char() == '<' && p2.as_char() == '/'
+        ) {
+            return false;
+        }
+        if found_in.is_none() {
+            if let TokenTree::Ident(id) = tt {
+                if id == "in" && idx > 1 {
+                    found_in = Some(idx);
+                    idx += 1;
+                    continue;
+                }
+            }
+            if matches!(tt, TokenTree::Group(g) if g.delimiter() == Delimiter::Brace) {
+                return false;
+            }
+        } else if let TokenTree::Group(g) = tt {
+            if g.delimiter() == Delimiter::Brace {
+                if let Some(in_idx) = found_in {
+                    return idx > in_idx + 1 && body_looks_like_rsx(&g.stream());
+                }
+            }
+        }
+        idx += 1;
+    }
+    false
+}
+
+fn parse_if(reader: &mut TokenReader) -> Result<RsxNode> {
+    let if_ident = reader.expect_ident()?;
+    let mut cond_tokens = Vec::new();
+    let then_stream = loop {
+        match reader.peek() {
+            Some(TokenTree::Group(g)) if g.delimiter() == Delimiter::Brace => {
+                let group = match reader.next().unwrap() {
+                    TokenTree::Group(g) => g,
+                    _ => unreachable!(),
+                };
+                break group.stream();
+            }
+            Some(_) => {
+                cond_tokens.push(reader.next().unwrap());
+            }
+            None => {
+                return Err(syn::Error::new(
+                    if_ident.span(),
+                    "expected `{ ... }` body after `if` condition in rsx!",
+                ));
+            }
+        }
+    };
+
+    let cond: TokenStream = cond_tokens.into_iter().collect();
+    let then_branch = Box::new(parse_rsx(then_stream)?);
+
+    let else_branch = if matches!(reader.peek(), Some(TokenTree::Ident(id)) if id == "else") {
+        reader.next(); // consume `else`
+        if matches!(reader.peek(), Some(TokenTree::Ident(id)) if id == "if") {
+            Some(Box::new(parse_if(reader)?))
+        } else {
+            match reader.next() {
+                Some(TokenTree::Group(g)) if g.delimiter() == Delimiter::Brace => {
+                    Some(Box::new(parse_rsx(g.stream())?))
+                }
+                Some(tt) => {
+                    return Err(syn::Error::new(
+                        tt.span(),
+                        format!("expected `{{ ... }}` or `if` after `else`, got `{}`", tt),
+                    ));
+                }
+                None => {
+                    return Err(syn::Error::new(
+                        if_ident.span(),
+                        "expected `{ ... }` after `else` in rsx!",
+                    ));
+                }
+            }
+        }
+    } else {
+        None
+    };
+
+    Ok(RsxNode::If {
+        cond,
+        then_branch,
+        else_branch,
+    })
+}
+
+fn parse_for(reader: &mut TokenReader) -> Result<RsxNode> {
+    let for_ident = reader.expect_ident()?;
+    let mut header_tokens = Vec::new();
+    let body_stream = loop {
+        match reader.peek() {
+            Some(TokenTree::Group(g)) if g.delimiter() == Delimiter::Brace => {
+                let group = match reader.next().unwrap() {
+                    TokenTree::Group(g) => g,
+                    _ => unreachable!(),
+                };
+                break group.stream();
+            }
+            Some(_) => {
+                header_tokens.push(reader.next().unwrap());
+            }
+            None => {
+                return Err(syn::Error::new(
+                    for_ident.span(),
+                    "expected `{ ... }` body after `for ... in ...` in rsx!",
+                ));
+            }
+        }
+    };
+
+    let header: TokenStream = header_tokens.into_iter().collect();
+    let body = Box::new(parse_rsx(body_stream)?);
+
+    Ok(RsxNode::For { header, body })
 }
 
 fn parse_raw_text(reader: &mut TokenReader) -> Result<RsxNode> {
@@ -228,6 +412,14 @@ fn parse_raw_text(reader: &mut TokenReader) -> Result<RsxNode> {
             TokenTree::Punct(p) if p.as_char() == '<' => break,
             // Stop if expression block `{`
             TokenTree::Group(g) if g.delimiter() == Delimiter::Brace => break,
+            // Stop if native control flow `if ... { ... }` or `for ... in ... { ... }` starts after words
+            TokenTree::Ident(id)
+                if !words.is_empty()
+                    && ((id == "if" && can_start_if(reader))
+                        || (id == "for" && can_start_for(reader))) =>
+            {
+                break;
+            }
             _ => {
                 let token = reader.next().unwrap();
                 if first_span.is_none() {
@@ -319,7 +511,34 @@ fn parse_element(reader: &mut TokenReader) -> Result<RsxNode> {
         }
     }
 
-    // Parse children until closing tag `</tag>`
+    // Parse children: if `<script>` or `<style>`, parse raw tokens verbatim without evaluating as Rust expressions
+    if !is_component && (tag == "script" || tag == "style") {
+        let raw_child = parse_raw_body(reader, &tag)?;
+        reader.expect_punct('<')?;
+        reader.expect_punct('/')?;
+        let (close_tag, close_span) = parse_tag_name(reader)?;
+        if close_tag != tag {
+            return Err(syn::Error::new(
+                close_span,
+                format!(
+                    "mismatched closing tag: expected `</{}>`, got `</{}>`",
+                    tag, close_tag
+                ),
+            ));
+        }
+        reader.expect_punct('>')?;
+
+        return Ok(RsxNode::Element(RsxElement {
+            tag,
+            tag_span,
+            attributes,
+            children: vec![raw_child],
+            self_closing: false,
+            is_component,
+        }));
+    }
+
+    // Parse standard children until closing tag `</tag>`
     let mut children = Vec::new();
     loop {
         // Check for closing tag `</`
@@ -392,12 +611,12 @@ fn parse_attr_name(reader: &mut TokenReader) -> Result<(String, Span)> {
         .unwrap_or(&ident_str)
         .to_string();
 
-    // Allow hyphenated and colon-separated names: `data-id`, `aria-label`, `client:load`, `class:active`
+    // Allow hyphenated and colon-separated names: `data-id`, `aria-label`, `client:load`, `class:active`, `class:opacity-50`
     loop {
         match reader.peek() {
             Some(TokenTree::Punct(p)) if p.as_char() == '-' || p.as_char() == ':' => {
                 let sep = p.as_char();
-                // Lookahead: is this `- ident` or `: ident`?
+                // Lookahead: is this `- ident/lit` or `: ident`?
                 match reader.peek_nth(1) {
                     Some(TokenTree::Ident(_)) => {
                         reader.next(); // consume separator
@@ -405,6 +624,12 @@ fn parse_attr_name(reader: &mut TokenReader) -> Result<(String, Span)> {
                         let next_str = next.to_string();
                         name.push(sep);
                         name.push_str(next_str.strip_prefix("r#").unwrap_or(&next_str));
+                    }
+                    Some(TokenTree::Literal(_)) if sep == '-' => {
+                        reader.next(); // consume `-`
+                        let lit = reader.next().unwrap();
+                        name.push(sep);
+                        name.push_str(&lit.to_string());
                     }
                     _ => break,
                 }
@@ -497,4 +722,160 @@ fn parse_tag_name(reader: &mut TokenReader) -> Result<(String, Span)> {
     }
 
     Ok((name, span))
+}
+
+fn parse_raw_body(reader: &mut TokenReader, expected_tag: &str) -> Result<RsxNode> {
+    let mut tokens = Vec::new();
+    let span = reader.peek().map(|t| t.span()).unwrap_or_else(Span::call_site);
+
+    while !reader.is_empty() {
+        if reader.is_closing_tag() {
+            if let Some(TokenTree::Ident(next_id)) = reader.peek_nth(2) {
+                if next_id == expected_tag {
+                    break;
+                }
+            }
+        }
+        tokens.push(reader.next().unwrap());
+    }
+
+    if tokens.len() == 1 {
+        if let TokenTree::Group(g) = &tokens[0] {
+            if g.delimiter() == Delimiter::Brace {
+                let inner: Vec<TokenTree> = g.stream().into_iter().collect();
+                if inner.len() == 1 {
+                    if let TokenTree::Literal(lit) = &inner[0] {
+                        if let Ok(s) = syn::parse2::<syn::LitStr>(quote::quote!(#lit)) {
+                            return Ok(RsxNode::Raw(s.value(), span));
+                        }
+                    }
+                }
+                if let Ok(expr) = syn::parse2::<syn::Expr>(g.stream()) {
+                    if !matches!(expr, syn::Expr::Block(_)) {
+                        return Ok(RsxNode::RawExpr(g.stream(), g.span()));
+                    }
+                }
+            }
+        }
+    }
+
+    let raw_string = raw_tokens_to_string(&tokens);
+    Ok(RsxNode::Raw(raw_string, span))
+}
+
+fn raw_tokens_to_string(tokens: &[TokenTree]) -> String {
+    if !tokens.is_empty() {
+        let mut all_lits = Vec::new();
+        let mut only_lits = true;
+        for tt in tokens {
+            match tt {
+                TokenTree::Literal(lit) => {
+                    if let Ok(s) = syn::parse2::<syn::LitStr>(quote::quote!(#lit)) {
+                        all_lits.push(s.value());
+                    } else {
+                        only_lits = false;
+                        break;
+                    }
+                }
+                TokenTree::Group(g) if g.delimiter() == Delimiter::Brace => {
+                    let inner: Vec<TokenTree> = g.stream().into_iter().collect();
+                    if inner.len() == 1 {
+                        if let TokenTree::Literal(lit) = &inner[0] {
+                            if let Ok(s) = syn::parse2::<syn::LitStr>(quote::quote!(#lit)) {
+                                all_lits.push(s.value());
+                                continue;
+                            }
+                        }
+                    }
+                    only_lits = false;
+                    break;
+                }
+                _ => {
+                    only_lits = false;
+                    break;
+                }
+            }
+        }
+        if only_lits && !all_lits.is_empty() {
+            return all_lits.join("\n");
+        }
+    }
+
+    let mut out = String::new();
+    format_token_trees(tokens, &mut out, 0);
+    out
+}
+
+fn format_token_trees(tokens: &[TokenTree], out: &mut String, brace_depth: usize) {
+    let mut prev_char = None;
+    for tt in tokens {
+        match tt {
+            TokenTree::Group(g) => {
+                let (open, close, next_depth) = match g.delimiter() {
+                    Delimiter::Brace => ('{', '}', brace_depth + 1),
+                    Delimiter::Parenthesis => ('(', ')', brace_depth),
+                    Delimiter::Bracket => ('[', ']', brace_depth),
+                    Delimiter::None => (' ', ' ', brace_depth),
+                };
+                if open != ' ' {
+                    if let Some(pc) = prev_char {
+                        if pc != '(' && pc != '[' && pc != '{' && pc != '.' && pc != '#' && pc != ':' {
+                            out.push(' ');
+                        }
+                    }
+                    out.push(open);
+                    prev_char = Some(open);
+                }
+                let inner: Vec<TokenTree> = g.stream().into_iter().collect();
+                format_token_trees(&inner, out, next_depth);
+                if close != ' ' {
+                    out.push(close);
+                    prev_char = Some(close);
+                }
+            }
+            TokenTree::Ident(id) => {
+                let s = id.to_string();
+                let clean = s.strip_prefix("r#").unwrap_or(&s);
+                if let Some(pc) = prev_char {
+                    if pc.is_alphanumeric()
+                        || pc == '_'
+                        || pc == ')'
+                        || pc == '}'
+                        || pc == ']'
+                        || pc == '"'
+                        || pc == '\''
+                        || (pc == ':' && brace_depth > 0)
+                    {
+                        out.push(' ');
+                    }
+                }
+                out.push_str(clean);
+                prev_char = clean.chars().last();
+            }
+            TokenTree::Punct(p) => {
+                let ch = p.as_char();
+                if let Some(pc) = prev_char {
+                    if ((ch == '=' || ch == '+' || ch == '*' || ch == '&' || ch == '|') && pc.is_alphanumeric())
+                        || pc == ','
+                        || pc == ';'
+                        || (pc == ':' && ch != ':' && brace_depth > 0)
+                    {
+                        out.push(' ');
+                    }
+                }
+                out.push(ch);
+                prev_char = Some(ch);
+            }
+            TokenTree::Literal(lit) => {
+                if let Some(pc) = prev_char {
+                    if pc.is_alphanumeric() || pc == '_' || pc == '=' || pc == ':' || pc == ',' {
+                        out.push(' ');
+                    }
+                }
+                let s = lit.to_string();
+                out.push_str(&s);
+                prev_char = s.chars().last();
+            }
+        }
+    }
 }
