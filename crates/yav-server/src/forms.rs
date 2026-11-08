@@ -219,9 +219,123 @@ impl FormData {
         self.get(key).unwrap_or("")
     }
 
+    /// Retrieve a boolean checkbox/toggle field (`"true"`, `"1"`, `"on"`, `"yes"` -> `true`).
+    pub fn get_bool(&self, key: &str) -> bool {
+        matches!(
+            self.get_or_empty(key).trim().to_ascii_lowercase().as_str(),
+            "true" | "1" | "on" | "yes"
+        )
+    }
+
+    /// Parse a field into any type implementing [`std::str::FromStr`].
+    pub fn get_parsed<T: std::str::FromStr>(&self, key: &str) -> Option<T> {
+        self.get(key).and_then(|v| v.trim().parse::<T>().ok())
+    }
+
     /// Parse and validate form fields into a typed struct implementing [`FromFormData`].
     pub fn parse_validated<T: FromFormData>(&self) -> Result<T, FormErrors> {
         T::from_form(self)
+    }
+
+    /// Parse a JSON object byte slice into [`FormData`].
+    pub fn from_json_bytes(bytes: &[u8]) -> Result<Self, &'static str> {
+        let val: serde_json::Value =
+            serde_json::from_slice(bytes).map_err(|_| "Invalid JSON in form body")?;
+        let obj = val
+            .as_object()
+            .ok_or("Expected a JSON object for FormData")?;
+        let mut map = std::collections::HashMap::with_capacity(obj.len());
+        for (k, v) in obj {
+            let s = match v {
+                serde_json::Value::Null => String::new(),
+                serde_json::Value::String(s) => s.clone(),
+                serde_json::Value::Bool(b) => b.to_string(),
+                serde_json::Value::Number(n) => n.to_string(),
+                other => other.to_string(),
+            };
+            map.insert(k.clone(), s);
+        }
+        Ok(Self(map))
+    }
+
+    /// Parse a `multipart/form-data` payload with the given boundary into [`FormData`].
+    pub fn from_multipart_bytes(bytes: &[u8], boundary: &str) -> Result<Self, &'static str> {
+        let delim = format!("--{boundary}").into_bytes();
+        let delim_len = delim.len();
+        let mut map = std::collections::HashMap::new();
+
+        let mut pos = 0;
+        let mut part_indices = Vec::new();
+
+        while let Some(idx) = bytes[pos..]
+            .windows(delim_len)
+            .position(|w| w == delim.as_slice())
+        {
+            part_indices.push(pos + idx);
+            pos += idx + delim_len;
+        }
+
+        for i in 0..part_indices.len() {
+            let start = part_indices[i] + delim_len;
+            let end = if i + 1 < part_indices.len() {
+                part_indices[i + 1]
+            } else {
+                bytes.len()
+            };
+            let mut part = &bytes[start..end];
+            // Check for terminal boundary `--`
+            if part.starts_with(b"--") {
+                break;
+            }
+            // Strip leading CRLF or LF
+            if part.starts_with(b"\r\n") {
+                part = &part[2..];
+            } else if part.starts_with(b"\n") {
+                part = &part[1..];
+            }
+
+            // Find header-body separator (\r\n\r\n or \n\n)
+            let header_sep_idx = part
+                .windows(4)
+                .position(|w| w == b"\r\n\r\n")
+                .map(|p| (p, 4))
+                .or_else(|| part.windows(2).position(|w| w == b"\n\n").map(|p| (p, 2)));
+
+            if let Some((sep_pos, sep_len)) = header_sep_idx {
+                let header_bytes = &part[..sep_pos];
+                let mut body_bytes = &part[sep_pos + sep_len..];
+
+                // Strip trailing CRLF or LF before next delimiter
+                if body_bytes.ends_with(b"\r\n") {
+                    body_bytes = &body_bytes[..body_bytes.len() - 2];
+                } else if body_bytes.ends_with(b"\n") {
+                    body_bytes = &body_bytes[..body_bytes.len() - 1];
+                }
+
+                if let Ok(headers_str) = std::str::from_utf8(header_bytes) {
+                    let mut field_name: Option<String> = None;
+                    for line in headers_str.lines() {
+                        let lower = line.to_ascii_lowercase();
+                        if lower.starts_with("content-disposition:") {
+                            if let Some(name_idx) = line.find("name=\"") {
+                                let after = &line[name_idx + 6..];
+                                if let Some(end_q) = after.find('"') {
+                                    field_name = Some(after[..end_q].to_string());
+                                }
+                            }
+                        }
+                    }
+                    if let Some(name) = field_name {
+                        let val = match std::str::from_utf8(body_bytes) {
+                            Ok(s) => s.to_string(),
+                            Err(_) => String::from_utf8_lossy(body_bytes).into_owned(),
+                        };
+                        map.insert(name, val);
+                    }
+                }
+            }
+        }
+        Ok(Self(map))
     }
 }
 
@@ -241,9 +355,37 @@ where
         req: axum::extract::Request,
         _state: &S,
     ) -> Result<Self, Self::Rejection> {
+        let content_type = req
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_string();
+
         let bytes = axum::body::to_bytes(req.into_body(), 2 * 1024 * 1024)
             .await
             .map_err(|_| (StatusCode::PAYLOAD_TOO_LARGE, "Form body too large"))?;
+
+        let ct_lower = content_type.to_ascii_lowercase();
+        if ct_lower.starts_with("application/json") {
+            return Self::from_json_bytes(&bytes).map_err(|msg| (StatusCode::BAD_REQUEST, msg));
+        }
+
+        if ct_lower.starts_with("multipart/form-data") {
+            if let Some(b_idx) = content_type.find("boundary=") {
+                let boundary = content_type[b_idx + 9..]
+                    .split(';')
+                    .next()
+                    .unwrap_or("")
+                    .trim()
+                    .trim_matches('"');
+                if !boundary.is_empty() {
+                    return Self::from_multipart_bytes(&bytes, boundary)
+                        .map_err(|msg| (StatusCode::BAD_REQUEST, msg));
+                }
+            }
+        }
+
         let body_str = std::str::from_utf8(&bytes)
             .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid UTF-8 in form body"))?;
         Ok(FormData(yav_router::parse_query_string(body_str)))
@@ -263,33 +405,23 @@ impl CsrfToken {
                 return Self(existing);
             }
         }
-        use std::collections::hash_map::RandomState;
-        use std::hash::{BuildHasher, Hasher};
-
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0);
-        let seq = CSRF_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let pid = std::process::id();
-
-        // Sample 256 bits of OS CSPRNG entropy via 4 independent RandomState instances
-        let mut r0 = RandomState::new().build_hasher();
-        r0.write_u128(nanos);
-        let mut r1 = RandomState::new().build_hasher();
-        r1.write_u64(seq);
-        let mut r2 = RandomState::new().build_hasher();
-        r2.write_u32(pid);
-        let mut r3 = RandomState::new().build_hasher();
-        r3.write_u64(r0.finish() ^ r1.finish());
-
-        let seed = format!(
-            "yav-csrf-{nanos}-{seq}-{pid}-{:016x}-{:016x}-{:016x}-{:016x}",
-            r0.finish(),
-            r1.finish(),
-            r2.finish(),
-            r3.finish()
-        );
+        let mut random_bytes = [0u8; 32];
+        let seed = if getrandom::getrandom(&mut random_bytes).is_ok() {
+            let mut hex = String::with_capacity(64);
+            for b in random_bytes {
+                use std::fmt::Write;
+                let _ = write!(&mut hex, "{:02x}", b);
+            }
+            hex
+        } else {
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0);
+            let seq = CSRF_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let pid = std::process::id();
+            format!("yav-csrf-{nanos}-{seq}-{pid}")
+        };
         let secret = std::env::var("SESSION_SECRET")
             .or_else(|_| std::env::var("YAV_SECRET"))
             .map(|s| s.into_bytes())
@@ -332,16 +464,7 @@ pub fn csrf_field(token: impl Into<String>) -> Node {
 
 /// Constant-time string equality check to prevent timing attacks.
 pub fn constant_time_eq_str(a: &str, b: &str) -> bool {
-    let a_bytes = a.as_bytes();
-    let b_bytes = b.as_bytes();
-    if a_bytes.len() != b_bytes.len() {
-        return false;
-    }
-    let mut diff = 0u8;
-    for (x, y) in a_bytes.iter().zip(b_bytes.iter()) {
-        diff |= x ^ y;
-    }
-    diff == 0
+    crate::session::constant_time_eq(a.as_bytes(), b.as_bytes())
 }
 
 /// Validate a submitted anti-CSRF token against the expected token.
@@ -547,5 +670,43 @@ mod tests {
         );
         assert!(ext_errors.has_errors());
         assert_eq!(ext_errors.first("avatar"), Some("Only PDF allowed"));
+    }
+
+    #[tokio::test]
+    async fn test_form_data_from_json_and_multipart_requests() {
+        use axum::extract::FromRequest;
+
+        // 1. JSON payload
+        let json_req = axum::extract::Request::builder()
+            .method("POST")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(axum::body::Body::from(
+                r#"{"title":"Ship v2","priority":5,"published":true}"#,
+            ))
+            .unwrap();
+        let form = FormData::from_request(json_req, &()).await.unwrap();
+        assert_eq!(form.get("title"), Some("Ship v2"));
+        assert_eq!(form.get_parsed::<u32>("priority"), Some(5));
+        assert!(form.get_bool("published"));
+
+        // 2. Multipart payload
+        let mp_body = "--yavbound\r\nContent-Disposition: form-data; name=\"username\"\r\n\r\nalice\r\n--yavbound\r\nContent-Disposition: form-data; name=\"role\"\r\n\r\nadmin\r\n--yavbound--\r\n";
+        let mp_req = axum::extract::Request::builder()
+            .method("POST")
+            .header(
+                header::CONTENT_TYPE,
+                "multipart/form-data; boundary=yavbound",
+            )
+            .body(axum::body::Body::from(mp_body))
+            .unwrap();
+        let mp_form = FormData::from_request(mp_req, &()).await.unwrap();
+        assert_eq!(mp_form.get("username"), Some("alice"));
+        assert_eq!(mp_form.get("role"), Some("admin"));
+
+        // 3. Binary multipart payload
+        let mut binary_mp = Vec::new();
+        binary_mp.extend_from_slice(b"--binbound\r\nContent-Disposition: form-data; name=\"binary_file\"\r\n\r\n\xFF\xFE\xFD\xFC\r\n--binbound--\r\n");
+        let bin_res = FormData::from_multipart_bytes(&binary_mp, "binbound").unwrap();
+        assert!(bin_res.get("binary_file").is_some());
     }
 }

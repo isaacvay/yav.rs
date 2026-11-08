@@ -32,6 +32,8 @@ pub fn component_impl(_attr: TokenStream, item: TokenStream) -> Result<TokenStre
         }
     }
 
+    let core = crate::codegen::yav_core_root();
+
     // If there are 0 arguments:
     if sig.inputs.is_empty() {
         return Ok(quote! {
@@ -40,7 +42,7 @@ pub fn component_impl(_attr: TokenStream, item: TokenStream) -> Result<TokenStre
 
             #(#attrs)*
             #[allow(non_snake_case)]
-            #vis fn #fn_name(_props: #props_ident) -> ::yav::yav_core::Node {
+            #vis fn #fn_name(_props: #props_ident) -> #core::Node {
                 #block
             }
         });
@@ -81,7 +83,7 @@ pub fn component_impl(_attr: TokenStream, item: TokenStream) -> Result<TokenStre
 
         #(#attrs)*
         #[allow(non_snake_case)]
-        #vis fn #fn_name #impl_generics (props: #props_ident #ty_generics) -> ::yav::yav_core::Node #where_clause {
+        #vis fn #fn_name #impl_generics (props: #props_ident #ty_generics) -> #core::Node #where_clause {
             let #props_ident { #(#field_names),* } = props;
             #block
         }

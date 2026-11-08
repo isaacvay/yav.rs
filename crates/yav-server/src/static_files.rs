@@ -288,8 +288,7 @@ pub async fn serve_static_file_with_encoding(
             }
             if let Some(stem) = name.rsplit_once('.').map(|(s, _)| s) {
                 if let Some((_, hash)) = stem.rsplit_once('-') {
-                    if (6..=32).contains(&hash.len())
-                        && hash.chars().all(|c| c.is_ascii_hexdigit())
+                    if (6..=32).contains(&hash.len()) && hash.chars().all(|c| c.is_ascii_hexdigit())
                     {
                         return true;
                     }

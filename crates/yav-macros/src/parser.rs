@@ -726,7 +726,10 @@ fn parse_tag_name(reader: &mut TokenReader) -> Result<(String, Span)> {
 
 fn parse_raw_body(reader: &mut TokenReader, expected_tag: &str) -> Result<RsxNode> {
     let mut tokens = Vec::new();
-    let span = reader.peek().map(|t| t.span()).unwrap_or_else(Span::call_site);
+    let span = reader
+        .peek()
+        .map(|t| t.span())
+        .unwrap_or_else(Span::call_site);
 
     while !reader.is_empty() {
         if reader.is_closing_tag() {
@@ -819,7 +822,13 @@ fn format_token_trees(tokens: &[TokenTree], out: &mut String, brace_depth: usize
                 };
                 if open != ' ' {
                     if let Some(pc) = prev_char {
-                        if pc != '(' && pc != '[' && pc != '{' && pc != '.' && pc != '#' && pc != ':' {
+                        if pc != '('
+                            && pc != '['
+                            && pc != '{'
+                            && pc != '.'
+                            && pc != '#'
+                            && pc != ':'
+                        {
                             out.push(' ');
                         }
                     }
@@ -855,7 +864,8 @@ fn format_token_trees(tokens: &[TokenTree], out: &mut String, brace_depth: usize
             TokenTree::Punct(p) => {
                 let ch = p.as_char();
                 if let Some(pc) = prev_char {
-                    if ((ch == '=' || ch == '+' || ch == '*' || ch == '&' || ch == '|') && pc.is_alphanumeric())
+                    if ((ch == '=' || ch == '+' || ch == '*' || ch == '&' || ch == '|')
+                        && pc.is_alphanumeric())
                         || pc == ','
                         || pc == ';'
                         || (pc == ':' && ch != ':' && brace_depth > 0)

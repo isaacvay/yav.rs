@@ -8,20 +8,20 @@ Yav is organized as a Rust workspace with clear crate boundaries. Each crate has
 
 ```
 yav (umbrella re-exports)
-├── yav-core (foundation: Node, Element, rendering, escaping)
-├── yav-macros (proc macros: rsx!, #[component])
-├── yav-router (URL matching, route tables)
+├── yav-core (foundation: Node, Element, Signals, StateMachine, CRDTs, Local-First Sync, Wasm Islands, LexoRank, DOM morphing)
+├── yav-macros (proc macros: rsx!, #[component], #[server], #[derive(FromFormData, ApiSchema)], auto_routes!, typed_routes!)
+├── yav-router (file-based routing, O(L) Radix RouteTrie, parallel slots @slot, intercepting routes (.), optional catch-all [[...slug]])
 │   └── yav-core
-├── yav-server (Axum HTTP server, SSR, middleware)
+├── yav-server (Axum HTTP server, SSR, SsrCache ISR, PPR & component cache, passkeys/WebAuthn, OTel tracing, Resilience/CircuitBreaker, Outbox, GeoReplicas, Image Pipeline, PDF Signer, E2E TestClient, MCP server, auth, billing, AI SDK, jobs, adapters, Tus resumable uploads, TurboStream, Event Sourcing, ReBAC, WebPush, Mock API server, i18n linter)
 │   ├── yav-core
 │   └── yav-router
-├── yav-icons (Lucide SVG icon catalog)
+├── yav-icons (13,000+ embedded icons: Lucide Classic, MynaUI Minimal, Phosphor System)
 │   └── yav-core
-├── yav-ui (component library: Button, Card, etc.)
+├── yav-ui (58 enterprise components: Charts, DataGrid, KanbanBoard, FlowCanvas, OrgChart, AudioWaveform, LogViewer, Whiteboard, AiFilterBar, VirtualList, RichTextEditor, AiChat, DevTools, Calendar/Scheduler, Spreadsheet, DiffViewer, MediaPlayer, Image, VectorMap, GanttChart, PdfViewer, SpotlightTour, MediaRecorder, ModelViewer3D, CodePlayground, JsonTreeViewer, HexGrid, SignaturePad, Timeline, ImageCompareSlider, CookieConsent)
 │   ├── yav-core
 │   └── yav-icons
-├── yav-build (package.yavml manifest, Tailwind CLI, asset pipeline)
-└── yav-cli (CLI tool: yav new/dev/build)
+├── yav-build (package.yavml manifest, Tailwind CLI, asset pipeline, HTML/CSS minifier, search index, PWA generator)
+└── yav-cli (CLI developer toolbelt: new, dev, build, export, codegen, db with SQLite/Postgres runners, routes, doctor, analyze, pwa, deploy)
     ├── yav-core
     ├── yav-server
     ├── yav-build
@@ -157,4 +157,226 @@ The client navigation engine (`client_router_script()`) integrates the browser's
 
 ### 10. Real-Time WebSockets Live Swap (`WsBroadcast`)
 In-memory broadcast channel allowing async server events, background tasks, or pub/sub messages to push HTML fragments directly into client DOM selectors without hand-written client WebSocket handlers.
+
+### 11. Fine-Grained Reactive Signals, Statecharts & CRDT Collaboration (`yav-core`)
+- **Reactive Signals (`signals.rs`)**: `Signal<T>`, `ReadSignal<T>`, `WriteSignal<T>`, `Computed<T>`, and `SignalScope` paired with non-destructive DOM morphing (`window.__yavMorph`) and CSP-safe expression evaluation.
+- **Statecharts & Saga Workflows (`state_machine.rs`)**: Deterministic `StateMachine<S, E, C>` with guards, actions, and transition audit logs, plus `SagaWorkflow<C>` with automatic reverse-order compensating rollbacks.
+- **CRDTs, Presence & LexoRank (`collab.rs`)**: Conflict-free `LwwRegister<T>` and `LwwMap<K, V>`, multiplayer `PresenceRoom` cursor/selection tracking, and `LexoRank` $O(1)$ fractional indexing.
+
+### 12. Enterprise SaaS, AI SDK, Fintech Billing & Pluggable Adapters (`yav-server`)
+- **Auth & Security (`auth.rs`)**: PBKDF2-SHA256 password hashing, HS256 `JwtManager`, OAuth2 PKCE (`OAuthConfig`), RFC 6238 `Totp` 2FA, and RBAC `AuthUser`.
+- **Feature Flags, Multi-Tenancy, ABAC & Audit (`flags.rs`)**: Deterministic SHA-256 percentage rollouts (`FlagEngine`), B2B `TenantContext`, attribute-based `PolicyEngine`, and tamper-evident SHA-256 hash-chained `AuditTrail`.
+- **AI SDK & Hybrid RAG (`ai.rs`)**: `Conversation`, JSON-Schema `ToolRegistry`, `stream_ui_fragment` & `stream_text_sse` SSE streaming, cosine `VectorIndex`, and `reciprocal_rank_fusion`.
+- **Billing, Storage & Geospatial (`billing.rs`, `storage.rs`, `geo.rs`)**: Exact integer `Money` with penny-preserving `allocate`, Stripe/Svix `WebhookVerifier`, `IdempotencyStore`, `UsageMeter`, S3/R2 `PresignedUrlSigner`, and Haversine `GeoPolygon` / `SpatialIndex`.
+- **Pluggable Infrastructure Adapters (`adapters.rs`)**: `DatabaseAdapter`, `CacheAdapter`, `StorageAdapter`, `LlmAdapter`, `MailAdapter`, and `ServiceAdapters` for connecting Postgres/SQLite, Redis, S3/R2, OpenAI/Anthropic, and SMTP/Resend.
+
+### 13. Dynamic Image Optimization & Blur LQIP (`image_opt.rs` & `Image`)
+- Server-side endpoint `GET /_yav/image` with path traversal sanitization, SHA-256 content hashes, and `Cache-Control: public, max-age=31536000, immutable`.
+- In-memory generation of lightweight SVG Gaussian blur LQIP data URIs (`generate_blur_svg_data_uri`) for instantaneous zero-CLS loading states.
+- Client component `Image` with automatic URL rewriting (`.optimize(true)`), responsive `srcset`, and inline blur background integration (`.blur_placeholder(true)`).
+
+### 14. Automated CSP Nonce Injection into Shell Scripts
+- Cryptographic CSP nonces (`CspNonce`) generated per request or extracted from upstream proxy headers (`x-nonce`, `csp-nonce`).
+- Injected automatically onto all `<script>` tags across the entire rendered document shell (`HtmlPage::render`), securing micro-actions and tree-shaken runtimes under strict `Content-Security-Policy` policies without `unsafe-inline`.
+
+### 15. Server Actions & Compile-Time RPC Auto-Wiring (`yav-macros`)
+- `#[server]` transforms async functions into dual-purpose constructs: directly invokable Rust functions in SSR code, and mountable HTTP `POST` endpoints.
+- `auto_routes!(app)` automatically scans route files and wires all `#[server]` functions onto the application router without manual routing boilerplate.
+- Declarative validation via `#[derive(FromFormData)]` and OpenAPI schema derivation via `#[derive(ApiSchema)]`.
+
+### 16. Multi-Format Request Body Deserialization (`FormData`)
+- Transparent ingestion of `application/json`, `multipart/form-data`, and `application/x-www-form-urlencoded` request bodies into a unified typed dictionary.
+- Enables single endpoint handlers to serve HTML forms, mobile JSON clients, and file uploads simultaneously.
+
+### 17. Real-Time Node Graph Rerouting (`FlowCanvas` & Runtime)
+- Visual workflow builder with interactive pointer-dragged nodes (`FlowNode`) and cubic Bézier curved edges (`FlowEdge`).
+- Embedded client runtime listens for node dragging and continuously recomputes SVG path definitions `M x1 y1 C cx1 y1, cx2 y2, x2 y2` and edge label coordinates in real time.
+
+### 18. Optimistic UI Mutations & Automatic Rollbacks (`yav-core`)
+- Instant 0ms perceived latency: user clicks (e.g. `yav:optimistic-toggle`, `yav:optimistic-inc`, `yav:optimistic-set`) trigger immediate client DOM mutations.
+- The previous state (classes, innerHTML) is stored in a data snapshot on the DOM node.
+- If the background fetch request fails (HTTP 4xx/5xx or network drop), the mutation automatically rolls back and an optional toast notification (`yav:rollback-toast`) is displayed.
+
+### 19. Reactive Live Queries & CDC Server-Push (`yav::server::live_query`)
+- High-throughput broadcast channels dispatch table-level and row-level invalidations across server instances.
+- Connected clients stream CDC events over Server-Sent Events (`GET /_yav/live`) and selectively trigger DOM morphing or component re-rendering without full-page reloads.
+
+### 20. Cryptographic PoW Anti-Bot Shield & Invisible Honeypots (`yav::server::shield`)
+- Client-side Proof-of-Work puzzle solving via Web Workers prevents DDoS, credential stuffing, and bot scrapers.
+- Invisible trap fields (`Honeypot::render_input`) silently catch and reject automated spam bots.
+
+### 21. Zero-Dependency GraphQL Engine & GraphiQL Explorer (`yav::server::graphql`)
+- Fully typed GraphQL schema definition in pure Rust with synchronous and asynchronous field resolvers.
+- Embedded GraphiQL 3.x developer playground served directly from the server binary.
+
+### 22. Geolocation Context & European Union VAT Engine (`yav::server::geo_ip`)
+- Automatic edge proxy header resolution (`cf-ipcountry`, `x-country-code`, `x-geo-country`).
+- Exact penny-rounded multi-currency tax calculation across all 27 EU member states with standard rates.
+
+### 23. Micro-Frontends & Module Federation Gateway (`yav::server::federation`)
+- Declarative upstream route mapping with automatic path stripping and authentication forwarding.
+- Parallel remote slot stitching (`stitch_slot`) with timeout-guarded fallbacks for resilient multi-team architectures.
+
+### 24. Pure Rust Vector Barcode & QR Code Engine (`yav::server::barcode`)
+- ISO/IEC 18004 QR code matrix generation (Version 2, 25x25) and Code 128 (Subset B) barcode generation.
+- Emits lightweight vector SVGs with zero native C dependencies.
+
+### 25. Automated Security Auditor & W3C CSP Reporting (`yav::server::security_audit`)
+- Real-time OWASP compliance scoring and letter grading (A+ to F) for HTTP response headers.
+- Built-in CSP violation collector endpoint (`POST /_yav/csp-report`) with in-memory ring buffer telemetry.
+
+### 26. Next-Generation UI Widgets (`yav-ui`)
+- **Web ANSI Terminal (`terminal.rs`)**: High-performance browser terminal emulator with 16-color ANSI SGR formatting and live log streaming.
+- **Dynamic Form Builder (`form_builder.rs`)**: Runtime generation of accessible, styled forms directly from JSON Schema.
+- **Dual-Pane Markdown Editor (`markdown_editor.rs`)**: Split-view editor with live preview, word count, and comprehensive formatting toolbar.
+- **Advanced SVG Charts (`charts_advanced.rs`)**: Calendar activity Heatmaps, Sankey flow diagrams, and multi-metric Radar/Spider charts.
+
+### 27. Local-First & Offline Sync Protocol (`yav-core::local_first`)
+- Client mutations are queued immediately in browser storage (`IndexedDB` / `localStorage`) via `OfflineMutation`.
+- Optimistic client-side application of changes gives 0ms perceived latency even completely offline.
+- When network connectivity resumes, the client emits a `SyncBatch` containing queued mutations with logical timestamps.
+- The server processes mutations sequentially, resolving conflicts using Last-Write-Wins (LWW) or custom CRDT merge strategies, and returns a `SyncResponse` with applied or rejected identifiers.
+
+### 28. Zero-Overhead WebAssembly Client Islands (`yav-core::wasm`, `<WasmIsland />`)
+- Declarative WebAssembly hydration islands embedded directly into Server-Side Rendered HTML:
+  ```rust
+  use yav::ui::WasmIsland;
+  rsx! {
+      <WasmIsland 
+          module_url="/wasm/image_filter.wasm" 
+          container_id="wasm-canvas" 
+          export_fn="init_filter" 
+          props_json=r#"{"radius": 5}"# 
+      />
+  }
+  ```
+- Uses native browser `WebAssembly.instantiateStreaming` with zero JavaScript bundlers or webpack glue code required.
+- Falls back gracefully to server-rendered static HTML placeholders if WebAssembly is unsupported.
+
+### 29. Proactive Resilience: Circuit Breaker, Bulkhead & Concurrency Limiting (`yav-server::resilience`)
+- **Circuit Breaker (`CircuitBreaker`)**: Three-state state machine (`Closed`, `Open`, `HalfOpen`) tracking consecutive downstream failures and latency spikes. Trips open automatically to fail fast and prevent thread pool exhaustion, gradually recovering during half-open probes.
+- **Bulkhead Isolation (`Bulkhead`)**: Partitions available server execution slots across critical services (e.g. payment processing vs. public analytics), guaranteeing that a degradation in non-critical endpoints cannot starve vital operations.
+- **Adaptive Concurrency Limiter (`AdaptiveConcurrencyLimiter`)**: Dynamically scales in-flight request limits according to measured round-trip time (RTT) feedback, preventing queue saturation and latency degradation.
+
+### 30. Transactional Outbox Pattern & Event Bus (`yav-server::outbox`)
+- Solves the dual-write problem across distributed databases and message brokers (Kafka, RabbitMQ, Redis).
+- State mutations and corresponding domain events are written atomically within the same database transaction into an `outbox` table.
+- A background worker (`OutboxProcessor`) continuously polls pending outbox entries, publishes them to the message broker with exponential backoff retries, and marks successfully acknowledged messages as dispatched.
+
+### 31. Multi-Region Database Replica Pool & Sticky Router (`yav-server::replica_pool`)
+- Transparent connection routing between a single primary database (writes) and multiple geographically distributed read replicas:
+  ```rust
+  use yav_server::replica_pool::{DbReplicaPool, ReplicaRole};
+  let pool = DbReplicaPool::new(primary_connection_string)
+      .add_replica("replica-us-east", us_east_conn)
+      .add_replica("replica-eu-west", eu_west_conn);
+  ```
+- **Read-Your-Own-Writes Consistency**: Automatically pins a user session to the primary writer for a configurable time window (e.g. 5 seconds) after any `POST`/`PUT`/`DELETE` mutation, preventing stale read artifacts.
+
+### 32. Pure-Rust WebP / AVIF & Image Pipeline (`yav-server::image_pipeline`)
+- Zero native C/C++ dependencies: image transcoding, metadata inspection, and downsampling implemented entirely in pure Rust.
+- **Magic Byte Sniffing**: Reliably detects PNG, JPEG, GIF, WebP, and AVIF byte headers.
+- **Pure-Rust WebP VP8 Container Encoder**: Direct RIFF WebP container packing and VP8 intra-frame encoding with bilinear downsampling for responsive `srcset` generation.
+- Integrated into `GET /_yav/image` with path traversal guards and immutable cache headers.
+
+### 33. Zero-Dependency Vector PDF Signer & Watermarking (`yav-server::pdf_signer`)
+- Stamping digital signatures and visual watermarks directly onto PDF 1.4 byte structures:
+  ```rust
+  use yav_server::pdf_signer::{PdfSigner, PdfWatermark};
+  let signed_pdf = PdfSigner::new("Acme Corp")
+      .with_reason("Contract Approval")
+      .sign_document(&pdf_bytes, &private_hmac_key)?;
+  ```
+- Embeds tamper-evident SHA-256 content hashes, RFC 3339 timestamps, and diagonal vector watermark overlays (`CONFIDENTIAL`, `DRAFT`) with zero external C dependencies.
+
+### 34. Multi-Tier Distributed Cache & XFetch Stampede Mitigation (`yav-server::distributed_cache`)
+- Combines ultra-fast in-memory L1 cache (`MemoryL1Store`) with pluggable distributed L2 cache (Redis, Memcached).
+- **XFetch Probabilistic Early Expiration**:
+  $$\Delta t \cdot \beta \cdot \ln(\text{random}()) > (\text{expiry} - \text{now})$$
+  As an item nears expiration, concurrent readers probabilistically trigger background recomputation before the cache actually expires, completely eliminating cache stampedes and dogpiling under massive concurrent load.
+
+### 35. Distributed Lock & Leader Election Protocol (`yav-server::distributed_lock`)
+- Cluster-wide atomic leases (`DistributedLock`) with millisecond TTL and automatic heartbeat renewal.
+- Dynamic leader election (`LeaderElector`) ensuring only a single cluster instance executes singleton background workers (e.g. cron schedulers, billing synchronizations).
+- Resilient heartbeat leases with automatic failover if the current leader experiences network partition or node failure.
+
+### 36. ReBAC / Zanzibar Relationship-Based Access Control (`yav-server::rebac`)
+- Fine-grained graph authorization inspired by Google Zanzibar:
+  ```rust
+  use yav_server::rebac::RebacGraph;
+  let mut graph = RebacGraph::new();
+  graph.add_relation("doc:1", "editor", "user:alice");
+  graph.add_relation("doc:1", "viewer", "team:marketing");
+  graph.add_relation("team:marketing", "member", "user:bob");
+  
+  // Transitive resolution:
+  assert!(graph.check("user:bob", "viewer", "doc:1"));
+  ```
+- Supports direct assignments, transitive implications, role inheritance, and cycle-safe graph traversals.
+
+### 37. Prometheus Metrics & Grafana-Ready Dashboard (`yav-server::metrics_dashboard`)
+- Built-in metrics collection tracking request throughput, SSR render latencies (p50, p95, p99), memory usage, and active SSE/WebSocket streams.
+- Live in-app telemetry dashboard served at `/_yav/metrics/dashboard` with responsive SVG gauges, throughput bar charts, and percentile latency distributions with zero external monitoring dependencies required.
+
+### 38. Phonetic & Typo-Tolerant Fuzzy Search (`yav-server::fuzzy_search`)
+- Intelligent typo-tolerant indexing supporting:
+  - **Damerau-Levenshtein Distance**: Handles character insertions, deletions, substitutions, and adjacent transpositions.
+  - **American Soundex**: Phonetic encoding grouping phonetically similar names and words (e.g. "Smith" and "Smyth").
+  - **Query Suggestions**: Generates "Did you mean?" suggestions when search queries yield low direct scores.
+
+### 39. Streaming TurboStream Multi-Zone DOM Mutations (`yav-server::turbo_stream`)
+- Hotwire-compatible multi-zone DOM updates streamed over HTTP chunked responses or Server-Sent Events.
+- Supports 7 atomic actions (`append`, `prepend`, `replace`, `update`, `remove`, `before`, `after`) targeting specific DOM container IDs:
+  ```rust
+  use yav_server::turbo_stream::{TurboStream, TurboAction};
+  let mutation = TurboStream::new(TurboAction::Update, "notification-badge", "<span class='badge'>3</span>");
+  ```
+
+### 40. Event Sourcing & CQRS Aggregate Engine (`yav-server::event_sourcing`)
+- Immutable append-only domain event streams (`DomainEvent`, `EventStore`).
+- State rehydration of domain aggregates with strict optimistic version concurrency checks.
+- Asynchronous read-model projections (`Projection`) generating optimized query views decoupled from write models.
+
+### 41. Resumable Chunked Uploads (Tus Protocol v1.0.0 with Disk Spooling) (`yav-server::resumable_upload`)
+- Full implementation of the open Tus v1.0.0 protocol:
+  - `POST /files` to initialize an upload session with `Upload-Length` and metadata.
+  - `PATCH /files/{id}` to send partial byte chunks with `Upload-Offset`.
+  - `HEAD /files/{id}` to query current server offset for network resume after disconnects.
+- **Disk Spooling**: Chunks are streamed directly to temporary files on disk (`with_spool_dir`), protecting server memory against OOM DoS when handling gigabyte-scale file uploads.
+
+### 42. RFC 8291/8292 WebPush Protocol & VAPID Authorization (`yav-server::web_push`)
+- Native browser push notification dispatching with zero external npm or C dependencies:
+  - Generates ECDSA-signed VAPID authorization JWT tokens (`VapidSigner`).
+  - Encrypts notification payloads using AES-128-GCM framing per RFC 8291.
+  - Directly dispatches HTTP/2 push requests to browser push services (Mozilla, Google FCM, Apple APNs).
+
+### 43. Mock API Server & Realistic Data Faker (`yav-server::mock_server`)
+- Embedded mock server for rapid prototyping, frontend development, and E2E test fixtures:
+  - Declarative route registration with path pattern matching and method filtering.
+  - Configurable synthetic latency and failure rates to simulate edge network conditions.
+  - Deterministic fake data generator (`MockFaker`) producing realistic names, emails, addresses, UUIDs, dates, and currency values.
+
+### 44. Static i18n Key Extractor & Translation Linter (`yav-server::i18n_lint`)
+- Static analysis engine scanning Rust source files for `t!("...")` macro invocations:
+  - Identifies missing translation keys across language catalogs (`en.json`, `fr.json`, etc.).
+  - Detects dead or orphaned translation keys present in dictionaries but never referenced in code.
+  - Generates comprehensive compliance reports and warning tallies for CI/CD pipelines.
+
+### 45. $O(L)$ Radix Route Trie & Dynamic Route Resolution (`yav-router::trie`)
+- High-performance Radix Prefix Tree (`RouteTrieNode`, `RouteTrie`) replacing linear route scanning.
+- Route lookup complexity is $O(L)$ where $L$ is the number of path segments, completely independent of the total number of registered routes ($N$).
+- Deterministic match precedence:
+  1. **Static segments** (`/users/profile`)
+  2. **Dynamic parameter segments** (`/users/:id`)
+  3. **Catch-all wildcard segments** (`/docs/*slug`)
+- Dynamic parameters and wildcards are extracted directly during trie traversal with minimal string allocations.
+
+### 46. Database Scaffolding CLI with SQLite & Postgres Runners (`yav-cli::db_cmd`)
+- Built-in migration engine supporting both SQLite and PostgreSQL:
+  - Reads connection strings directly from `.env` (`DATABASE_URL`).
+  - Applies forward migrations (`yav db migrate`) and rolls back previous steps (`yav db rollback`).
+  - Computes and verifies SHA-256 checksums in the `_yav_migrations` journal table to guarantee migration history immutability.
+
+
+
 

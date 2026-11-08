@@ -13,8 +13,11 @@ extern crate proc_macro;
 mod codegen;
 mod component;
 mod file_component;
+mod form_derive;
 mod parser;
 mod routes_macro;
+mod schema_derive;
+mod server_macro;
 
 use proc_macro::TokenStream;
 use syn::parse_macro_input;
@@ -253,28 +256,37 @@ fn check_compile_time_locale_key(key_lit: &syn::LitStr) -> Result<(), syn::Error
 pub fn t(input: TokenStream) -> TokenStream {
     let parsed = parse_macro_input!(input as TranslationMacroInput);
     let key = &parsed.key;
-    let replacements: Vec<proc_macro2::TokenStream> = parsed
+    let pair_defs: Vec<proc_macro2::TokenStream> = parsed
         .args
         .iter()
         .map(|(k, v)| {
             quote::quote! {
-                __yav_tr = __yav_tr.replace(&format!("{{{}}}", #k), &(#v).to_string());
+                let __arg_str = (#v).to_string();
+                __pairs.push((#k, __arg_str));
             }
         })
         .collect();
 
+    let core = crate::codegen::yav_core_root();
+
     let tokens = quote::quote! {
         {
             let __yav_key = #key;
-            let mut __yav_tr = if let Some(i18n) = ::yav::yav_core::use_context::<::yav::yav_core::I18n>() {
-                let locale = ::yav::yav_core::use_context::<String>()
+            let mut __pairs: ::std::vec::Vec<(&str, ::std::string::String)> = ::std::vec::Vec::new();
+            #(#pair_defs)*
+            let __borrowed_pairs: ::std::vec::Vec<(&str, &str)> = __pairs.iter().map(|(k, v)| (*k, v.as_str())).collect();
+            if let Some(i18n) = #core::use_context::<#core::I18n>() {
+                let locale = #core::use_context::<String>()
                     .unwrap_or_else(|| i18n.default_locale().to_string());
-                i18n.t(&locale, __yav_key).to_string()
+                i18n.translate(&locale, __yav_key, &__borrowed_pairs)
             } else {
-                __yav_key.to_string()
-            };
-            #(#replacements)*
-            __yav_tr
+                let mut __res = __yav_key.to_string();
+                for (k, v) in &__borrowed_pairs {
+                    let needle = format!("{{{}}}", k);
+                    __res = __res.replace(&needle, v);
+                }
+                __res
+            }
         }
     };
     tokens.into()
@@ -301,32 +313,76 @@ pub fn t_strict(input: TokenStream) -> TokenStream {
     }
 
     let key = &parsed.key;
-    let replacements: Vec<proc_macro2::TokenStream> = parsed
+    let pair_defs: Vec<proc_macro2::TokenStream> = parsed
         .args
         .iter()
         .map(|(k, v)| {
             quote::quote! {
-                __yav_tr = __yav_tr.replace(&format!("{{{}}}", #k), &(#v).to_string());
+                let __arg_str = (#v).to_string();
+                __pairs.push((#k, __arg_str));
             }
         })
         .collect();
 
+    let core = crate::codegen::yav_core_root();
+
     let tokens = quote::quote! {
         {
             let __yav_key = #key;
-            let mut __yav_tr = if let Some(i18n) = ::yav::yav_core::use_context::<::yav::yav_core::I18n>() {
-                let locale = ::yav::yav_core::use_context::<String>()
+            let mut __pairs: ::std::vec::Vec<(&str, ::std::string::String)> = ::std::vec::Vec::new();
+            #(#pair_defs)*
+            let __borrowed_pairs: ::std::vec::Vec<(&str, &str)> = __pairs.iter().map(|(k, v)| (*k, v.as_str())).collect();
+            if let Some(i18n) = #core::use_context::<#core::I18n>() {
+                let locale = #core::use_context::<String>()
                     .unwrap_or_else(|| i18n.default_locale().to_string());
                 if !i18n.has_key(&locale, __yav_key) {
                     panic!("Strict i18n lookup failed: key '{}' missing for locale '{}'", __yav_key, locale);
                 }
-                i18n.t(&locale, __yav_key).to_string()
+                i18n.translate(&locale, __yav_key, &__borrowed_pairs)
             } else {
                 panic!("Strict i18n lookup failed: no I18n context found when resolving key '{}'", __yav_key);
-            };
-            #(#replacements)*
-            __yav_tr
+            }
         }
     };
     tokens.into()
+}
+
+/// Derive [`FromFormData`](::yav::server::FromFormData) for a struct with declarative field validation rules.
+///
+/// # Supported `#[form(...)]` Field Attributes
+/// - `#[form(required = "Email is required")]` or `#[form(required)]`
+/// - `#[form(email = "Invalid email format")]` or `#[form(email)]`
+/// - `#[form(min_length = 8, message = "Minimum 8 characters")]`
+/// - `#[form(max_length = 100)]`
+/// - `#[form(min = 1, max = 120)]`
+/// - `#[form(matches = "password", message = "Passwords must match")]`
+#[proc_macro_derive(FromFormData, attributes(form))]
+pub fn derive_from_form_data(input: TokenStream) -> TokenStream {
+    let parsed = parse_macro_input!(input as syn::DeriveInput);
+    match form_derive::derive_from_form_data_impl(parsed) {
+        Ok(tokens) => tokens.into(),
+        Err(err) => err.to_compile_error().into(),
+    }
+}
+
+/// Derive OpenAPI 3.1 JSON Schema and TypeScript interface definitions (`schema_name()`,
+/// `openapi_schema_json()`, `ts_interface()`) for a struct.
+#[proc_macro_derive(ApiSchema)]
+pub fn derive_api_schema(input: TokenStream) -> TokenStream {
+    let parsed = parse_macro_input!(input as syn::DeriveInput);
+    match schema_derive::derive_api_schema_impl(parsed) {
+        Ok(tokens) => tokens.into(),
+        Err(err) => err.to_compile_error().into(),
+    }
+}
+
+/// Transform an `async fn` into a type-safe Server Function / Server Action (RPC).
+///
+/// Generates `<fn_name>_url()`, `<fn_name>_handler()`, and `register_<fn_name>(app)`.
+#[proc_macro_attribute]
+pub fn server(attr: TokenStream, item: TokenStream) -> TokenStream {
+    match server_macro::server_macro_impl(attr.into(), item.into()) {
+        Ok(tokens) => tokens.into(),
+        Err(err) => err.to_compile_error().into(),
+    }
 }

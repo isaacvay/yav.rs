@@ -121,13 +121,7 @@ pub struct SsrLayoutChain(pub Arc<dyn Fn(crate::Node) -> crate::Node + Send + Sy
 ///
 /// Returns `None` if no context of this type was provided.
 pub fn use_context<T: Clone + 'static>() -> Option<T> {
-    CONTEXT_STACK.with(|stack| {
-        stack
-            .borrow()
-            .iter()
-            .rev()
-            .find_map(|map| map.get::<T>())
-    })
+    CONTEXT_STACK.with(|stack| stack.borrow().iter().rev().find_map(|map| map.get::<T>()))
 }
 
 /// Capture a clone of the current active context map, suitable for transfer across async tasks or threads.

@@ -130,7 +130,6 @@ pub async fn icons(_req: Request) -> yav::server::HtmlPage {
         "x",
         "x-circle",
         "zap",
-        
     ];
 
     let page = rsx! {

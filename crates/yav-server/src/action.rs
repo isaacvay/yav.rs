@@ -80,7 +80,11 @@ impl RouteContext {
             .or_else(|| req.headers().get("csp-nonce"))
             .and_then(|v| v.to_str().ok())
             .map(|s| s.to_string())
-            .or_else(|| req.extensions().get::<crate::middleware::CspNonce>().map(|n| n.0.clone()))
+            .or_else(|| {
+                req.extensions()
+                    .get::<crate::middleware::CspNonce>()
+                    .map(|n| n.0.clone())
+            })
             .unwrap_or_else(|| crate::middleware::CspNonce::generate().0);
 
         Self {
@@ -155,15 +159,19 @@ impl RouteContext {
     /// Retrieve or generate a cryptographic CSP nonce for securing inline scripts.
     /// Returns a stable nonce across all calls within the same request.
     pub fn csp_nonce(&self) -> String {
-        if let Some(val) = self.headers.get("x-nonce").or_else(|| self.headers.get("csp-nonce")) {
+        if !self.nonce.is_empty() {
+            return self.nonce.clone();
+        }
+        if let Some(val) = self
+            .headers
+            .get("x-nonce")
+            .or_else(|| self.headers.get("csp-nonce"))
+        {
             if let Ok(s) = val.to_str() {
                 if !s.is_empty() {
                     return s.to_string();
                 }
             }
-        }
-        if !self.nonce.is_empty() {
-            return self.nonce.clone();
         }
         crate::middleware::CspNonce::generate().0
     }

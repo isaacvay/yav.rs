@@ -18,7 +18,7 @@ yav-macros.workspace = true
 yav-router.workspace = true
 yav-server.workspace = true
 yav-ui.workspace = true
-yav-icons.workspace = true
+yav-icons = { workspace = true, default-features = false }
 yav-build.workspace = true
 
 [features]
@@ -33,3 +33,4 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [dev-dependencies]
 tokio.workspace = true
+serde_json.workspace = true

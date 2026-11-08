@@ -254,7 +254,9 @@ pub fn highlight_code(code: &str, lang: CodeLanguage, show_lines: bool) -> Strin
 fn highlight_line(line: &str, lang: CodeLanguage, out: &mut String) {
     let trimmed = line.trim_start();
     // Full-line comments
-    if (lang == CodeLanguage::Rust || lang == CodeLanguage::JavaScript || lang == CodeLanguage::TypeScript)
+    if (lang == CodeLanguage::Rust
+        || lang == CodeLanguage::JavaScript
+        || lang == CodeLanguage::TypeScript)
         && trimmed.starts_with("//")
     {
         let indent = &line[..line.len() - trimmed.len()];
@@ -343,7 +345,11 @@ fn highlight_line(line: &str, lang: CodeLanguage, out: &mut String) {
         }
 
         // Rust attributes #[...]
-        if lang == CodeLanguage::Rust && chars[i] == '#' && i + 1 < chars.len() && chars[i + 1] == '[' {
+        if lang == CodeLanguage::Rust
+            && chars[i] == '#'
+            && i + 1 < chars.len()
+            && chars[i + 1] == '['
+        {
             let start = i;
             while i < chars.len() && chars[i] != ']' {
                 i += 1;
@@ -367,7 +373,12 @@ fn highlight_line(line: &str, lang: CodeLanguage, out: &mut String) {
             out.push_str(r#"<span class="text-sky-400">&lt;"#);
             i += 1;
             let start = i;
-            while i < chars.len() && (chars[i].is_ascii_alphanumeric() || chars[i] == '/' || chars[i] == '-' || chars[i] == ':') {
+            while i < chars.len()
+                && (chars[i].is_ascii_alphanumeric()
+                    || chars[i] == '/'
+                    || chars[i] == '-'
+                    || chars[i] == ':')
+            {
                 i += 1;
             }
             let tag: String = chars[start..i].iter().collect();
@@ -385,7 +396,10 @@ fn highlight_line(line: &str, lang: CodeLanguage, out: &mut String) {
             let word: String = chars[start..i].iter().collect();
 
             // Check if macro call (e.g. `println!`, `rsx!`)
-            if i < chars.len() && chars[i] == '!' && (lang == CodeLanguage::Rust || lang == CodeLanguage::Html) {
+            if i < chars.len()
+                && chars[i] == '!'
+                && (lang == CodeLanguage::Rust || lang == CodeLanguage::Html)
+            {
                 i += 1;
                 out.push_str(r#"<span class="text-purple-400 font-semibold">"#);
                 out.push_str(&yav_core::escape_html(&word));
@@ -415,7 +429,12 @@ fn highlight_line(line: &str, lang: CodeLanguage, out: &mut String) {
         // Numbers
         if chars[i].is_ascii_digit() {
             let start = i;
-            while i < chars.len() && (chars[i].is_ascii_hexdigit() || chars[i] == '.' || chars[i] == 'x' || chars[i] == '_') {
+            while i < chars.len()
+                && (chars[i].is_ascii_hexdigit()
+                    || chars[i] == '.'
+                    || chars[i] == 'x'
+                    || chars[i] == '_')
+            {
                 i += 1;
             }
             let num: String = chars[start..i].iter().collect();

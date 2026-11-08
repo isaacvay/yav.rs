@@ -16,7 +16,10 @@ pub async fn run(output_dir: &str, base_url: &str) -> Result<(), Box<dyn std::er
         fs::create_dir_all(out_path)?;
     }
 
-    println!("  Target output directory: \x1b[1m{}\x1b[0m", out_path.display());
+    println!(
+        "  Target output directory: \x1b[1m{}\x1b[0m",
+        out_path.display()
+    );
 
     // 1. Copy public static assets into output_dir
     let public_dir = Path::new("public");
@@ -48,7 +51,10 @@ pub async fn run(output_dir: &str, base_url: &str) -> Result<(), Box<dyn std::er
     static_routes.sort();
     static_routes.dedup();
 
-    println!("  Discovered {} static route(s) to prerender:", static_routes.len());
+    println!(
+        "  Discovered {} static route(s) to prerender:",
+        static_routes.len()
+    );
     for route in &static_routes {
         println!("    - {}", route);
     }
@@ -87,7 +93,11 @@ pub async fn run(output_dir: &str, base_url: &str) -> Result<(), Box<dyn std::er
         };
 
         if !ran_ssr_export || !rel_file.exists() {
-            let clean_title = if route == "/" { "Home" } else { route.trim_start_matches('/') };
+            let clean_title = if route == "/" {
+                "Home"
+            } else {
+                route.trim_start_matches('/')
+            };
             let title = format!("{} — Yav Application", clean_title.replace('/', " — "));
             let body = format!(
                 r#"<main class="min-h-screen bg-slate-950 text-white flex flex-col items-center justify-center p-8">
@@ -99,11 +109,17 @@ pub async fn run(output_dir: &str, base_url: &str) -> Result<(), Box<dyn std::er
 </main>"#,
                 route
             );
-            let html = yav_core::document_shell(&title, "", &body, yav_core::YAV_MICRO_ACTIONS_SCRIPT);
-            fs::write(&rel_file, html)?;
+            let html =
+                yav_core::document_shell(&title, "", &body, yav_core::YAV_MICRO_ACTIONS_SCRIPT);
+            let minified = yav_build::minify_html(&html);
+            fs::write(&rel_file, minified)?;
         }
         exported_count += 1;
-        println!("    \x1b[32m✔\x1b[0m Prerendered {} ➜ {}", route, rel_file.display());
+        println!(
+            "    \x1b[32m✔\x1b[0m Prerendered {} ➜ {}",
+            route,
+            rel_file.display()
+        );
     }
 
     // 4. Generate sitemap and robots.txt in export directory

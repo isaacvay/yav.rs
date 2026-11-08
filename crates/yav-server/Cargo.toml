@@ -27,4 +27,10 @@ serde_json.workspace = true
 hyper.workspace = true
 hmac.workspace = true
 sha2.workspace = true
+subtle.workspace = true
+getrandom.workspace = true
 futures-util = "0.3"
+
+[features]
+default = ["full"]
+full = []

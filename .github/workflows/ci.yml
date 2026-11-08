@@ -32,11 +32,17 @@ jobs:
       - name: Check workspace compilation
         run: cargo check --workspace
 
+      - name: Check examples compilation
+        run: cargo check --manifest-path examples/dashboard/Cargo.toml
+
       - name: Run Clippy linter
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
       - name: Run test suite
         run: cargo test --workspace
+
+      - name: Run examples tests
+        run: cargo test --manifest-path examples/dashboard/Cargo.toml
 
   audit:
     name: Security Audit

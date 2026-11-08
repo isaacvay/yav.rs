@@ -98,9 +98,7 @@ impl BoxedHandler {
             let mut ctx_map = crate::action::RouteContext::from_request(&req).ssr_context_map();
             ctx_map.insert(chain.clone());
             let fut = yav_core::with_context_map(ctx_map.clone(), || inner(req));
-            Box::pin(async move {
-                yav_core::with_context_map_async(ctx_map, fut).await
-            })
+            Box::pin(async move { yav_core::with_context_map_async(ctx_map, fut).await })
         }))
     }
 
@@ -777,6 +775,12 @@ impl YavApp {
         self.route(path, Method::POST, BoxedHandler::from_extractor1(handler))
     }
 
+    /// Mount the built-in `/_yav/image` dynamic image optimization & blur placeholder endpoint.
+    #[must_use]
+    pub fn with_image_optimizer(self) -> Self {
+        self.get_with("/_yav/image", crate::image_opt::image_optimizer_handler)
+    }
+
     /// Register a cached `GET` route with Incremental Static Regeneration (`stale-while-revalidate`) and TTL.
     ///
     /// Responses are cached in memory for `ttl`. Subsequent requests within `ttl` receive an instant
@@ -795,10 +799,36 @@ impl YavApp {
             let inner = inner.clone();
             let cache = cache.clone();
             Box::pin(async move {
-                let cache_key = match req.uri().query() {
+                // Bypass cache if request contains authentication credentials
+                let has_auth = req
+                    .headers()
+                    .contains_key(axum::http::header::AUTHORIZATION)
+                    || req
+                        .headers()
+                        .get(axum::http::header::COOKIE)
+                        .and_then(|c| c.to_str().ok())
+                        .map(|c| c.contains("_yav_session"))
+                        .unwrap_or(false);
+                if has_auth {
+                    return inner.call(req).await;
+                }
+
+                let lang = req
+                    .headers()
+                    .get(axum::http::header::ACCEPT_LANGUAGE)
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("");
+                let is_hx = req.headers().get("HX-Request").is_some();
+                let path_and_query = match req.uri().query() {
                     Some(q) if !q.is_empty() => format!("{}?{}", req.uri().path(), q),
                     _ => req.uri().path().to_string(),
                 };
+                let cache_key = format!(
+                    "{}|{}|{}",
+                    path_and_query,
+                    lang,
+                    if is_hx { "hx" } else { "full" }
+                );
 
                 if let Some(entry) = cache.get(&cache_key) {
                     if entry.is_fresh(ttl) {
@@ -839,8 +869,10 @@ impl YavApp {
                                             revalidating: false,
                                         },
                                     );
+                                    return;
                                 }
                             }
+                            bg_cache.cancel_revalidation(&bg_key);
                         });
                     }
                     return entry.into_response_with_status("STALE", ttl);
@@ -972,6 +1004,22 @@ impl YavApp {
             router = router.route(
                 "/metrics",
                 axum::routing::get(crate::health::metrics_handler),
+            );
+        }
+        if !routes_by_path.contains_key("/_yav/image") {
+            router = router.route(
+                "/_yav/image",
+                axum::routing::get(crate::image_opt::image_optimizer_handler),
+            );
+        }
+        if !routes_by_path.contains_key("/_yav/og") {
+            router = router.route("/_yav/og", axum::routing::get(crate::og::og_image_handler));
+        }
+        if !routes_by_path.contains_key("/_yav/vitals") {
+            router = router.route(
+                "/_yav/vitals",
+                axum::routing::post(crate::telemetry::vitals_handler)
+                    .get(crate::telemetry::vitals_summary_handler),
             );
         }
 
@@ -1253,8 +1301,11 @@ impl YavApp {
                 let target_file = if uri_path == "/" {
                     out_path.join("index.html")
                 } else {
-                    let clean = uri_path.trim_start_matches('/');
-                    let dir = out_path.join(clean);
+                    let clean = uri_path.trim_start_matches('/').replace("..", "");
+                    let dir = out_path.join(&clean);
+                    if !dir.starts_with(out_path) {
+                        continue;
+                    }
                     std::fs::create_dir_all(&dir)?;
                     dir.join("index.html")
                 };

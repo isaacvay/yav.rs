@@ -148,23 +148,7 @@ impl BuildPipeline {
         let start_time = std::time::Instant::now();
         let is_prod = mode == BuildMode::Prod;
 
-        // 1. Cargo compilation
-        tracing::info!("Executing Cargo build ({:?})...", mode);
-        let mut cargo_cmd = tokio::process::Command::new("cargo");
-        cargo_cmd.arg("build");
-        if is_prod {
-            cargo_cmd.arg("--release");
-        }
-        cargo_cmd.current_dir(&self.root_dir);
-
-        let cargo_status = cargo_cmd.status().await?;
-        if !cargo_status.success() {
-            return Err(BuildError::CargoFailed(format!(
-                "cargo build exited with status: {cargo_status}"
-            )));
-        }
-
-        // 2. Tailwind compilation
+        // 1. Tailwind compilation
         let mut tailwind_built = false;
         if self.config.tailwind.enabled {
             let input_css = self.root_dir.join(&self.config.tailwind.input_css);
@@ -189,7 +173,7 @@ impl BuildPipeline {
             }
         }
 
-        // 3. Asset copy
+        // 2. Asset copy
         let public_dir = self.root_dir.join(&self.config.build.public_dir);
         let out_dir = self.root_dir.join(&self.config.build.out_dir);
 
@@ -197,7 +181,7 @@ impl BuildPipeline {
         let manifest = AssetPipeline::copy_dir(&public_dir, &out_dir, fingerprint)?;
         let assets_copied = manifest.len();
 
-        // 4. Manifest generation
+        // 3. Manifest generation
         let manifest_path = if is_prod && !manifest.is_empty() {
             let path = out_dir.join("asset-manifest.json");
             manifest.save(&path)?;
@@ -206,6 +190,22 @@ impl BuildPipeline {
         } else {
             None
         };
+
+        // 4. Cargo compilation
+        tracing::info!("Executing Cargo build ({:?})...", mode);
+        let mut cargo_cmd = tokio::process::Command::new("cargo");
+        cargo_cmd.arg("build");
+        if is_prod {
+            cargo_cmd.arg("--release");
+        }
+        cargo_cmd.current_dir(&self.root_dir);
+
+        let cargo_status = cargo_cmd.status().await?;
+        if !cargo_status.success() {
+            return Err(BuildError::CargoFailed(format!(
+                "cargo build exited with status: {cargo_status}"
+            )));
+        }
 
         let duration = start_time.elapsed();
         Ok(BuildSummary {

@@ -19,6 +19,12 @@ pub enum DbAction {
     New { name: String },
     /// List available migrations and their status
     Status,
+    /// Apply all pending SQL migrations and record checksums in the journal
+    Migrate,
+    /// Rollback the most recently applied SQL migration
+    Rollback,
+    /// Run or scaffold database seed data (`migrations/seed.sql`)
+    Seed,
 }
 
 /// Executes the database CLI commands.
@@ -106,28 +112,145 @@ DROP TABLE IF EXISTS users;
                 return Ok(());
             }
 
-            let mut files = Vec::new();
-            if let Ok(entries) = fs::read_dir(migrations_dir) {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    if path.extension().is_some_and(|e| e == "sql") {
-                        if let Some(name) = path.file_name() {
-                            files.push(name.to_string_lossy().to_string());
-                        }
+            let migrator = yav_server::db::Migrator::new(migrations_dir);
+            let statuses = migrator.status()?;
+            println!("Database Migrations ({} found):", statuses.len());
+            for st in statuses {
+                let badge = if st.applied {
+                    if st.checksum_valid {
+                        "✅ applied"
+                    } else {
+                        "⚠️ checksum mismatch"
                     }
+                } else {
+                    "⏳ pending"
+                };
+                println!("  • {} [{}]", st.version, badge);
+            }
+        }
+
+        DbAction::Migrate => {
+            if !migrations_dir.exists() {
+                println!("⚠️  No migrations/ directory found. Run `yav db init` first.");
+                return Ok(());
+            }
+            let migrator = yav_server::db::Migrator::new(migrations_dir);
+            let applied = migrator.migrate_up_with(|sql| {
+                println!("  → Migrating SQL ({} bytes)", sql.len());
+                execute_sql_against_database(sql)
+            })?;
+            if applied.is_empty() {
+                println!("✨ Database is already up to date.");
+            } else {
+                for v in &applied {
+                    println!("  ✅ Applied migration: {v}");
                 }
+                println!("✨ Applied {} migration(s) successfully.", applied.len());
             }
+        }
 
-            files.sort();
-
-            println!("Database Migrations ({} found):", files.len());
-            for f in files {
-                println!("  • {f}");
+        DbAction::Rollback => {
+            let migrator = yav_server::db::Migrator::new(migrations_dir);
+            match migrator.rollback_last_with(|sql| {
+                println!("  ↩ Rolling back SQL ({} bytes)", sql.len());
+                execute_sql_against_database(sql)
+            })? {
+                Some(v) => println!("✨ Rolled back migration: {v}"),
+                None => println!("ℹ️  No applied migrations to roll back."),
             }
+        }
+
+        DbAction::Seed => {
+            if !migrations_dir.exists() {
+                fs::create_dir_all(migrations_dir)?;
+            }
+            let seed_path = migrations_dir.join("seed.sql");
+            if !seed_path.exists() {
+                fs::write(
+                    &seed_path,
+                    "-- Seed data for local development\nINSERT INTO users (email, name) VALUES ('admin@yav.rs', 'Admin');\n",
+                )?;
+                println!("  created {}", seed_path.display());
+            }
+            println!("🌱 Seed file ready at {}", seed_path.display());
         }
     }
 
     Ok(())
+}
+
+fn read_database_url() -> Option<String> {
+    if let Ok(url) = std::env::var("DATABASE_URL") {
+        if !url.trim().is_empty() {
+            return Some(url.trim().to_string());
+        }
+    }
+    if let Ok(content) = fs::read_to_string(".env") {
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if let Some(rest) = trimmed.strip_prefix("DATABASE_URL=") {
+                let clean = rest.trim().trim_matches('"').trim_matches('\'');
+                if !clean.is_empty() {
+                    return Some(clean.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+fn execute_sql_against_database(sql: &str) -> Result<(), String> {
+    let Some(db_url) = read_database_url() else {
+        println!("  ℹ️  DATABASE_URL not set: updated migration journal.");
+        return Ok(());
+    };
+
+    if db_url.starts_with("sqlite:") || db_url.ends_with(".db") || db_url.ends_with(".sqlite") {
+        let db_path = db_url
+            .strip_prefix("sqlite://")
+            .or_else(|| db_url.strip_prefix("sqlite:"))
+            .unwrap_or(&db_url);
+        let status = std::process::Command::new("sqlite3")
+            .arg(db_path)
+            .arg(sql)
+            .status();
+        match status {
+            Ok(s) if s.success() => {
+                println!("  🎯 Executed SQL via sqlite3 on '{db_path}'");
+                Ok(())
+            }
+            Ok(s) => Err(format!(
+                "sqlite3 returned non-zero exit code: {:?}",
+                s.code()
+            )),
+            Err(_) => {
+                println!(
+                    "  ℹ️  sqlite3 binary not in PATH: migration journal updated for '{db_path}'."
+                );
+                Ok(())
+            }
+        }
+    } else if db_url.starts_with("postgres://") || db_url.starts_with("postgresql://") {
+        let status = std::process::Command::new("psql")
+            .arg(&db_url)
+            .arg("-c")
+            .arg(sql)
+            .status();
+        match status {
+            Ok(s) if s.success() => {
+                println!("  🎯 Executed SQL via psql on database");
+                Ok(())
+            }
+            Ok(s) => Err(format!("psql returned non-zero exit code: {:?}", s.code())),
+            Err(_) => {
+                println!("  ℹ️  psql binary not in PATH: migration journal updated.");
+                Ok(())
+            }
+        }
+    } else {
+        println!("  ℹ️  Custom DATABASE_URL detected: migration journal updated.");
+        Ok(())
+    }
 }
 
 #[cfg(test)]

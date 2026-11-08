@@ -3,11 +3,7 @@
 //! Parses Markdown files with YAML/TOML-style frontmatter (`--- ... ---`), extracts a
 //! structured Table of Contents ([`TocHeading`]), and compiles clean semantic HTML.
 
-use std::{
-    collections::HashMap,
-    fs,
-    path::Path,
-};
+use std::{collections::HashMap, fs, path::Path};
 
 /// A heading extracted from a Markdown document for Table of Contents navigation.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -83,6 +79,43 @@ fn format_inline(input: &str) -> String {
             }
         }
 
+        // Image ![alt](url)
+        if i + 1 < chars.len() && chars[i] == '!' && chars[i + 1] == '[' {
+            if let Some(close_bracket) = chars[i + 2..].iter().position(|&c| c == ']') {
+                let paren_start = i + 2 + close_bracket + 1;
+                if paren_start < chars.len() && chars[paren_start] == '(' {
+                    if let Some(close_paren) =
+                        chars[paren_start + 1..].iter().position(|&c| c == ')')
+                    {
+                        let alt: String = chars[i + 2..i + 2 + close_bracket].iter().collect();
+                        let url: String = chars[paren_start + 1..paren_start + 1 + close_paren]
+                            .iter()
+                            .collect();
+                        out.push_str("<img src=\"");
+                        out.push_str(&escape_md_html(url.trim()));
+                        out.push_str("\" alt=\"");
+                        out.push_str(&escape_md_html(&alt));
+                        out.push_str("\" loading=\"lazy\" />");
+                        i = paren_start + 1 + close_paren + 1;
+                        continue;
+                    }
+                }
+            }
+        }
+
+        // Strikethrough ~~...~~
+        if i + 1 < chars.len() && chars[i] == '~' && chars[i + 1] == '~' {
+            let rest: String = chars[i + 2..].iter().collect();
+            if let Some(end_byte) = rest.find("~~") {
+                let inner = &rest[..end_byte];
+                out.push_str("<del>");
+                out.push_str(&escape_md_html(inner));
+                out.push_str("</del>");
+                i += 2 + inner.chars().count() + 2;
+                continue;
+            }
+        }
+
         // Link [label](url)
         if chars[i] == '[' {
             if let Some(close_bracket) = chars[i + 1..].iter().position(|&c| c == ']') {
@@ -92,12 +125,21 @@ fn format_inline(input: &str) -> String {
                         chars[paren_start + 1..].iter().position(|&c| c == ')')
                     {
                         let label: String = chars[i + 1..i + 1 + close_bracket].iter().collect();
-                        let url: String = chars
-                            [paren_start + 1..paren_start + 1 + close_paren]
+                        let url: String = chars[paren_start + 1..paren_start + 1 + close_paren]
                             .iter()
                             .collect();
+                        let clean_url = url.trim();
+                        let lower_url = clean_url.to_ascii_lowercase();
+                        let safe_url = if lower_url.starts_with("javascript:")
+                            || lower_url.starts_with("vbscript:")
+                            || lower_url.starts_with("data:")
+                        {
+                            "#"
+                        } else {
+                            clean_url
+                        };
                         out.push_str("<a href=\"");
-                        out.push_str(&escape_md_html(url.trim()));
+                        out.push_str(&escape_md_html(safe_url));
                         out.push_str("\">");
                         out.push_str(&escape_md_html(&label));
                         out.push_str("</a>");
@@ -162,11 +204,7 @@ pub fn parse_markdown(source: &str) -> MarkdownDoc {
                 }
                 if let Some((k, v)) = trimmed.split_once(':') {
                     let key = k.trim().to_string();
-                    let val = v
-                        .trim()
-                        .trim_matches('"')
-                        .trim_matches('\'')
-                        .to_string();
+                    let val = v.trim().trim_matches('"').trim_matches('\'').to_string();
                     frontmatter.insert(key, val);
                 }
             }
@@ -180,6 +218,8 @@ pub fn parse_markdown(source: &str) -> MarkdownDoc {
     let mut code_buf = String::new();
     let mut in_ul = false;
     let mut in_ol = false;
+    let mut in_table = false;
+    let mut table_headers: Vec<String> = Vec::new();
     let mut para_buf = Vec::new();
 
     let flush_para = |para: &mut Vec<String>, out: &mut String| {
@@ -192,7 +232,7 @@ pub fn parse_markdown(source: &str) -> MarkdownDoc {
         }
     };
 
-    let close_lists = |ul: &mut bool, ol: &mut bool, out: &mut String| {
+    let close_lists = |ul: &mut bool, ol: &mut bool, tbl: &mut bool, out: &mut String| {
         if *ul {
             out.push_str("</ul>\n");
             *ul = false;
@@ -201,12 +241,16 @@ pub fn parse_markdown(source: &str) -> MarkdownDoc {
             out.push_str("</ol>\n");
             *ol = false;
         }
+        if *tbl {
+            out.push_str("</tbody></table>\n");
+            *tbl = false;
+        }
     };
 
     for line in body.lines() {
         if let Some(fence) = line.trim_start().strip_prefix("```") {
             flush_para(&mut para_buf, &mut html);
-            close_lists(&mut in_ul, &mut in_ol, &mut html);
+            close_lists(&mut in_ul, &mut in_ol, &mut in_table, &mut html);
             if in_code_block {
                 if code_lang.is_empty() {
                     html.push_str("<pre><code>");
@@ -236,14 +280,61 @@ pub fn parse_markdown(source: &str) -> MarkdownDoc {
         let trimmed = line.trim();
         if trimmed.is_empty() {
             flush_para(&mut para_buf, &mut html);
-            close_lists(&mut in_ul, &mut in_ol, &mut html);
+            close_lists(&mut in_ul, &mut in_ol, &mut in_table, &mut html);
+            table_headers.clear();
             continue;
+        }
+
+        // GFM Table rows (`| col1 | col2 |`)
+        if trimmed.starts_with('|') && trimmed.ends_with('|') && trimmed.len() > 2 {
+            flush_para(&mut para_buf, &mut html);
+            if in_ul {
+                html.push_str("</ul>\n");
+                in_ul = false;
+            }
+            if in_ol {
+                html.push_str("</ol>\n");
+                in_ol = false;
+            }
+            let cells: Vec<&str> = trimmed[1..trimmed.len() - 1]
+                .split('|')
+                .map(|c| c.trim())
+                .collect();
+            let is_separator = cells
+                .iter()
+                .all(|c| !c.is_empty() && c.chars().all(|ch| ch == '-' || ch == ':'));
+
+            if is_separator {
+                if !in_table && !table_headers.is_empty() {
+                    html.push_str("<table><thead><tr>");
+                    for h in &table_headers {
+                        html.push_str("<th>");
+                        html.push_str(&format_inline(h));
+                        html.push_str("</th>");
+                    }
+                    html.push_str("</tr></thead><tbody>\n");
+                    in_table = true;
+                }
+                continue;
+            } else if !in_table && table_headers.is_empty() {
+                table_headers = cells.into_iter().map(|s| s.to_string()).collect();
+                continue;
+            } else if in_table {
+                html.push_str("<tr>");
+                for cell in cells {
+                    html.push_str("<td>");
+                    html.push_str(&format_inline(cell));
+                    html.push_str("</td>");
+                }
+                html.push_str("</tr>\n");
+                continue;
+            }
         }
 
         // Horizontal rule
         if trimmed == "---" || trimmed == "***" {
             flush_para(&mut para_buf, &mut html);
-            close_lists(&mut in_ul, &mut in_ol, &mut html);
+            close_lists(&mut in_ul, &mut in_ol, &mut in_table, &mut html);
             html.push_str("<hr />\n");
             continue;
         }
@@ -252,7 +343,7 @@ pub fn parse_markdown(source: &str) -> MarkdownDoc {
         let hash_count = trimmed.chars().take_while(|&c| c == '#').count();
         if (1..=6).contains(&hash_count) && trimmed[hash_count..].starts_with(' ') {
             flush_para(&mut para_buf, &mut html);
-            close_lists(&mut in_ul, &mut in_ol, &mut html);
+            close_lists(&mut in_ul, &mut in_ol, &mut in_table, &mut html);
             let text = trimmed[hash_count..].trim().to_string();
             let id = slugify(&text);
             let level = hash_count as u8;
@@ -268,17 +359,29 @@ pub fn parse_markdown(source: &str) -> MarkdownDoc {
             continue;
         }
 
-        // Blockquote
+        // GitHub Alert or Blockquote
         if let Some(quote_text) = trimmed.strip_prefix("> ") {
             flush_para(&mut para_buf, &mut html);
-            close_lists(&mut in_ul, &mut in_ol, &mut html);
+            close_lists(&mut in_ul, &mut in_ol, &mut in_table, &mut html);
+            let q = quote_text.trim();
+            if let Some(rest) = q.strip_prefix("[!") {
+                if let Some((alert_kind, alert_body)) = rest.split_once(']') {
+                    let kind_lower = alert_kind.trim().to_ascii_lowercase();
+                    html.push_str(&format!(
+                        "<div class=\"markdown-alert markdown-alert-{kind_lower}\" role=\"note\"><strong>{}</strong><p>{}</p></div>\n",
+                        escape_md_html(&alert_kind.to_ascii_uppercase()),
+                        format_inline(alert_body.trim())
+                    ));
+                    continue;
+                }
+            }
             html.push_str("<blockquote><p>");
-            html.push_str(&format_inline(quote_text.trim()));
+            html.push_str(&format_inline(q));
             html.push_str("</p></blockquote>\n");
             continue;
         }
 
-        // Unordered list item
+        // Unordered list item (including GFM task list `- [x]` / `- [ ]`)
         if let Some(item_text) = trimmed
             .strip_prefix("- ")
             .or_else(|| trimmed.strip_prefix("* "))
@@ -292,9 +395,25 @@ pub fn parse_markdown(source: &str) -> MarkdownDoc {
                 html.push_str("<ul>\n");
                 in_ul = true;
             }
-            html.push_str("<li>");
-            html.push_str(&format_inline(item_text.trim()));
-            html.push_str("</li>\n");
+            let item_trimmed = item_text.trim();
+            if let Some(task_rest) = item_trimmed
+                .strip_prefix("[x] ")
+                .or_else(|| item_trimmed.strip_prefix("[X] "))
+            {
+                html.push_str(
+                    "<li class=\"task-list-item\"><input type=\"checkbox\" checked disabled /> ",
+                );
+                html.push_str(&format_inline(task_rest.trim()));
+                html.push_str("</li>\n");
+            } else if let Some(task_rest) = item_trimmed.strip_prefix("[ ] ") {
+                html.push_str("<li class=\"task-list-item\"><input type=\"checkbox\" disabled /> ");
+                html.push_str(&format_inline(task_rest.trim()));
+                html.push_str("</li>\n");
+            } else {
+                html.push_str("<li>");
+                html.push_str(&format_inline(item_trimmed));
+                html.push_str("</li>\n");
+            }
             continue;
         }
 
@@ -321,7 +440,7 @@ pub fn parse_markdown(source: &str) -> MarkdownDoc {
     }
 
     flush_para(&mut para_buf, &mut html);
-    close_lists(&mut in_ul, &mut in_ol, &mut html);
+    close_lists(&mut in_ul, &mut in_ol, &mut in_table, &mut html);
 
     let title = frontmatter
         .get("title")
@@ -370,10 +489,7 @@ fn collect_markdown_files(
             let mut doc = parse_markdown(&content);
             if !doc.frontmatter.contains_key("slug") {
                 if let Ok(rel) = path.strip_prefix(base) {
-                    let rel_str = rel
-                        .with_extension("")
-                        .to_string_lossy()
-                        .replace('\\', "/");
+                    let rel_str = rel.with_extension("").to_string_lossy().replace('\\', "/");
                     doc.slug = rel_str;
                 }
             }
@@ -381,6 +497,120 @@ fn collect_markdown_files(
         }
     }
     Ok(())
+}
+
+/// Server-side zero-JS syntax highlighter (Shiki equivalent) producing semantic `<span class="hl-*">` tokens.
+pub fn highlight_code_html(code: &str, lang: &str) -> String {
+    let keywords: &[&str] = match lang.to_ascii_lowercase().as_str() {
+        "rust" | "rs" | "rsx" => &[
+            "fn", "let", "mut", "pub", "use", "mod", "struct", "enum", "impl", "trait", "async",
+            "await", "match", "if", "else", "for", "while", "loop", "return", "where", "Self",
+            "self", "true", "false", "const", "static", "type",
+        ],
+        "ts" | "typescript" | "js" | "javascript" => &[
+            "function",
+            "const",
+            "let",
+            "var",
+            "export",
+            "import",
+            "from",
+            "return",
+            "async",
+            "await",
+            "interface",
+            "type",
+            "class",
+            "if",
+            "else",
+            "true",
+            "false",
+        ],
+        "sql" => &[
+            "SELECT", "FROM", "WHERE", "INSERT", "INTO", "VALUES", "UPDATE", "SET", "DELETE",
+            "CREATE", "TABLE", "DROP", "JOIN", "INNER", "LEFT", "ORDER", "BY", "LIMIT", "OFFSET",
+        ],
+        _ => &[
+            "fn", "let", "const", "return", "if", "else", "true", "false",
+        ],
+    };
+
+    let mut out = String::with_capacity(code.len() * 2);
+    for line in code.lines() {
+        if let Some(comment_idx) = line.find("//") {
+            let (before, comment) = line.split_at(comment_idx);
+            highlight_tokens_in_segment(before, keywords, &mut out);
+            out.push_str("<span class=\"hl-comment\">");
+            out.push_str(&escape_md_html(comment));
+            out.push_str("</span>\n");
+        } else {
+            highlight_tokens_in_segment(line, keywords, &mut out);
+            out.push('\n');
+        }
+    }
+    if !code.ends_with('\n') && out.ends_with('\n') {
+        out.pop();
+    }
+    out
+}
+
+fn highlight_tokens_in_segment(segment: &str, keywords: &[&str], out: &mut String) {
+    let chars: Vec<char> = segment.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == '"' {
+            let mut j = i + 1;
+            while j < chars.len() {
+                if chars[j] == '"' && chars[j - 1] != '\\' {
+                    j += 1;
+                    break;
+                }
+                j += 1;
+            }
+            let s: String = chars[i..j].iter().collect();
+            out.push_str("<span class=\"hl-str\">");
+            out.push_str(&escape_md_html(&s));
+            out.push_str("</span>");
+            i = j;
+            continue;
+        }
+        if chars[i].is_ascii_alphabetic() || chars[i] == '_' {
+            let mut j = i + 1;
+            while j < chars.len() && (chars[j].is_ascii_alphanumeric() || chars[j] == '_') {
+                j += 1;
+            }
+            let word: String = chars[i..j].iter().collect();
+            if keywords.contains(&word.as_str()) {
+                out.push_str("<span class=\"hl-kw\">");
+                out.push_str(&word);
+                out.push_str("</span>");
+            } else {
+                out.push_str(&word);
+            }
+            i = j;
+            continue;
+        }
+        if chars[i].is_ascii_digit() {
+            let mut j = i + 1;
+            while j < chars.len() && (chars[j].is_ascii_digit() || chars[j] == '.') {
+                j += 1;
+            }
+            let num: String = chars[i..j].iter().collect();
+            out.push_str("<span class=\"hl-num\">");
+            out.push_str(&num);
+            out.push_str("</span>");
+            i = j;
+            continue;
+        }
+        match chars[i] {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            c => out.push(c),
+        }
+        i += 1;
+    }
 }
 
 #[cfg(test)]
@@ -415,11 +645,55 @@ let x = 42;
         assert_eq!(doc.headings.len(), 2);
         assert_eq!(doc.headings[0].id, "quickstart-guide");
         assert_eq!(doc.headings[1].id, "installation");
-        assert!(doc.html.contains("<h1 id=\"quickstart-guide\">Quickstart Guide</h1>"));
+        assert!(doc
+            .html
+            .contains("<h1 id=\"quickstart-guide\">Quickstart Guide</h1>"));
         assert!(doc.html.contains("<strong>Yav.rs</strong>"));
         assert!(doc.html.contains("<code>rsx!</code>"));
         assert!(doc.html.contains("<a href=\"/docs\">Documentation</a>"));
         assert!(doc.html.contains("<ul>"));
-        assert!(doc.html.contains("<code class=\"language-rust\">let x = 42;</code>"));
+        assert!(doc
+            .html
+            .contains("<code class=\"language-rust\">let x = 42;</code>"));
+    }
+
+    #[test]
+    fn test_gfm_tables_tasks_alerts_and_syntax_highlighting() {
+        let md = r#"
+| Feature | Status |
+| :--- | :---: |
+| Signals | Ready |
+
+- [x] Ship SSR
+- [ ] Drink coffee
+
+> [!NOTE] Zero JavaScript by default!
+
+Check ~~old~~ and ![Logo](/logo.svg).
+"#;
+        let doc = parse_markdown(md);
+        assert!(doc
+            .html
+            .contains("<table><thead><tr><th>Feature</th><th>Status</th></tr></thead><tbody>"));
+        assert!(doc.html.contains("<td>Signals</td><td>Ready</td>"));
+        assert!(doc.html.contains("type=\"checkbox\" checked disabled"));
+        assert!(doc.html.contains("markdown-alert-note"));
+        assert!(doc.html.contains("<del>old</del>"));
+        assert!(doc
+            .html
+            .contains("<img src=\"/logo.svg\" alt=\"Logo\" loading=\"lazy\" />"));
+
+        let hl = highlight_code_html("pub fn main() { let x = 42; // answer }", "rust");
+        assert!(hl.contains("<span class=\"hl-kw\">pub</span>"));
+        assert!(hl.contains("<span class=\"hl-num\">42</span>"));
+        assert!(hl.contains("<span class=\"hl-comment\">// answer }</span>"));
+    }
+
+    #[test]
+    fn test_markdown_link_sanitization() {
+        let md = "[Click me](javascript:alert(1)) and [Normal](/docs)";
+        let doc = parse_markdown(md);
+        assert!(doc.html.contains("<a href=\"#\">Click me</a>"));
+        assert!(doc.html.contains("<a href=\"/docs\">Normal</a>"));
     }
 }

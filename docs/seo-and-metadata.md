@@ -81,10 +81,7 @@ pub async fn sitemap_handler() -> Response {
 }
 ```
 
-Register in your `YavApp`:
-```rust
-app.get("/sitemap.xml", sitemap_handler);
-```
+Register manually in `YavApp` or simply create `src/routes/sitemap.rs` for automatic compile-time mounting at `/sitemap.xml` via `auto_routes!(app)`.
 
 ---
 
@@ -104,14 +101,113 @@ pub async fn robots_handler() -> Response {
 }
 ```
 
-Register in your `YavApp`:
+Register manually in `YavApp` or create `src/routes/robots.rs` for automatic compile-time mounting at `/robots.txt` via `auto_routes!(app)`.
+
+---
+
+## 4. Dynamic OpenGraph Social Image Generator (`/_yav/og`)
+
+Yav provides full parity with `@vercel/og` / Next.js `ImageResponse` in pure Rust with zero external image binaries:
+
 ```rust
-app.get("/robots.txt", robots_handler);
+use yav::prelude::*;
+
+// In your page or component:
+let og_url = og_image_url(
+    "Supercharge your SSR with Yav.rs",
+    Some("Zero-runtime overhead, pure Rust Virtual DOM & Tailwind CSS"),
+    Some("Release v0.1.4"),
+);
+
+let meta = PageMeta::new()
+    .title("Supercharge your SSR with Yav.rs")
+    .open_graph(
+        "Supercharge your SSR with Yav.rs",
+        "Zero-runtime overhead, pure Rust Virtual DOM & Tailwind CSS",
+        &og_url,
+    );
+```
+
+The built-in endpoint `GET /_yav/og?title=...&subtitle=...&badge=...&theme=dark` automatically:
+- Generates a pixel-perfect 1200x630 SVG social card with gradient mesh backgrounds.
+- Automatically wraps headlines into balanced multi-line typography.
+- Emits `image/svg+xml; charset=utf-8` with immutable `Cache-Control` and SHA-256 `ETag` headers for instant CDN edge caching.
+- Supports 5 preset themes: `dark`, `indigo`, `emerald`, `sunset`, and `minimal`.
+
+---
+
+## 5. Real-Time Core Web Vitals Telemetry (`/_yav/vitals`)
+
+Track Google Core Web Vitals (**LCP**, **CLS**, **INP**, **FID**, **FCP**, **TTFB**) without third-party tracking scripts:
+
+1. Inject the zero-dependency client beacon script into your document shell:
+```rust
+use yav::prelude::*;
+
+let html = document_shell(
+    "Mon Application",
+    "",
+    render_to_string(&page),
+    yav_vitals_script(), // Injects lightweight PerformanceObserver beacon
+);
+```
+
+2. Telemetry beacons are automatically ingested at `POST /_yav/vitals` via `navigator.sendBeacon`.
+3. In-memory [`VitalsCollector`] computes live P75 percentiles, averages, and good/poor rating distributions:
+```rust
+use yav::prelude::*;
+
+let snapshot: VitalsSummary = global_vitals().summary();
+println!("P75 LCP: {} ms ({}% good)", 
+    snapshot.metrics.get("LCP").map(|m| m.p75).unwrap_or(0.0),
+    snapshot.metrics.get("LCP").map(|m| m.good_percent).unwrap_or(0.0)
+);
+```
+
+A live JSON summary is accessible at `GET /_yav/vitals`.
+
+---
+
+## 6. Web Font Optimization & Zero-CLS Fallback Metrics (`next/font` Parity)
+
+Prevent Cumulative Layout Shift (CLS = 0) and eliminate Flash of Unstyled Text (FOUT):
+
+### Google Fonts with zero-CLS overrides:
+```rust
+use yav::prelude::*;
+
+let font = GoogleFont::new("Inter")
+    .weights(&[400, 600, 700])
+    .display(FontDisplay::Swap);
+
+let view = rsx! {
+    <Head>
+        { font }
+    </Head>
+    <main class="font-inter">
+        <h1>"Typographie stabilisée sans CLS"</h1>
+    </main>
+};
+```
+
+This automatically generates:
+- `<link rel="preconnect" href="https://fonts.googleapis.com">`
+- `<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>`
+- `<link rel="stylesheet" href="...">`
+- Size-adjusting `@font-face` fallback overrides matching x-height and ascent/descent of system fonts (`Arial`/`Helvetica`) with zero layout shift.
+
+### Local Font Files:
+```rust
+use yav::prelude::*;
+
+let local_font = LocalFont::new("GeistSans", "/fonts/geist-regular.woff2")
+    .weight("400 800")
+    .preload(true);
 ```
 
 ---
 
-## 4. Internationalization (i18n)
+## 7. Internationalization (i18n)
 
 Yav provides a zero-dependency translation and locale resolution engine:
 

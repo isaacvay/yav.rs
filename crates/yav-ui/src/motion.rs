@@ -715,7 +715,13 @@ impl CountUp {
         }
 
         let initial_str = match self.decimals {
-            Some(d) if d > 0 => format!("{}{:.prec$}{}", self.prefix, 0.0, self.suffix, prec = d as usize),
+            Some(d) if d > 0 => format!(
+                "{}{:.prec$}{}",
+                self.prefix,
+                0.0,
+                self.suffix,
+                prec = d as usize
+            ),
             _ => format!("{}0{}", self.prefix, self.suffix),
         };
         el = el.child(Node::text(initial_str));
@@ -1071,16 +1077,25 @@ pub fn motion_script() -> Node {
     return { frames, duration: Math.min(frames.length * 16.67, 1800) };
   }
 
-  function buildTransform(target, p) {
+  function buildTransform(initial, target, p) {
+    const init = initial || {};
     const transforms = [];
-    if (target.x !== undefined || target.y !== undefined) {
-      transforms.push(`translate3d(${((target.x || 0) * p).toFixed(2)}px, ${((target.y || 0) * p).toFixed(2)}px, 0)`);
+    if (target.x !== undefined || target.y !== undefined || init.x !== undefined || init.y !== undefined) {
+      const ix = init.x !== undefined ? init.x : 0;
+      const iy = init.y !== undefined ? init.y : 0;
+      const tx = target.x !== undefined ? target.x : ix;
+      const ty = target.y !== undefined ? target.y : iy;
+      transforms.push(`translate3d(${(ix + (tx - ix) * p).toFixed(2)}px, ${(iy + (ty - iy) * p).toFixed(2)}px, 0)`);
     }
-    if (target.scale !== undefined) {
-      transforms.push(`scale(${(1 + (target.scale - 1) * p).toFixed(4)})`);
+    if (target.scale !== undefined || init.scale !== undefined) {
+      const is = init.scale !== undefined ? init.scale : 1;
+      const ts = target.scale !== undefined ? target.scale : is;
+      transforms.push(`scale(${(is + (ts - is) * p).toFixed(4)})`);
     }
-    if (target.rotate !== undefined) {
-      transforms.push(`rotate(${(target.rotate * p).toFixed(2)}deg)`);
+    if (target.rotate !== undefined || init.rotate !== undefined) {
+      const ir = init.rotate !== undefined ? init.rotate : 0;
+      const tr = target.rotate !== undefined ? target.rotate : ir;
+      transforms.push(`rotate(${(ir + (tr - ir) * p).toFixed(2)}deg)`);
     }
     return transforms.join(' ');
   }
@@ -1088,18 +1103,27 @@ pub fn motion_script() -> Node {
   function animateTo(el, target, transition) {
     if (!target) return;
     const trans = transition || {};
+    let initial = {};
+    try {
+      initial = JSON.parse(el.getAttribute('data-motion-initial') || '{}');
+    } catch (_) {}
+
     if (prefersReducedMotion()) {
       el.style.transition = 'none';
       if (target.opacity !== undefined) el.style.opacity = target.opacity;
-      const tf = buildTransform(target, 1);
+      const tf = buildTransform(initial, target, 1);
       if (tf) el.style.transform = tf;
       return;
     }
     if (trans.is_spring && typeof el.animate === 'function') {
       const sp = solveSpring(trans.stiffness || 260, trans.damping || 20, trans.mass || 1);
       const keyframes = sp.frames.map(p => {
-        const kf = { transform: buildTransform(target, p) || 'none' };
-        if (target.opacity !== undefined) kf.opacity = target.opacity;
+        const kf = { transform: buildTransform(initial, target, p) || 'none' };
+        if (target.opacity !== undefined || initial.opacity !== undefined) {
+          const iop = initial.opacity !== undefined ? initial.opacity : 1;
+          const top = target.opacity !== undefined ? target.opacity : iop;
+          kf.opacity = (iop + (top - iop) * p).toFixed(3);
+        }
         return kf;
       });
       el.animate(keyframes, { duration: sp.duration, fill: 'forwards', easing: 'linear' });
@@ -1110,7 +1134,7 @@ pub fn motion_script() -> Node {
       ? 'cubic-bezier(0.175, 0.885, 0.32, 1.275)'
       : (trans.ease || 'cubic-bezier(0.16, 1, 0.3, 1)');
 
-    const tf = buildTransform(target, 1);
+    const tf = buildTransform(initial, target, 1);
     el.style.transition = duration > 0 ? `all ${duration}ms ${ease}` : 'none';
     if (target.opacity !== undefined) {
       el.style.opacity = target.opacity;

@@ -14,4 +14,5 @@ categories = ["gui", "web-programming"]
 
 [dependencies]
 yav-core.workspace = true
-yav-icons.workspace = true
+yav-icons = { workspace = true, features = ["classic"] }
+serde_json.workspace = true

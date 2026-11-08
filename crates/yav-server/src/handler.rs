@@ -103,6 +103,9 @@ pub fn is_safe_redirect_target(url: &str) -> bool {
         .filter(|c| !c.is_control() && !c.is_whitespace())
         .flat_map(|c| c.to_lowercase())
         .collect();
+    if normalized.contains("%0d") || normalized.contains("%0a") || normalized.contains("%00") {
+        return false;
+    }
     if normalized.starts_with("javascript:")
         || normalized.starts_with("data:")
         || normalized.starts_with("vbscript:")
@@ -115,7 +118,16 @@ pub fn is_safe_redirect_target(url: &str) -> bool {
 /// Checks if a redirect target is strictly a local relative path (starts with `/` and not `//` or `/\`).
 pub fn is_local_redirect_path(path: &str) -> bool {
     let trimmed = path.trim();
-    is_safe_redirect_target(trimmed) && trimmed.starts_with('/')
+    if !is_safe_redirect_target(trimmed) || !trimmed.starts_with('/') {
+        return false;
+    }
+    if trimmed.len() > 1 {
+        let second = trimmed.as_bytes()[1];
+        if second == b'/' || second == b'\\' || second == b' ' {
+            return false;
+        }
+    }
+    true
 }
 
 /// Construct a 302 Found redirect response to the given target URL.
@@ -343,20 +355,40 @@ impl HtmlPage {
             ));
         }
 
-        // Check if body_ref is already a full raw HTML document
+        // Check if body_ref is already a root <html> element or full raw HTML document
+        let is_html_root_element = match body_ref {
+            Node::Element(el) => el.tag.eq_ignore_ascii_case("html"),
+            _ => false,
+        };
+
         let raw_doc: Option<&str> = match body_ref {
             Node::Raw(s) => Some(s.as_str()),
             Node::Static(s) => Some(s),
             _ => None,
         };
-        if let Some(raw_doc) = raw_doc {
+        let html = if is_html_root_element {
+            let mut rendered_body = String::new();
+            rendered_body.push_str("<!DOCTYPE html>\n");
+            rendered_body.push_str(&yav_core::render_to_string(body_ref));
+            if body_end.is_empty() {
+                rendered_body
+            } else if let Some(pos) = rendered_body.rfind("</body>") {
+                let mut full = rendered_body;
+                full.insert_str(pos, &body_end);
+                full
+            } else {
+                let mut full = rendered_body;
+                full.push_str(&body_end);
+                full
+            }
+        } else if let Some(raw_doc) = raw_doc {
             let trimmed = raw_doc.trim_start();
             if trimmed.starts_with("<!DOCTYPE")
                 || trimmed.starts_with("<!doctype")
                 || trimmed.starts_with("<html")
             {
                 let rendered_body = raw_doc.to_string();
-                return if body_end.is_empty() {
+                if body_end.is_empty() {
                     rendered_body
                 } else if let Some(pos) = rendered_body.rfind("</body>") {
                     let mut full = rendered_body;
@@ -366,18 +398,62 @@ impl HtmlPage {
                     let mut full = rendered_body;
                     full.push_str(&body_end);
                     full
-                };
+                }
+            } else {
+                yav_core::render_node_document_with_lang(
+                    &self.title,
+                    &self.head_extra,
+                    body_ref,
+                    &body_end,
+                    &effective_lang,
+                )
+            }
+        } else {
+            yav_core::render_node_document_with_lang(
+                &self.title,
+                &self.head_extra,
+                body_ref,
+                &body_end,
+                &effective_lang,
+            )
+        };
+
+        if let Some(csp) = yav_core::use_context::<crate::middleware::CspNonce>() {
+            if !csp.0.is_empty() {
+                return inject_csp_nonce_into_scripts(&html, &csp.0);
             }
         }
-
-        yav_core::render_node_document_with_lang(
-            &self.title,
-            &self.head_extra,
-            body_ref,
-            &body_end,
-            &effective_lang,
-        )
+        html
     }
+}
+
+/// Injects `nonce="..."` into `<script` opening tags that do not already carry a `nonce=` attribute.
+pub fn inject_csp_nonce_into_scripts(html: &str, nonce: &str) -> String {
+    let escaped_nonce = yav_core::escape_html(nonce);
+    let mut out = String::with_capacity(html.len() + 64);
+    let mut rest = html;
+    while let Some(idx) = rest.find("<script") {
+        out.push_str(&rest[..idx]);
+        let after = &rest[idx + 7..];
+        let next_char = after.chars().next();
+        if matches!(
+            next_char,
+            Some(' ') | Some('>') | Some('\t') | Some('\n') | Some('\r')
+        ) {
+            let tag_end = after.find('>').unwrap_or(after.len());
+            let tag_attrs = &after[..tag_end];
+            if !tag_attrs.contains("nonce=") {
+                out.push_str(&format!(r#"<script nonce="{escaped_nonce}""#));
+            } else {
+                out.push_str("<script");
+            }
+        } else {
+            out.push_str("<script");
+        }
+        rest = after;
+    }
+    out.push_str(rest);
+    out
 }
 
 impl IntoResponse for HtmlPage {
@@ -750,5 +826,19 @@ mod tests {
         let html = page.render();
         assert!(!html.contains("javascript:alert"));
         assert!(!html.contains("data:text/html"));
+    }
+
+    #[test]
+    fn test_html_page_injects_csp_nonce_from_ssr_context() {
+        let html = yav_core::context::provide_context(
+            crate::middleware::CspNonce("nonce-xyz-999".to_string()),
+            || {
+                HtmlPage::new(Node::text("Secure Body"))
+                    .script("/app.js")
+                    .render()
+            },
+        );
+        assert!(html.contains(r#"<script nonce="nonce-xyz-999" src="/app.js"></script>"#));
+        assert!(html.contains(r#"<script nonce="nonce-xyz-999" id="yav-micro-actions">"#));
     }
 }

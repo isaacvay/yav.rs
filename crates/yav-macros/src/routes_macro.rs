@@ -232,6 +232,7 @@ pub fn auto_routes_impl(input: AutoRoutesInput) -> syn::Result<TokenStream> {
 
     let app_expr = input.app_expr;
     let mut registrations = Vec::new();
+    let mut registered_server_fns = std::collections::HashSet::new();
 
     for (url_pattern, rel_path_str) in route_entries {
         let file_path = routes_dir.join(&rel_path_str);
@@ -298,6 +299,28 @@ pub fn auto_routes_impl(input: AutoRoutesInput) -> syn::Result<TokenStream> {
                             let fn_ident = fn_item.sig.ident;
                             let fn_name = fn_ident.to_string();
 
+                            // Auto-register #[server] / #[yav::server] RPC functions as POST endpoints
+                            let has_server_attr = fn_item.attrs.iter().any(|attr| {
+                                attr.path()
+                                    .segments
+                                    .last()
+                                    .is_some_and(|seg| seg.ident == "server")
+                            });
+                            if has_server_attr {
+                                let server_key = format!("{rel_path_str}::{fn_name}");
+                                if registered_server_fns.insert(server_key) {
+                                    let url_fn_ident = quote::format_ident!("{}_url", fn_ident);
+                                    let handler_fn_ident =
+                                        quote::format_ident!("{}_handler", fn_ident);
+                                    let url_call = quote! { routes::#( #mod_path_segments )::* :: #url_fn_ident() };
+                                    let handler_call = quote! { routes::#( #mod_path_segments )::* :: #handler_fn_ident() };
+                                    registrations.push(quote! {
+                                        .post(#url_call, #handler_call)
+                                    });
+                                }
+                                continue;
+                            }
+
                             let method_and_pattern: Option<(&str, syn::Ident)> =
                                 if fn_name == "get" || fn_name.ends_with("_get") {
                                     Some((
@@ -340,7 +363,8 @@ pub fn auto_routes_impl(input: AutoRoutesInput) -> syn::Result<TokenStream> {
                                 };
 
                             if let Some((pattern, method_ident)) = method_and_pattern {
-                                let fn_path = quote! { routes::#( #mod_path_segments )::* :: #fn_ident };
+                                let fn_path =
+                                    quote! { routes::#( #mod_path_segments )::* :: #fn_ident };
                                 let handler_expr = if param_count == 2 {
                                     quote! { ::yav::server::BoxedHandler::from_extractor2(#fn_path) }
                                 } else if single_non_req {
@@ -481,6 +505,60 @@ pub fn auto_routes_impl(input: AutoRoutesInput) -> syn::Result<TokenStream> {
         }
     }
 
+    // Auto-mount sitemap.rs as GET /sitemap.xml
+    let sitemap_rs = routes_dir.join("sitemap.rs");
+    if sitemap_rs.exists() {
+        if let Ok(content) = fs::read_to_string(&sitemap_rs) {
+            if let Ok(syntax_file) = syn::parse_file(&content) {
+                let mut sitemap_fn = None;
+                for item in syntax_file.items {
+                    if let syn::Item::Fn(fn_item) = item {
+                        if matches!(fn_item.vis, syn::Visibility::Public(_)) {
+                            let ident = fn_item.sig.ident;
+                            let name = ident.to_string();
+                            if name == "sitemap" || name == "handler" || name == "get" {
+                                sitemap_fn = Some(ident);
+                                break;
+                            }
+                        }
+                    }
+                }
+                if let Some(fn_ident) = sitemap_fn {
+                    registrations.push(quote! {
+                        .route("/sitemap.xml", ::axum::http::Method::GET, routes::sitemap::#fn_ident)
+                    });
+                }
+            }
+        }
+    }
+
+    // Auto-mount robots.rs as GET /robots.txt
+    let robots_rs = routes_dir.join("robots.rs");
+    if robots_rs.exists() {
+        if let Ok(content) = fs::read_to_string(&robots_rs) {
+            if let Ok(syntax_file) = syn::parse_file(&content) {
+                let mut robots_fn = None;
+                for item in syntax_file.items {
+                    if let syn::Item::Fn(fn_item) = item {
+                        if matches!(fn_item.vis, syn::Visibility::Public(_)) {
+                            let ident = fn_item.sig.ident;
+                            let name = ident.to_string();
+                            if name == "robots" || name == "handler" || name == "get" {
+                                robots_fn = Some(ident);
+                                break;
+                            }
+                        }
+                    }
+                }
+                if let Some(fn_ident) = robots_fn {
+                    registrations.push(quote! {
+                        .route("/robots.txt", ::axum::http::Method::GET, routes::robots::#fn_ident)
+                    });
+                }
+            }
+        }
+    }
+
     Ok(quote! {
         #app_expr
             #( #registrations )*
@@ -489,6 +567,7 @@ pub fn auto_routes_impl(input: AutoRoutesInput) -> syn::Result<TokenStream> {
 
 fn sanitize_module_ident(seg: &str) -> syn::Ident {
     let clean = seg
+        .replace('@', "slot_")
         .replace(['[', ']', '(', ')'], "")
         .replace(['.', '-'], "_");
     let safe_ident = if clean.chars().next().is_some_and(|c| c.is_ascii_digit()) {
@@ -527,6 +606,10 @@ fn collect_routes_recursive(base_dir: &Path, current_dir: &Path, acc: &mut Vec<(
                     || file_name == "not_found.rs"
                     || file_name == "not_found.yav"
                     || file_name == "not_found.rsx"
+                    || file_name == "sitemap.rs"
+                    || file_name == "sitemap.yav"
+                    || file_name == "sitemap.rsx"
+                    || file_name == "robots.rs"
                     || file_name == "mod.rs"
                 {
                     continue;
@@ -534,6 +617,9 @@ fn collect_routes_recursive(base_dir: &Path, current_dir: &Path, acc: &mut Vec<(
                 if let Ok(rel) = path.strip_prefix(base_dir) {
                     let pattern = file_path_to_pattern(rel);
                     let clean_rel = rel.to_string_lossy().replace('\\', "/");
+                    if let Some(base_pattern) = optional_catch_all_base_pattern(rel) {
+                        acc.push((base_pattern, clean_rel.clone()));
+                    }
                     acc.push((pattern, clean_rel));
                 }
             }
@@ -552,12 +638,17 @@ fn find_layout_modules(routes_dir: &Path, rel_path: &str) -> Vec<Vec<syn::Ident>
             let layout_rs = routes_dir.join(dir).join("_layout.rs");
             let alt_layout_rs = routes_dir.join(dir).join("layout.rs");
             if layout_rs.exists() || alt_layout_rs.exists() {
-                let layout_file_name = if layout_rs.exists() { "_layout" } else { "layout" };
-                let mut segments: Vec<syn::Ident> = dir_str
-                    .split('/')
-                    .map(sanitize_module_ident)
-                    .collect();
-                segments.push(syn::Ident::new(layout_file_name, proc_macro2::Span::call_site()));
+                let layout_file_name = if layout_rs.exists() {
+                    "_layout"
+                } else {
+                    "layout"
+                };
+                let mut segments: Vec<syn::Ident> =
+                    dir_str.split('/').map(sanitize_module_ident).collect();
+                segments.push(syn::Ident::new(
+                    layout_file_name,
+                    proc_macro2::Span::call_site(),
+                ));
                 layouts.push(segments);
             }
         }
@@ -568,8 +659,15 @@ fn find_layout_modules(routes_dir: &Path, rel_path: &str) -> Vec<Vec<syn::Ident>
     let root_layout_rs = routes_dir.join("_layout.rs");
     let alt_root_layout_rs = routes_dir.join("layout.rs");
     if root_layout_rs.exists() || alt_root_layout_rs.exists() {
-        let root_name = if root_layout_rs.exists() { "_layout" } else { "layout" };
-        layouts.push(vec![syn::Ident::new(root_name, proc_macro2::Span::call_site())]);
+        let root_name = if root_layout_rs.exists() {
+            "_layout"
+        } else {
+            "layout"
+        };
+        layouts.push(vec![syn::Ident::new(
+            root_name,
+            proc_macro2::Span::call_site(),
+        )]);
     }
 
     layouts
@@ -586,12 +684,17 @@ fn find_middleware_modules(routes_dir: &Path, rel_path: &str) -> Vec<Vec<syn::Id
             let mw_rs = routes_dir.join(dir).join("_middleware.rs");
             let alt_mw_rs = routes_dir.join(dir).join("middleware.rs");
             if mw_rs.exists() || alt_mw_rs.exists() {
-                let mw_file_name = if mw_rs.exists() { "_middleware" } else { "middleware" };
-                let mut segments: Vec<syn::Ident> = dir_str
-                    .split('/')
-                    .map(sanitize_module_ident)
-                    .collect();
-                segments.push(syn::Ident::new(mw_file_name, proc_macro2::Span::call_site()));
+                let mw_file_name = if mw_rs.exists() {
+                    "_middleware"
+                } else {
+                    "middleware"
+                };
+                let mut segments: Vec<syn::Ident> =
+                    dir_str.split('/').map(sanitize_module_ident).collect();
+                segments.push(syn::Ident::new(
+                    mw_file_name,
+                    proc_macro2::Span::call_site(),
+                ));
                 middlewares.push(segments);
             }
         }
@@ -601,8 +704,15 @@ fn find_middleware_modules(routes_dir: &Path, rel_path: &str) -> Vec<Vec<syn::Id
     let root_mw_rs = routes_dir.join("_middleware.rs");
     let alt_root_mw_rs = routes_dir.join("middleware.rs");
     if root_mw_rs.exists() || alt_root_mw_rs.exists() {
-        let root_name = if root_mw_rs.exists() { "_middleware" } else { "middleware" };
-        middlewares.push(vec![syn::Ident::new(root_name, proc_macro2::Span::call_site())]);
+        let root_name = if root_mw_rs.exists() {
+            "_middleware"
+        } else {
+            "middleware"
+        };
+        middlewares.push(vec![syn::Ident::new(
+            root_name,
+            proc_macro2::Span::call_site(),
+        )]);
     }
 
     middlewares
@@ -612,11 +722,32 @@ fn is_axum_request_param(arg: &syn::FnArg) -> bool {
     if let syn::FnArg::Typed(pat_type) = arg {
         if let syn::Type::Path(type_path) = &*pat_type.ty {
             if let Some(last) = type_path.path.segments.last() {
-                return last.ident == "Request" && matches!(last.arguments, syn::PathArguments::None);
+                return last.ident == "Request"
+                    && matches!(last.arguments, syn::PathArguments::None);
             }
         }
     }
     false
+}
+
+fn optional_catch_all_base_pattern(rel: &Path) -> Option<String> {
+    let file_name = rel.file_name().and_then(|n| n.to_str())?;
+    let clean = file_name
+        .strip_suffix(".rs")
+        .or_else(|| file_name.strip_suffix(".yav"))
+        .or_else(|| file_name.strip_suffix(".rsx"))
+        .unwrap_or(file_name);
+    let is_opt = (clean.starts_with("[[...") && clean.ends_with("]]") && clean.len() > 7)
+        || (clean.starts_with("___") && clean.ends_with("___") && clean.len() > 6);
+    if !is_opt {
+        return None;
+    }
+    let parent = rel.parent()?;
+    if parent.as_os_str().is_empty() {
+        Some("/".to_string())
+    } else {
+        Some(file_path_to_pattern(parent))
+    }
 }
 
 fn file_path_to_pattern(rel: &Path) -> String {
@@ -631,11 +762,41 @@ fn file_path_to_pattern(rel: &Path) -> String {
         if clean == "page" || clean == "index" || clean == "mod" {
             continue;
         }
+        // Ignore parallel route slots (@analytics, @modal)
+        if clean.starts_with('@') && clean.len() > 1 {
+            continue;
+        }
+        // Handle intercepting route prefixes (.) (..) (..)(..) (...)
+        let mut clean = clean;
+        if let Some(rest) = clean.strip_prefix("(...)") {
+            segments.clear();
+            clean = rest;
+        } else if let Some(rest) = clean.strip_prefix("(..)(..)") {
+            segments.pop();
+            segments.pop();
+            clean = rest;
+        } else if let Some(rest) = clean.strip_prefix("(..)") {
+            segments.pop();
+            clean = rest;
+        } else if let Some(rest) = clean.strip_prefix("(.)") {
+            clean = rest;
+        }
+        if clean.is_empty() {
+            continue;
+        }
+        // Route group: (marketing) -> transparent
         if clean.starts_with('(') && clean.ends_with(')') && clean.len() >= 2 {
             continue;
         }
-        // [id] -> :id or _id_ -> :id (Rust-friendly identifier)
-        if clean.starts_with('[') && clean.ends_with(']') && clean.len() >= 2 {
+        // Optional catch-all [[...slug]] or ___slug___ -> *slug
+        if clean.starts_with("[[...") && clean.ends_with("]]") && clean.len() > 7 {
+            let slug = &clean[5..clean.len() - 2];
+            segments.push(format!("*{slug}"));
+        } else if clean.starts_with("___") && clean.ends_with("___") && clean.len() > 6 {
+            let slug = &clean[3..clean.len() - 3];
+            segments.push(format!("*{slug}"));
+        } else if clean.starts_with('[') && clean.ends_with(']') && clean.len() >= 2 {
+            // [id] -> :id or [...slug] -> *slug
             let inner = &clean[1..clean.len() - 1];
             if let Some(slug) = inner.strip_prefix("...") {
                 segments.push(format!("*{}", slug));
@@ -685,6 +846,68 @@ mod tests {
             file_path_to_pattern(Path::new("docs/__slug__.rs")),
             "/docs/*slug"
         );
+        // Optional catch-all [[...slug]] and ___slug___
+        assert_eq!(
+            file_path_to_pattern(Path::new("shop/[[...slug]].rs")),
+            "/shop/*slug"
+        );
+        assert_eq!(
+            optional_catch_all_base_pattern(Path::new("shop/[[...slug]].rs")),
+            Some("/shop".to_string())
+        );
+        assert_eq!(
+            file_path_to_pattern(Path::new("docs/___slug___.rs")),
+            "/docs/*slug"
+        );
+        assert_eq!(
+            optional_catch_all_base_pattern(Path::new("___slug___.rs")),
+            Some("/".to_string())
+        );
+        // Parallel route slots (@analytics) and intercepting routes ((.)photo)
+        assert_eq!(
+            file_path_to_pattern(Path::new("dashboard/@analytics/page.rs")),
+            "/dashboard"
+        );
+        assert_eq!(
+            file_path_to_pattern(Path::new("feed/(.)photo/[id].rs")),
+            "/feed/photo/:id"
+        );
+    }
+
+    #[test]
+    fn test_auto_routes_registers_server_functions_and_optional_catch_all() {
+        let temp_dir =
+            std::env::temp_dir().join(format!("yav_routes_macro_srv_{}", std::process::id()));
+        let _ = fs::create_dir_all(temp_dir.join("shop"));
+        fs::write(
+            temp_dir.join("shop").join("[[...slug]].rs"),
+            r#"
+            pub async fn get() -> String { "shop".into() }
+            #[server("/_actions/checkout")]
+            pub async fn checkout() -> String { "ok".into() }
+            "#,
+        )
+        .unwrap();
+
+        let input_path = syn::LitStr::new(
+            temp_dir.to_str().unwrap().replace('\\', "/").as_str(),
+            proc_macro2::Span::call_site(),
+        );
+        let app_expr: syn::Expr = syn::parse_str("app").unwrap();
+        let input = AutoRoutesInput {
+            app_expr,
+            path: Some(input_path),
+        };
+
+        let generated = auto_routes_impl(input).unwrap().to_string();
+        // Registers both /shop and /shop/*slug for optional catch-all
+        assert!(generated.contains("\"/shop\""));
+        assert!(generated.contains("\"/shop/*slug\""));
+        // Auto-registers #[server] function via checkout_url() and checkout_handler()
+        assert!(generated.contains("checkout_url"));
+        assert!(generated.contains("checkout_handler"));
+
+        let _ = fs::remove_dir_all(&temp_dir);
     }
 
     #[test]
@@ -734,6 +957,41 @@ mod tests {
         let generated = auto_routes_impl(input).unwrap().to_string();
         assert!(generated.contains("not_found_handler"));
         assert!(generated.contains("routes :: not_found :: not_found"));
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_auto_routes_impl_with_sitemap_and_robots() {
+        let temp_dir =
+            std::env::temp_dir().join(format!("yav_routes_macro_sr_{}", std::process::id()));
+        let _ = fs::create_dir_all(&temp_dir);
+        fs::write(
+            temp_dir.join("sitemap.rs"),
+            "pub async fn sitemap() -> String { \"<xml></xml>\".into() }",
+        )
+        .unwrap();
+        fs::write(
+            temp_dir.join("robots.rs"),
+            "pub async fn robots() -> String { \"User-agent: *\".into() }",
+        )
+        .unwrap();
+
+        let input_path = syn::LitStr::new(
+            temp_dir.to_str().unwrap().replace('\\', "/").as_str(),
+            proc_macro2::Span::call_site(),
+        );
+        let app_expr: syn::Expr = syn::parse_str("app").unwrap();
+        let input = AutoRoutesInput {
+            app_expr,
+            path: Some(input_path),
+        };
+
+        let generated = auto_routes_impl(input).unwrap().to_string();
+        assert!(generated.contains("\"/sitemap.xml\""));
+        assert!(generated.contains("routes :: sitemap :: sitemap"));
+        assert!(generated.contains("\"/robots.txt\""));
+        assert!(generated.contains("routes :: robots :: robots"));
 
         let _ = fs::remove_dir_all(&temp_dir);
     }

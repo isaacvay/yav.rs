@@ -23,6 +23,10 @@ pub struct Image {
     priority: bool,
     aspect_ratio: Option<String>,
     object_fit: Option<String>,
+    optimize: bool,
+    quality: Option<u8>,
+    blur_placeholder: bool,
+    blur_data_url: Option<String>,
 }
 
 impl Image {
@@ -41,6 +45,10 @@ impl Image {
             priority: false,
             aspect_ratio: None,
             object_fit: None,
+            optimize: false,
+            quality: None,
+            blur_placeholder: false,
+            blur_data_url: None,
         }
     }
 
@@ -103,10 +111,46 @@ impl Image {
         self
     }
 
+    /// Enable automatic `/_yav/image` server-side optimization rewriting for local assets.
+    pub fn optimize(mut self, optimize: bool) -> Self {
+        self.optimize = optimize;
+        self
+    }
+
+    /// Set target compression quality (`1..=100`) when `optimize` is enabled.
+    pub fn quality(mut self, quality: u8) -> Self {
+        self.quality = Some(quality.clamp(1, 100));
+        self
+    }
+
+    /// Enable an automatic inline SVG Gaussian-blur LQIP background placeholder.
+    pub fn blur_placeholder(mut self, blur: bool) -> Self {
+        self.blur_placeholder = blur;
+        self
+    }
+
+    /// Provide a custom `data:image/...` LQIP blur data URI.
+    pub fn blur_data_url(mut self, url: impl Into<String>) -> Self {
+        self.blur_data_url = Some(url.into());
+        self
+    }
+
     /// Render to virtual DOM element.
     pub fn render(&self) -> Node {
+        let resolved_src =
+            if self.optimize && self.src.starts_with('/') && !self.src.starts_with("/_yav/image") {
+                let w = self.width.unwrap_or(800).clamp(16, 3840);
+                let q = self.quality.unwrap_or(80).clamp(1, 100);
+                format!(
+                    "/_yav/image?url={}&w={w}&q={q}",
+                    self.src.replace(' ', "%20")
+                )
+            } else {
+                self.src.clone()
+            };
+
         let mut el = Element::new("img")
-            .attr("src", &self.src)
+            .attr("src", &resolved_src)
             .attr("alt", &self.alt)
             .attr("loading", &self.loading)
             .attr("decoding", &self.decoding);
@@ -147,6 +191,7 @@ impl Image {
             el = el.attr("class", full_class);
         }
 
+        let mut style_parts = Vec::new();
         if let Some(ref ratio) = self.aspect_ratio {
             let trimmed = ratio.trim();
             let is_safe = !trimmed.is_empty()
@@ -155,8 +200,35 @@ impl Image {
                         c.is_ascii_digit() || c == '/' || c == '.' || c.is_ascii_whitespace()
                     }));
             if is_safe {
-                el = el.attr("style", format!("aspect-ratio: {trimmed};"));
+                style_parts.push(format!("aspect-ratio: {trimmed};"));
             }
+        }
+        if let Some(ref custom_blur) = self.blur_data_url {
+            let is_safe_data_url = (custom_blur.starts_with("data:image/png;base64,")
+                || custom_blur.starts_with("data:image/jpeg;base64,")
+                || custom_blur.starts_with("data:image/webp;base64,")
+                || custom_blur.starts_with("data:image/avif;base64,")
+                || custom_blur.starts_with("data:image/svg+xml;"))
+                && !custom_blur.contains(['"', '\'', '\\', '\n', '\r'])
+                && !custom_blur.chars().any(|c| c.is_control());
+            if is_safe_data_url {
+                style_parts.push(format!(
+                    "background-image: url(\"{custom_blur}\"); background-size: cover;"
+                ));
+            }
+        } else if self.blur_placeholder {
+            let w = self.width.unwrap_or(640).max(16);
+            let h = self.height.unwrap_or(360).max(16);
+            let default_blur = format!(
+                "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 {w} {h}'><rect width='100%' height='100%' fill='%231e293b'/></svg>"
+            );
+            style_parts.push(format!(
+                "background-image: url(\"{default_blur}\"); background-size: cover;"
+            ));
+        }
+
+        if !style_parts.is_empty() {
+            el = el.attr("style", style_parts.join(" "));
         }
 
         Node::Element(el)
@@ -199,6 +271,10 @@ pub struct ImageProps {
     pub sizes: Option<String>,
     pub aspect_ratio: Option<String>,
     pub object_fit: Option<String>,
+    pub optimize: bool,
+    pub quality: Option<u8>,
+    pub blur_placeholder: bool,
+    pub blur_data_url: Option<String>,
 }
 
 /// Functional component adapter for `Image`, enabling `<Image src="..." alt="..." />` in `rsx!`.
@@ -228,6 +304,18 @@ pub fn Image(props: ImageProps) -> Node {
     }
     if let Some(fit) = props.object_fit {
         img = img.object_fit(fit);
+    }
+    if props.optimize {
+        img = img.optimize(true);
+    }
+    if let Some(q) = props.quality {
+        img = img.quality(q);
+    }
+    if props.blur_placeholder {
+        img = img.blur_placeholder(true);
+    }
+    if let Some(blur_url) = props.blur_data_url {
+        img = img.blur_data_url(blur_url);
     }
     img.render()
 }
@@ -283,5 +371,19 @@ mod tests {
         let evil_html = render_to_string(&evil_img);
         assert!(!evil_html.contains("style="));
         assert!(!evil_html.contains("evil.com"));
+    }
+
+    #[test]
+    fn test_image_optimize_and_blur_placeholder() {
+        let img = Image::new("/hero.webp", "Hero")
+            .width(1200)
+            .height(600)
+            .optimize(true)
+            .quality(85)
+            .blur_placeholder(true)
+            .render();
+        let html = render_to_string(&img);
+        assert!(html.contains(r#"src="/_yav/image?url=/hero.webp&amp;w=1200&amp;q=85""#));
+        assert!(html.contains("data:image/svg+xml;utf8,"));
     }
 }

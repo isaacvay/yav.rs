@@ -27,6 +27,8 @@ pub struct OpenApiSpec {
     pub version: String,
     pub description: String,
     pub endpoints: Vec<ApiEndpoint>,
+    #[serde(default)]
+    pub schemas: HashMap<String, serde_json::Value>,
 }
 
 impl OpenApiSpec {
@@ -37,12 +39,21 @@ impl OpenApiSpec {
             version: version.into(),
             description: String::new(),
             endpoints: Vec::new(),
+            schemas: HashMap::new(),
         }
     }
 
     /// Set API description.
     pub fn description(mut self, desc: impl Into<String>) -> Self {
         self.description = desc.into();
+        self
+    }
+
+    /// Register a JSON Schema object under `components.schemas[name]` (e.g. from `#[derive(ApiSchema)]`).
+    pub fn schema_raw(mut self, name: impl Into<String>, raw_json_schema: &str) -> Self {
+        if let Ok(val) = serde_json::from_str::<serde_json::Value>(raw_json_schema) {
+            self.schemas.insert(name.into(), val);
+        }
         self
     }
 
@@ -86,15 +97,30 @@ impl OpenApiSpec {
                 .map(|obj| obj.insert(method_key, op));
         }
 
-        let doc = serde_json::json!({
-            "openapi": "3.1.0",
-            "info": {
-                "title": self.title,
-                "version": self.version,
-                "description": self.description,
-            },
-            "paths": paths_map
-        });
+        let doc = if self.schemas.is_empty() {
+            serde_json::json!({
+                "openapi": "3.1.0",
+                "info": {
+                    "title": self.title,
+                    "version": self.version,
+                    "description": self.description,
+                },
+                "paths": paths_map
+            })
+        } else {
+            serde_json::json!({
+                "openapi": "3.1.0",
+                "info": {
+                    "title": self.title,
+                    "version": self.version,
+                    "description": self.description,
+                },
+                "paths": paths_map,
+                "components": {
+                    "schemas": self.schemas
+                }
+            })
+        };
 
         serde_json::to_string_pretty(&doc).unwrap_or_default()
     }

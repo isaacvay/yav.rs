@@ -30,6 +30,9 @@ Because Rust module names cannot contain brackets `[` or `]`, Yav natively suppo
 | `src/routes/users/_id_.rs` | `/users/:id` | `id = "42"` | `/users/{id}` |
 | `src/routes/posts/_slug_.rs` | `/posts/:slug` | `slug = "hello-world"` | `/posts/{slug}` |
 | `src/routes/docs/__slug__.rs` | `/docs/*slug` | `slug = "api/auth"` | `/docs/{*slug}` |
+| `src/routes/shop/[[...slug]].rs` | `/shop/*slug` (optional) | `slug = ""` or `"a/b"` | `/shop` + `/shop/{*slug}` |
+| `src/routes/@analytics/page.rs` | `/` (slot `analytics`) | Parallel slot `@analytics` | `/` |
+| `src/routes/(.)photo/_id_.rs` | `/photo/:id` | Same-level intercepted modal route | `/photo/{id}` |
 
 #### B. Next.js Bracket Convention (with `#[path]`)
 If you prefer bracket file names like `[id].rs`, declare the module in `src/routes/mod.rs` with the `#[path]` attribute (automatically done by `yav generate route`):
@@ -86,10 +89,96 @@ In each route file under `src/routes/`, the `auto_routes!` macro detects:
 - `pub async fn put(_req: Request) -> HtmlPage` — HTTP PUT handler
 - `pub async fn delete(_req: Request) -> HtmlPage` — HTTP DELETE handler
 - Function named after the file stem (e.g. `pub async fn index(...)` or `pub async fn about(...)`)
+- **`#[server]` Server Actions**: Functions decorated with `#[server]` or `#[yav::server("/custom/path")]` are **automatically mounted as HTTP POST endpoints** on the application!
+
+#### Automatic `#[server]` RPC Auto-Registration:
+```rust
+// src/routes/dashboard.rs
+use yav::prelude::*;
+
+#[derive(FromFormData)]
+pub struct InviteTeamMember {
+    pub email: String,
+    pub role: String,
+}
+
+// Automatically discovered by auto_routes!(app) and mounted at POST /_server/invite_user
+#[server("/_actions/invite-user")]
+pub async fn invite_user(input: InviteTeamMember) -> HtmlFragment {
+    HtmlFragment::new(rsx! {
+        <div class="alert alert-success">"Invitation envoyée à " {input.email}</div>
+    })
+}
+
+pub async fn get() -> HtmlPage {
+    HtmlPage::new(rsx! {
+        <form method="POST" action={invite_user_url()}>
+            <input name="email" type="email" placeholder="collègue@entreprise.com" />
+            <button type="submit">"Inviter"</button>
+        </form>
+    })
+}
+```
 
 ---
 
-## 3. Dynamic Parameter & Query Extraction
+## 3. Strongly Typed Routes (`typed_routes!`)
+
+Yav can generate a compile-time static `Routes` struct reflecting all discovered file routes and dynamic parameters:
+
+```rust
+use yav::typed_routes;
+
+// Discovers routes in src/routes/ and generates typed constants and helper methods:
+typed_routes!();
+
+// Generated constants:
+assert_eq!(Routes::ROOT, "/");
+assert_eq!(Routes::USERS_ID, "/users/:id");
+assert_eq!(Routes::DOCS_SLUG, "/docs/*slug");
+
+// Type-safe URL builders:
+let profile_url = Routes::users_id(42); // -> "/users/42"
+let doc_url = Routes::docs_slug("getting-started/quickstart"); // -> "/docs/getting-started/quickstart"
+```
+
+---
+
+## 4. Parallel & Intercepting Routes
+
+Yav implements full Next.js App Router route composition conventions:
+
+### A. Parallel Routes (`@slot`)
+Define independent simultaneous sub-layouts within the same parent view (e.g. `@analytics` or `@notifications`):
+- `src/routes/dashboard/@analytics/page.rs`
+- `src/routes/dashboard/@team/page.rs`
+- `src/routes/dashboard/page.rs`
+
+Parallel slot directories prefixed with `@` are omitted from the public URL path, allowing parent layouts to render slots concurrently side-by-side.
+
+### B. Intercepting Routes (`(.)`, `(..)`, `(...)`)
+Intercept another route to render it within the current context (e.g. displaying a photo in a modal feed while preserving shareable direct URLs):
+- `(.)` matches segments on the **same level**.
+- `(..)` matches segments **one level above**.
+- `(...)` matches segments starting from the **root app directory**.
+
+Example:
+- `src/routes/feed/page.rs` -> `/feed`
+- `src/routes/feed/(.)photo/[id].rs` -> `/feed/photo/:id` (renders modal over feed)
+- `src/routes/photo/[id].rs` -> `/photo/:id` (standalone page when refreshed or shared)
+
+### C. Optional Catch-All Routes (`[[...slug]].rs` / `___slug___.rs`)
+Catches both the base path and all nested paths:
+- `src/routes/shop/[[...slug]].rs` automatically registers **both** `/shop` and `/shop/*slug` handlers, eliminating the need to duplicate `page.rs` and `[...slug].rs`.
+
+### D. Automatic Sitemap & Robots File Discovery
+Next.js-style automatic root metadata endpoint binding:
+- Placing `src/routes/sitemap.rs` automatically routes `GET /sitemap.xml` via `auto_routes!(app)`.
+- Placing `src/routes/robots.rs` automatically routes `GET /robots.txt` via `auto_routes!(app)`.
+
+---
+
+## 5. Dynamic Parameter & Query Extraction
 
 Extract parameters using either `RouteContext` or Axum's typed extractors:
 
@@ -237,10 +326,11 @@ rsx! {
 
 ### How It Works:
 1. **Intelligent Prefetching**: When the user hovers over a link or scrolls it into view, Yav fetches the target page HTML in the background with `fetch(..., { priority: 'low' })` and caches it in memory.
-2. **Native View Transitions API**: When clicked, the router uses `document.startViewTransition()` to morph the `<main>` content seamlessly.
-3. **Smooth Shared Animations**: Pages transition fluidly with native CSS keyframes (e.g. cross-fade, slide, or zoom) without loading heavy client-side JavaScript routers.
-4. **Browser History & Scroll Restoration**: URL updates via `history.pushState` with full backward/forward browser button navigation and scroll preservation.
-5. **Zero-JS Graceful Fallback**: If JavaScript is disabled or unsupported, links execute standard HTTP GET navigations.
+2. **Top Navigation Progress Bar (`#yav-top-loader`)**: When a `yav:boost` link is clicked, an ultra-thin 2.5px gradient loader (`#6366f1` -> `#06b6d4`) animates across the top of the viewport, giving an instant, responsive feedback feel identical to NProgress / Next.js top loader before disappearing cleanly upon DOM swap.
+3. **Native View Transitions API**: When clicked, the router uses `document.startViewTransition()` to morph the `<main>` content seamlessly.
+4. **Smooth Shared Animations**: Pages transition fluidly with native CSS keyframes (e.g. cross-fade, slide, or zoom) without loading heavy client-side JavaScript routers.
+5. **Browser History & Scroll Restoration**: URL updates via `history.pushState` with full backward/forward browser button navigation and scroll preservation.
+6. **Zero-JS Graceful Fallback**: If JavaScript is disabled or unsupported, links execute standard HTTP GET navigations.
 
 ---
 
@@ -368,3 +458,61 @@ Alternatively, invoke `yav export` from the CLI:
 ```bash
 yav export --output dist --base-url https://yav.rs
 ```
+
+---
+
+## 12. High-Performance Radix Route Trie (`RouteTrie`)
+
+Yav features an optimized Radix Prefix Tree ([`RouteTrie`](file:///d:/deep/yav.rs/crates/yav-router/src/trie.rs)) integrated directly into [`RouteTable`](file:///d:/deep/yav.rs/crates/yav-router/src/table.rs) for sub-microsecond route resolution:
+
+### Algorithmic Complexity
+Traditional web frameworks often scan registered routes linearly ($O(N)$, where $N$ is the total number of routes). In contrast, Yav's `RouteTrie` resolves requests in **$O(L)$ time**, where $L$ is the number of path segments (typically 1 to 5), completely invariant to how many hundreds or thousands of routes exist in the project.
+
+### Trie Hierarchy & Precedence Rules
+Each node in the trie (`RouteTrieNode`) manages three distinct branch categories with strict precedence:
+
+```
+Root (/)
+├── [Static] "users"
+│   ├── [Static] "profile" -> /users/profile (Priority 1: Static)
+│   └── [Dynamic] ":id"    -> /users/:id     (Priority 2: Dynamic)
+└── [Static] "docs"
+    └── [Catch-All] "*slug" -> /docs/*slug    (Priority 3: Catch-All)
+```
+
+1. **Static Child First**: If an exact segment match exists (e.g. `"profile"`), it is selected immediately.
+2. **Dynamic Child Fallback**: If no static child matches, the dynamic segment branch (`:id`, `[id]`, `_id_`) is traversed and the current segment value is captured as a named parameter.
+3. **Catch-All Wildcard Fallback**: If neither static nor dynamic matches succeed, the catch-all wildcard branch (`*slug`, `[...slug]`) consumes the remainder of the path.
+
+### Direct Programmatic Usage
+
+While `RouteTable` and `YavApp` use `RouteTrie` automatically behind the scenes, you can also use `RouteTrie` directly in custom micro-services or middleware:
+
+```rust
+use yav::router::trie::RouteTrie;
+use yav::router::Route;
+
+let mut trie = RouteTrie::new();
+
+// Register routes
+trie.insert(Route::new("/api/v1/health", "health_check"));
+trie.insert(Route::new("/api/v1/users/:id", "get_user"));
+trie.insert(Route::new("/api/v1/users/me", "get_current_user"));
+trie.insert(Route::new("/static/*filepath", "serve_static"));
+
+// Exact static takes precedence over dynamic:
+let (route, params) = trie.find("/api/v1/users/me").unwrap();
+assert_eq!(route.handler_name, "get_current_user");
+assert!(params.is_empty());
+
+// Dynamic parameter extraction:
+let (route, params) = trie.find("/api/v1/users/99").unwrap();
+assert_eq!(route.handler_name, "get_user");
+assert_eq!(params.get("id"), Some(&"99".to_string()));
+
+// Catch-all parameter extraction:
+let (route, params) = trie.find("/static/css/theme/dark.min.css").unwrap();
+assert_eq!(route.handler_name, "serve_static");
+assert_eq!(params.get("filepath"), Some(&"css/theme/dark.min.css".to_string()));
+```
+

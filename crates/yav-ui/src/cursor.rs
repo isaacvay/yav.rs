@@ -80,7 +80,10 @@ impl CursorSpotlight {
         );
 
         let overlay = Element::new("div")
-            .attr("class", "pointer-events-none absolute inset-0 transition-opacity duration-300")
+            .attr(
+                "class",
+                "pointer-events-none absolute inset-0 transition-opacity duration-300",
+            )
             .attr("style", glow_style)
             .attr("aria-hidden", "true");
 
@@ -146,8 +149,16 @@ impl Default for CursorSpotlightProps {
 #[allow(non_snake_case)]
 pub fn CursorSpotlight(props: CursorSpotlightProps) -> Node {
     let mut s = CursorSpotlight::new()
-        .tag(if props.tag.is_empty() { "div" } else { &props.tag })
-        .radius_px(if props.radius_px == 0 { 420 } else { props.radius_px })
+        .tag(if props.tag.is_empty() {
+            "div"
+        } else {
+            &props.tag
+        })
+        .radius_px(if props.radius_px == 0 {
+            420
+        } else {
+            props.radius_px
+        })
         .color(if props.color.is_empty() {
             "rgba(224, 89, 47, 0.14)"
         } else {
@@ -231,7 +242,10 @@ impl TiltPlate {
         } else {
             "tilt"
         };
-        let full_class = merge_classes(&["relative overflow-hidden will-change-transform", &self.class]);
+        let full_class = merge_classes(&[
+            "relative overflow-hidden will-change-transform",
+            &self.class,
+        ]);
         let mut el = Element::new("div")
             .attr("class", full_class)
             .attr("yav:cursor", mode)
@@ -307,7 +321,11 @@ impl Default for TiltPlateProps {
 pub fn TiltPlate(props: TiltPlateProps) -> Node {
     let mut t = TiltPlate::new()
         .max_deg(props.max_deg)
-        .perspective_px(if props.perspective_px == 0 { 800 } else { props.perspective_px })
+        .perspective_px(if props.perspective_px == 0 {
+            800
+        } else {
+            props.perspective_px
+        })
         .spotlight(props.spotlight)
         .children(props.children);
     if !props.class.is_empty() {

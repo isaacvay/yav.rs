@@ -150,17 +150,12 @@ async fn main() {
     // Initialize tracing
     tracing_subscriber::fmt::init();
 
-    // Read PORT from environment (e.g. Render, Railway, Fly.io, Heroku) or default to 3000
-    let port = std::env::var("PORT")
-        .ok()
-        .and_then(|p| p.parse::<u16>().ok())
-        .unwrap_or(3000);
-
     // YavApp automatically loads [server] configuration from package.yavml
     // and auto_routes! discovers and registers all routes under src/routes
-    let app = yav::server::YavApp::new()
-        .port(port)
-        .static_dir("public");
+    let mut app = yav::server::YavApp::new().static_dir("public");
+    if let Some(port) = std::env::var("PORT").ok().and_then(|p| p.parse::<u16>().ok()) {
+        app = app.port(port);
+    }
     let app = yav::auto_routes!(app);
 
     println!("  ➜  Local:   http://{}:{}", app.host, app.port);
@@ -1217,7 +1212,8 @@ mod tests {
         assert!(css_content.contains(".plate"));
         assert!(css_content.contains(".wordmark"));
 
-        let layout_content = std::fs::read_to_string(temp_dir.join("src/layouts/app_layout.rs")).unwrap();
+        let layout_content =
+            std::fs::read_to_string(temp_dir.join("src/layouts/app_layout.rs")).unwrap();
         assert!(layout_content.contains("<Head>"));
         assert!(layout_content.contains("bp-grid"));
         assert!(layout_content.contains("rails"));

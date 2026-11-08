@@ -88,7 +88,9 @@ fn detect_http_methods(file_path: &Path) -> String {
                 methods.push("POST");
             } else if (name == "put" || name.ends_with("_put")) && !methods.contains(&"PUT") {
                 methods.push("PUT");
-            } else if (name == "delete" || name.ends_with("_delete")) && !methods.contains(&"DELETE") {
+            } else if (name == "delete" || name.ends_with("_delete"))
+                && !methods.contains(&"DELETE")
+            {
                 methods.push("DELETE");
             } else if (name == "patch" || name.ends_with("_patch")) && !methods.contains(&"PATCH") {
                 methods.push("PATCH");
@@ -181,8 +183,16 @@ mod tests {
         let temp = std::env::temp_dir().join(format!("yav_routes_cmd_{}", std::process::id()));
         let _ = fs::remove_dir_all(&temp);
         fs::create_dir_all(temp.join("users")).unwrap();
-        fs::write(temp.join("_layout.rs"), "pub fn layout(n: Node) -> Node { n }").unwrap();
-        fs::write(temp.join("index.rs"), "pub async fn get() -> String { String::new() }").unwrap();
+        fs::write(
+            temp.join("_layout.rs"),
+            "pub fn layout(n: Node) -> Node { n }",
+        )
+        .unwrap();
+        fs::write(
+            temp.join("index.rs"),
+            "pub async fn get() -> String { String::new() }",
+        )
+        .unwrap();
         fs::write(
             temp.join("users").join("[id].rs"),
             "pub async fn get() -> String { String::new() }\npub async fn post() -> String { String::new() }",
@@ -192,9 +202,9 @@ mod tests {
         let rows = inspect_routes(&temp);
         assert_eq!(rows.len(), 2);
         assert!(rows.iter().any(|r| r.pattern == "/" && r.methods == "GET"));
-        assert!(rows
-            .iter()
-            .any(|r| r.pattern == "/users/:id" && r.methods == "GET,POST" && !r.layouts.is_empty()));
+        assert!(rows.iter().any(|r| r.pattern == "/users/:id"
+            && r.methods == "GET,POST"
+            && !r.layouts.is_empty()));
 
         let _ = fs::remove_dir_all(&temp);
     }

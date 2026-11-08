@@ -6,16 +6,43 @@ use quote::quote;
 
 use crate::parser::{RsxAttrValue, RsxAttribute, RsxElement, RsxNode};
 
+/// Resolves the canonical path to `yav_core` depending on whether the caller
+/// is `yav-core` itself, a crate depending on `yav-core` directly, or the `yav` facade crate.
+pub(crate) fn yav_core_root() -> TokenStream {
+    if let Ok(pkg) = std::env::var("CARGO_PKG_NAME") {
+        if pkg == "yav-core" || pkg == "yav_core" {
+            return quote! { crate };
+        }
+    }
+    if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
+        let manifest_path = std::path::Path::new(&manifest_dir).join("Cargo.toml");
+        if let Ok(content) = std::fs::read_to_string(manifest_path) {
+            let has_yav_facade = content.lines().any(|l| {
+                let t = l.trim();
+                (t.starts_with("yav ") || t.starts_with("yav="))
+                    && !t.starts_with("yav-")
+                    && !t.starts_with("yav_")
+            });
+            let has_yav_core = content.contains("yav-core") || content.contains("yav_core");
+            if has_yav_core && !has_yav_facade {
+                return quote! { ::yav_core };
+            }
+        }
+    }
+    quote! { ::yav::yav_core }
+}
+
 /// Generate Rust code from an RSX AST node.
 pub fn generate(node: RsxNode) -> TokenStream {
     gen_node(&node, true)
 }
 
 fn gen_node(node: &RsxNode, is_root: bool) -> TokenStream {
+    let core = yav_core_root();
     if !is_root {
         if let Some(static_html) = try_fold_static_node(node) {
             return quote! {
-                ::yav::yav_core::Node::Static(#static_html)
+                #core::Node::Static(#static_html)
             };
         }
     }
@@ -25,28 +52,28 @@ fn gen_node(node: &RsxNode, is_root: bool) -> TokenStream {
         RsxNode::Text(text, _span) => {
             let escaped = escape_html_compile_time(text);
             quote! {
-                ::yav::yav_core::Node::Static(#escaped)
+                #core::Node::Static(#escaped)
             }
         }
         RsxNode::Expr(expr, _span) => {
             quote! {
-                ::yav::yav_core::IntoNode::into_node(#expr)
+                #core::IntoNode::into_node(#expr)
             }
         }
         RsxNode::Fragment(nodes) => {
             let children: Vec<_> = nodes.iter().map(|n| gen_node(n, false)).collect();
             quote! {
-                ::yav::yav_core::Node::Fragment(vec![#(#children),*])
+                #core::Node::Fragment(vec![#(#children),*])
             }
         }
         RsxNode::Raw(raw, _span) => {
             quote! {
-                ::yav::yav_core::Node::Static(#raw)
+                #core::Node::Static(#raw)
             }
         }
         RsxNode::RawExpr(expr, _span) => {
             quote! {
-                ::yav::yav_core::Node::raw((#expr).to_string())
+                #core::Node::raw((#expr).to_string())
             }
         }
         RsxNode::If {
@@ -69,7 +96,7 @@ fn gen_node(node: &RsxNode, is_root: bool) -> TokenStream {
                     if #cond {
                         #then_code
                     } else {
-                        ::yav::yav_core::Node::Empty
+                        #core::Node::Empty
                     }
                 }
             }
@@ -77,7 +104,7 @@ fn gen_node(node: &RsxNode, is_root: bool) -> TokenStream {
         RsxNode::For { header, body } => {
             let body_code = gen_node(body, false);
             quote! {
-                ::yav::yav_core::Node::Fragment({
+                #core::Node::Fragment({
                     let mut __yav_items = ::std::vec::Vec::new();
                     for #header {
                         __yav_items.push(#body_code);
@@ -90,6 +117,7 @@ fn gen_node(node: &RsxNode, is_root: bool) -> TokenStream {
 }
 
 fn gen_element(el: &RsxElement) -> TokenStream {
+    let core = yav_core_root();
     if el.is_component {
         return gen_component(el);
     }
@@ -115,9 +143,9 @@ fn gen_element(el: &RsxElement) -> TokenStream {
             if let RsxAttrValue::Str(ref s, _) = init_attr.value {
                 if let Some(style_str) = compile_yav_initial_style(s) {
                     attrs.push(quote! {
-                        ::yav::yav_core::Attribute {
+                        #core::Attribute {
                             name: ::std::borrow::Cow::Borrowed("style"),
-                            value: ::yav::yav_core::AttributeValue::Static(#style_str),
+                            value: #core::AttributeValue::Static(#style_str),
                         }
                     });
                 }
@@ -126,11 +154,8 @@ fn gen_element(el: &RsxElement) -> TokenStream {
     }
 
     // Generate children (allowing static subtree folding for children unless parent is <Head> template)
-    let is_head_template = tag == "template"
-        && el
-            .attributes
-            .iter()
-            .any(|a| a.name == "data-yav-head");
+    let is_head_template =
+        tag == "template" && el.attributes.iter().any(|a| a.name == "data-yav-head");
     let children: Vec<TokenStream> = el
         .children
         .iter()
@@ -140,7 +165,7 @@ fn gen_element(el: &RsxElement) -> TokenStream {
     let self_closing = el.self_closing || is_void_element(tag);
 
     quote! {
-        ::yav::yav_core::Node::Element(::yav::yav_core::Element {
+        #core::Node::Element(#core::Element {
             tag: ::std::borrow::Cow::Borrowed(#tag),
             attributes: vec![#(#attrs),*],
             children: vec![#(#children),*],
@@ -150,6 +175,7 @@ fn gen_element(el: &RsxElement) -> TokenStream {
 }
 
 fn gen_attributes_with_class_directives(attributes: &[RsxAttribute]) -> Vec<TokenStream> {
+    let core = yav_core_root();
     let mut out = Vec::new();
     let mut class_push_stmts = Vec::new();
 
@@ -168,8 +194,8 @@ fn gen_attributes_with_class_directives(attributes: &[RsxAttribute]) -> Vec<Toke
                 }
                 RsxAttrValue::Expr(expr, _) => {
                     class_push_stmts.push(quote! {
-                        match ::yav::yav_core::IntoAttributeValue::into_attribute_value(#expr) {
-                            ::yav::yav_core::AttributeValue::Static(s) => {
+                        match #core::IntoAttributeValue::into_attribute_value(#expr) {
+                            #core::AttributeValue::Static(s) => {
                                 if !s.is_empty() {
                                     if !__yav_classes.is_empty() {
                                         __yav_classes.push(' ');
@@ -177,7 +203,7 @@ fn gen_attributes_with_class_directives(attributes: &[RsxAttribute]) -> Vec<Toke
                                     __yav_classes.push_str(s);
                                 }
                             }
-                            ::yav::yav_core::AttributeValue::String(s) => {
+                            #core::AttributeValue::String(s) => {
                                 if !s.is_empty() {
                                     if !__yav_classes.is_empty() {
                                         __yav_classes.push(' ');
@@ -232,9 +258,9 @@ fn gen_attributes_with_class_directives(attributes: &[RsxAttribute]) -> Vec<Toke
     out.insert(
         0,
         quote! {
-            ::yav::yav_core::Attribute {
+            #core::Attribute {
                 name: ::std::borrow::Cow::Borrowed("class"),
-                value: ::yav::yav_core::AttributeValue::String({
+                value: #core::AttributeValue::String({
                     let mut __yav_classes = ::std::string::String::new();
                     #(#class_push_stmts)*
                     __yav_classes
@@ -247,6 +273,7 @@ fn gen_attributes_with_class_directives(attributes: &[RsxAttribute]) -> Vec<Toke
 }
 
 fn gen_component(el: &RsxElement) -> TokenStream {
+    let core = yav_core_root();
     let tag = &el.tag;
     let tag_path: syn::Path = match syn::parse_str(tag) {
         Ok(path) => path,
@@ -271,7 +298,7 @@ fn gen_component(el: &RsxElement) -> TokenStream {
             };
             match &attr.value {
                 RsxAttrValue::Str(s, _) => {
-                    quote! { #field_ident: ::yav::yav_core::IntoPropValue::into_prop_value(#s) }
+                    quote! { #field_ident: #core::IntoPropValue::into_prop_value(#s) }
                 }
                 RsxAttrValue::Expr(expr, _) => quote! { #field_ident: #expr },
                 RsxAttrValue::Bool(_) => quote! { #field_ident: true },
@@ -294,7 +321,7 @@ fn gen_component(el: &RsxElement) -> TokenStream {
     };
 
     quote! {
-        ::yav::yav_core::IntoNode::into_node(
+        #core::IntoNode::into_node(
             #tag_path({
                 #[allow(clippy::needless_update)]
                 #props_path {
@@ -317,29 +344,30 @@ fn get_props_path(tag_path: &syn::Path) -> syn::Path {
 }
 
 fn gen_attribute(attr: &RsxAttribute) -> TokenStream {
+    let core = yav_core_root();
     let name = &attr.name;
     match &attr.value {
         RsxAttrValue::Str(val, _) => {
             quote! {
-                ::yav::yav_core::Attribute {
+                #core::Attribute {
                     name: ::std::borrow::Cow::Borrowed(#name),
-                    value: ::yav::yav_core::AttributeValue::Static(#val),
+                    value: #core::AttributeValue::Static(#val),
                 }
             }
         }
         RsxAttrValue::Expr(expr, _) => {
             quote! {
-                ::yav::yav_core::Attribute {
+                #core::Attribute {
                     name: ::std::borrow::Cow::Borrowed(#name),
-                    value: ::yav::yav_core::IntoAttributeValue::into_attribute_value(#expr),
+                    value: #core::IntoAttributeValue::into_attribute_value(#expr),
                 }
             }
         }
         RsxAttrValue::Bool(_) => {
             quote! {
-                ::yav::yav_core::Attribute {
+                #core::Attribute {
                     name: ::std::borrow::Cow::Borrowed(#name),
-                    value: ::yav::yav_core::AttributeValue::Bool(true),
+                    value: #core::AttributeValue::Bool(true),
                 }
             }
         }
@@ -369,7 +397,16 @@ fn is_void_element(tag: &str) -> bool {
 fn is_url_attr(name: &str) -> bool {
     matches!(
         name.to_ascii_lowercase().as_str(),
-        "href" | "src" | "action" | "formaction" | "poster" | "data" | "cite" | "xlink:href"
+        "href"
+            | "src"
+            | "action"
+            | "formaction"
+            | "poster"
+            | "data"
+            | "cite"
+            | "xlink:href"
+            | "ping"
+            | "background"
     )
 }
 
@@ -378,8 +415,18 @@ fn is_safe_static_url(val: &str) -> bool {
     if trimmed.is_empty() {
         return true;
     }
-    let lower = trimmed.to_ascii_lowercase();
-    if lower.starts_with("javascript:") || lower.starts_with("vbscript:") || lower.starts_with("data:") {
+    if trimmed.chars().any(|c| c.is_control()) {
+        return false;
+    }
+    let normalized: String = trimmed
+        .chars()
+        .filter(|c| !c.is_whitespace() && !c.is_control())
+        .flat_map(|c| c.to_lowercase())
+        .collect();
+    if normalized.starts_with("javascript:")
+        || normalized.starts_with("vbscript:")
+        || normalized.starts_with("data:")
+    {
         return false;
     }
     true

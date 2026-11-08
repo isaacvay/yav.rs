@@ -64,7 +64,10 @@ fn test_url_for_reverse_routing() {
     let u2 = yav::router::url_for("/docs/*slug", &[("slug", "getting-started/quickstart")]);
     assert_eq!(u2, "/docs/getting-started/quickstart");
 
-    let u3 = yav::router::url_for("/posts/[year]/[slug]", &[("year", "2026"), ("slug", "announcement")]);
+    let u3 = yav::router::url_for(
+        "/posts/[year]/[slug]",
+        &[("year", "2026"), ("slug", "announcement")],
+    );
     assert_eq!(u3, "/posts/2026/announcement");
 }
 
@@ -90,7 +93,9 @@ impl FromFormData for TestLogin {
         if errors.has_errors() {
             Err(errors)
         } else {
-            Ok(Self { email: email.to_string() })
+            Ok(Self {
+                email: email.to_string(),
+            })
         }
     }
 }
@@ -148,10 +153,8 @@ fn test_code_block_lifetimes_inline_comments_and_line_num() {
 
 #[test]
 fn test_i18n_xss_safe_json_escaping() {
-    let i18n = I18n::new("en").add_translations(
-        "en",
-        [("xss.test", "</script><script>alert(1)</script>")],
-    );
+    let i18n = I18n::new("en")
+        .add_translations("en", [("xss.test", "</script><script>alert(1)</script>")]);
 
     let json = i18n.to_json();
     assert!(
@@ -211,12 +214,7 @@ async fn test_route_with_layout_and_static_export() {
         HtmlPage::new(rsx! { <h1>"Exported Home"</h1> }).title("Home")
     }
 
-    let app = YavApp::new().route_with_layout(
-        "/",
-        Method::GET,
-        index_page,
-        root_layout,
-    );
+    let app = YavApp::new().route_with_layout("/", Method::GET, index_page, root_layout);
     let out_dir = std::env::temp_dir().join("yav_test_static_export_v014");
     let _ = std::fs::remove_dir_all(&out_dir);
 
@@ -363,7 +361,9 @@ async fn test_app_state_use_state_and_cached_routes() {
 
 #[test]
 fn test_markdown_engine_and_ws_broadcast() {
-    let md = parse_markdown("---\ntitle: Architecture\nslug: arch\n---\n# Architecture\nHello **Rust** `0.1.4`.");
+    let md = parse_markdown(
+        "---\ntitle: Architecture\nslug: arch\n---\n# Architecture\nHello **Rust** `0.1.4`.",
+    );
     assert_eq!(md.title, "Architecture");
     assert_eq!(md.slug, "arch");
     assert_eq!(md.headings.len(), 1);
@@ -381,9 +381,7 @@ fn test_markdown_engine_and_ws_broadcast() {
 #[test]
 fn test_t_macro_with_interpolation() {
     let i18n = I18n::new("fr").add_translation("fr", "greeting", "Bonjour {name} !");
-    let rendered = provide_context(i18n, || {
-        t!("greeting", "name" => "Alexandre")
-    });
+    let rendered = provide_context(i18n, || t!("greeting", "name" => "Alexandre"));
     assert_eq!(rendered, "Bonjour Alexandre !");
 }
 
@@ -448,6 +446,3 @@ fn test_ssr_tree_shaking_cursor_motion_and_signals() {
     .render();
     assert!(signals_doc.contains("id=\"yav-signals-runtime\""));
 }
-
-
-

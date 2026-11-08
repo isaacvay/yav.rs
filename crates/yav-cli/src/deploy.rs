@@ -28,6 +28,21 @@ pub enum DeployTarget {
         #[arg(short, long)]
         force: bool,
     },
+    /// Scaffold Render.com Blueprint configuration (render.yaml)
+    Render {
+        #[arg(short, long)]
+        force: bool,
+    },
+    /// Scaffold Cloudflare Containers / Workers configuration (wrangler.toml)
+    Cloudflare {
+        #[arg(short, long)]
+        force: bool,
+    },
+    /// Scaffold Caddy reverse proxy configuration (Caddyfile)
+    Caddy {
+        #[arg(short, long)]
+        force: bool,
+    },
 }
 
 pub fn run(target: &DeployTarget) -> Result<(), Box<dyn std::error::Error>> {
@@ -36,6 +51,9 @@ pub fn run(target: &DeployTarget) -> Result<(), Box<dyn std::error::Error>> {
         DeployTarget::Shuttle { force } => scaffold_shuttle(*force),
         DeployTarget::Railway { force } => scaffold_railway(*force),
         DeployTarget::Systemd { force } => scaffold_systemd(*force),
+        DeployTarget::Render { force } => scaffold_render(*force),
+        DeployTarget::Cloudflare { force } => scaffold_cloudflare(*force),
+        DeployTarget::Caddy { force } => scaffold_caddy(*force),
     }
 }
 
@@ -197,4 +215,114 @@ WantedBy=multi-user.target
     println!("\x1b[32m✔ Created {service_filename} systemd service unit file\x1b[0m");
     println!("  Install on Linux: sudo cp {service_filename} /etc/systemd/system/ && sudo systemctl enable --now {app_name}");
     Ok(())
+}
+
+pub fn generate_render_yaml(app_name: &str) -> String {
+    format!(
+        r#"services:
+  - type: web
+    name: {app_name}
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /healthz
+    envVars:
+      - key: YAV_ENV
+        value: production
+      - key: PORT
+        value: "3000"
+      - key: SESSION_SECRET
+        generateValue: true
+"#
+    )
+}
+
+fn scaffold_render(force: bool) -> Result<(), Box<dyn std::error::Error>> {
+    let render_path = Path::new("render.yaml");
+    if render_path.exists() && !force {
+        println!("\x1b[33m⚠️ render.yaml already exists. Use --force to overwrite.\x1b[0m");
+        return Ok(());
+    }
+    let app_name = detect_app_name();
+    fs::write(render_path, generate_render_yaml(&app_name))?;
+    println!("\x1b[32m✔ Created render.yaml for Render.com deployment\x1b[0m");
+    Ok(())
+}
+
+pub fn generate_wrangler_toml(app_name: &str) -> String {
+    format!(
+        r#"name = "{app_name}"
+compatibility_date = "2026-01-01"
+
+[vars]
+YAV_ENV = "production"
+
+[[containers]]
+max_instances = 3
+name = "{app_name}-container"
+image = "./Dockerfile"
+"#
+    )
+}
+
+fn scaffold_cloudflare(force: bool) -> Result<(), Box<dyn std::error::Error>> {
+    let wrangler_path = Path::new("wrangler.toml");
+    if wrangler_path.exists() && !force {
+        println!("\x1b[33m⚠️ wrangler.toml already exists. Use --force to overwrite.\x1b[0m");
+        return Ok(());
+    }
+    let app_name = detect_app_name();
+    fs::write(wrangler_path, generate_wrangler_toml(&app_name))?;
+    println!("\x1b[32m✔ Created wrangler.toml for Cloudflare Containers deployment\x1b[0m");
+    Ok(())
+}
+
+pub fn generate_caddyfile(app_name: &str) -> String {
+    format!(
+        r#"# Caddyfile for {app_name} (Auto-HTTPS & HTTP/3)
+{app_name}.example.com {{
+    encode zstd gzip
+    handle_path /public/* {{
+        root * ./public
+        header Cache-Control "public, max-age=31536000, immutable"
+        file_server
+    }}
+    reverse_proxy 127.0.0.1:3000 {{
+        health_uri /healthz
+        health_interval 15s
+    }}
+}}
+"#
+    )
+}
+
+fn scaffold_caddy(force: bool) -> Result<(), Box<dyn std::error::Error>> {
+    let caddy_path = Path::new("Caddyfile");
+    if caddy_path.exists() && !force {
+        println!("\x1b[33m⚠️ Caddyfile already exists. Use --force to overwrite.\x1b[0m");
+        return Ok(());
+    }
+    let app_name = detect_app_name();
+    fs::write(caddy_path, generate_caddyfile(&app_name))?;
+    println!("\x1b[32m✔ Created Caddyfile for Caddy reverse proxy deployment\x1b[0m");
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_deploy_generators() {
+        let render = generate_render_yaml("my-saas");
+        assert!(render.contains("name: my-saas"));
+        assert!(render.contains("healthCheckPath: /healthz"));
+
+        let wrangler = generate_wrangler_toml("my-saas");
+        assert!(wrangler.contains("name = \"my-saas\""));
+        assert!(wrangler.contains("[[containers]]"));
+
+        let caddy = generate_caddyfile("my-saas");
+        assert!(caddy.contains("reverse_proxy 127.0.0.1:3000"));
+        assert!(caddy.contains("encode zstd gzip"));
+    }
 }

@@ -100,6 +100,42 @@ pub fn percent_decode_path_segment(input: &str) -> String {
     String::from_utf8(bytes).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned())
 }
 
+/// Percent-encode a URL path segment.
+///
+/// Encodes characters not allowed in path segments (RFC 3986 unreserved + sub-delims).
+/// When `allow_slash` is true, `/` is preserved for catch-all paths.
+pub fn percent_encode(input: &str, allow_slash: bool) -> String {
+    let mut out = String::with_capacity(input.len());
+    for &b in input.as_bytes() {
+        if b.is_ascii_alphanumeric()
+            || matches!(
+                b,
+                b'-' | b'.'
+                    | b'_'
+                    | b'~'
+                    | b'!'
+                    | b'$'
+                    | b'&'
+                    | b'\''
+                    | b'('
+                    | b')'
+                    | b'*'
+                    | b'+'
+                    | b','
+                    | b';'
+                    | b'='
+            )
+            || (allow_slash && b == b'/')
+        {
+            out.push(b as char);
+        } else {
+            use std::fmt::Write;
+            let _ = write!(&mut out, "%{:02X}", b);
+        }
+    }
+    out
+}
+
 /// Parse a raw query string into a [`HashMap`].
 ///
 /// Leading `?` is stripped if present. Keys and values are percent-decoded.
@@ -180,7 +216,7 @@ fn match_route_segments(route: &Route, req_segments: &[&str]) -> Option<HashMap<
                     RouteSegment::Dynamic(param_name) => {
                         params.insert(param_name.clone(), percent_decode_path_segment(req_seg));
                     }
-                    RouteSegment::CatchAll(_) => unreachable!(),
+                    RouteSegment::CatchAll(_) => return None,
                 }
             }
 
@@ -207,7 +243,7 @@ fn match_route_segments(route: &Route, req_segments: &[&str]) -> Option<HashMap<
                     RouteSegment::Dynamic(param_name) => {
                         params.insert(param_name.clone(), percent_decode_path_segment(req_seg));
                     }
-                    RouteSegment::CatchAll(_) => unreachable!(),
+                    RouteSegment::CatchAll(_) => return None,
                 }
             }
 
@@ -227,7 +263,7 @@ fn match_route_segments(route: &Route, req_segments: &[&str]) -> Option<HashMap<
                             percent_decode_path_segment(req_segments[req_idx]),
                         );
                     }
-                    RouteSegment::CatchAll(_) => unreachable!(),
+                    RouteSegment::CatchAll(_) => return None,
                 }
             }
 

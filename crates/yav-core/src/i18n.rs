@@ -164,7 +164,15 @@ impl I18n {
                 continue;
             }
 
-            if let Some((k, v)) = trimmed.split_once('=').or_else(|| trimmed.split_once(':')) {
+            let split_pos = match (trimmed.find('='), trimmed.find(':')) {
+                (Some(i), Some(j)) => Some(i.min(j)),
+                (Some(i), None) => Some(i),
+                (None, Some(j)) => Some(j),
+                (None, None) => None,
+            };
+            if let Some(pos) = split_pos {
+                let k = &trimmed[..pos];
+                let v = &trimmed[pos + 1..];
                 let key = k.trim().trim_matches('"').trim_matches('\'');
                 let val = v.trim().trim_matches('"').trim_matches('\'');
                 map.insert(key.to_string(), val.to_string());

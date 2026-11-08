@@ -180,11 +180,21 @@ pub struct AssetPipeline;
 
 impl AssetPipeline {
     /// Copies all assets from `src_dir` to `dst_dir`, optionally calculating content
-    /// fingerprints and returning an `AssetManifest`.
+    /// fingerprints (and minifying CSS/HTML when `fingerprint` is `true`) and returning an `AssetManifest`.
     pub fn copy_dir(
         src_dir: impl AsRef<Path>,
         dst_dir: impl AsRef<Path>,
         fingerprint: bool,
+    ) -> Result<AssetManifest, AssetError> {
+        Self::copy_dir_with_options(src_dir, dst_dir, fingerprint, fingerprint)
+    }
+
+    /// Copies all assets from `src_dir` to `dst_dir` with explicit fingerprinting and minification controls.
+    pub fn copy_dir_with_options(
+        src_dir: impl AsRef<Path>,
+        dst_dir: impl AsRef<Path>,
+        fingerprint: bool,
+        minify: bool,
     ) -> Result<AssetManifest, AssetError> {
         let src = src_dir.as_ref();
         let dst = dst_dir.as_ref();
@@ -199,7 +209,7 @@ impl AssetPipeline {
             return Ok(manifest);
         }
 
-        Self::walk_and_copy(src, src, dst, fingerprint, &mut manifest)?;
+        Self::walk_and_copy(src, src, dst, fingerprint, minify, &mut manifest)?;
         Ok(manifest)
     }
 
@@ -208,6 +218,7 @@ impl AssetPipeline {
         base_src: &Path,
         base_dst: &Path,
         fingerprint: bool,
+        minify: bool,
         manifest: &mut AssetManifest,
     ) -> Result<(), AssetError> {
         for entry in std::fs::read_dir(current_dir)? {
@@ -215,7 +226,7 @@ impl AssetPipeline {
             let path = entry.path();
 
             if path.is_dir() {
-                Self::walk_and_copy(&path, base_src, base_dst, fingerprint, manifest)?;
+                Self::walk_and_copy(&path, base_src, base_dst, fingerprint, minify, manifest)?;
             } else if path.is_file() {
                 let ext = path
                     .extension()
@@ -230,7 +241,26 @@ impl AssetPipeline {
                     .map_err(|e| AssetError::InvalidPath(e.to_string()))?;
                 let original_key = to_forward_slash(rel);
 
-                let data = std::fs::read(&path)?;
+                let raw_data = std::fs::read(&path)?;
+                let data = if minify {
+                    if ext.eq_ignore_ascii_case("css") {
+                        if let Ok(text) = std::str::from_utf8(&raw_data) {
+                            crate::minifier::minify_css(text).into_bytes()
+                        } else {
+                            raw_data
+                        }
+                    } else if ext.eq_ignore_ascii_case("html") {
+                        if let Ok(text) = std::str::from_utf8(&raw_data) {
+                            crate::minifier::minify_html(text).into_bytes()
+                        } else {
+                            raw_data
+                        }
+                    } else {
+                        raw_data
+                    }
+                } else {
+                    raw_data
+                };
                 let gz_bytes = compress_bytes_if_text(&path, &data)?;
 
                 if fingerprint {

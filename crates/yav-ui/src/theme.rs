@@ -652,42 +652,67 @@ impl Theme {
         out
     }
 
-    /// Render a `<style>` tag containing this theme's CSS variables.
-    pub fn inject_css(&self) -> Node {
+    /// Render a `<style>` tag containing this theme's CSS variables, with an optional CSP nonce.
+    pub fn inject_css_with_nonce(&self, nonce: Option<&str>) -> Node {
         let css = self.to_css_variables();
-        let style_el = Element::new("style")
+        let mut style_el = Element::new("style")
             .attr("data-theme", self.name)
             .child(Node::raw(css));
+        if let Some(n) = nonce {
+            style_el = style_el.attr("nonce", n);
+        }
+        Node::Element(style_el)
+    }
+
+    /// Render a `<style>` tag containing this theme's CSS variables.
+    pub fn inject_css(&self) -> Node {
+        self.inject_css_with_nonce(None)
+    }
+
+    /// Render a `<style data-yav-themes="all">` tag containing all 8 built-in themes, with an optional CSP nonce.
+    pub fn inject_all_themes_css_with_nonce(nonce: Option<&str>) -> Node {
+        let css = Self::all_themes_css();
+        let mut style_el = Element::new("style")
+            .attr("data-yav-themes", "all")
+            .child(Node::raw(css));
+        if let Some(n) = nonce {
+            style_el = style_el.attr("nonce", n);
+        }
         Node::Element(style_el)
     }
 
     /// Render a `<style data-yav-themes="all">` tag containing all 8 built-in themes.
     pub fn inject_all_themes_css() -> Node {
-        let css = Self::all_themes_css();
-        let style_el = Element::new("style")
-            .attr("data-yav-themes", "all")
-            .child(Node::raw(css));
-        Node::Element(style_el)
+        Self::inject_all_themes_css_with_nonce(None)
     }
 }
 
-/// Returns an inline JavaScript `<script>` node that prevents Flash of Unstyled Content (FOUC).
+/// Returns an inline JavaScript `<script>` node that prevents Flash of Unstyled Content (FOUC),
+/// with an optional CSP nonce.
 ///
 /// Restores both `localStorage.getItem('yav-theme')` (via `data-theme` on `<html>`) and
 /// `localStorage.getItem('theme')` (`.dark` class on `<html>`) synchronously before body render.
-pub fn anti_fouc_script() -> Node {
+pub fn anti_fouc_script_with_nonce(nonce: Option<&str>) -> Node {
     let script = r#"try{var yt=localStorage.getItem('yav-theme');if(yt){document.documentElement.setAttribute('data-theme',yt);}var s=localStorage.getItem('theme');if(s==='light'||yt==='light'||yt==='nordic-paper'||yt==='solarized-lab'){document.documentElement.classList.remove('dark')}else{document.documentElement.classList.add('dark')}}catch(e){}"#;
-    Node::Element(
-        Element::new("script")
-            .attr("data-yav-anti-fouc", "true")
-            .child(Node::raw(script)),
-    )
+    let mut el = Element::new("script")
+        .attr("data-yav-anti-fouc", "true")
+        .child(Node::raw(script));
+    if let Some(n) = nonce {
+        el = el.attr("nonce", n);
+    }
+    Node::Element(el)
 }
 
-/// Returns a CSS `<style>` node respecting the user's `prefers-reduced-motion` setting.
+/// Returns an inline JavaScript `<script>` node that prevents Flash of Unstyled Content (FOUC).
+pub fn anti_fouc_script() -> Node {
+    anti_fouc_script_with_nonce(None)
+}
+
+/// Returns a CSS `<style>` node respecting the user's `prefers-reduced-motion` setting,
+/// with an optional CSP nonce.
 ///
 /// Disables gratuitous animations and instantizes transitions when reduced motion is preferred.
-pub fn reduced_motion_style() -> Node {
+pub fn reduced_motion_style_with_nonce(nonce: Option<&str>) -> Node {
     let css = r#"@media (prefers-reduced-motion: reduce) {
   *, ::before, ::after {
     animation-duration: 0.01ms !important;
@@ -696,11 +721,18 @@ pub fn reduced_motion_style() -> Node {
     scroll-behavior: auto !important;
   }
 }"#;
-    Node::Element(
-        Element::new("style")
-            .attr("data-yav-reduced-motion", "true")
-            .child(Node::raw(css)),
-    )
+    let mut el = Element::new("style")
+        .attr("data-yav-reduced-motion", "true")
+        .child(Node::raw(css));
+    if let Some(n) = nonce {
+        el = el.attr("nonce", n);
+    }
+    Node::Element(el)
+}
+
+/// Returns a CSS `<style>` node respecting the user's `prefers-reduced-motion` setting.
+pub fn reduced_motion_style() -> Node {
+    reduced_motion_style_with_nonce(None)
 }
 
 /// A dark mode toggle button with Sun / Moon icons and local storage persistence.
@@ -1016,5 +1048,21 @@ mod tests {
         assert!(html.contains("data-theme=\"light\""));
         assert!(html.contains("--color-primary: #2563eb;"));
         assert!(html.ends_with("</style>"));
+    }
+
+    #[test]
+    fn test_theme_csp_nonce() {
+        let light = Theme::light();
+        let node = light.inject_css_with_nonce(Some("rAnd0m123"));
+        let html = render_to_string(&node);
+        assert!(html.contains("nonce=\"rAnd0m123\""));
+
+        let fouc = anti_fouc_script_with_nonce(Some("nonce_abc"));
+        let fouc_html = render_to_string(&fouc);
+        assert!(fouc_html.contains("nonce=\"nonce_abc\""));
+
+        let reduced = reduced_motion_style_with_nonce(Some("nonce_xyz"));
+        let reduced_html = render_to_string(&reduced);
+        assert!(reduced_html.contains("nonce=\"nonce_xyz\""));
     }
 }

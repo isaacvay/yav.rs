@@ -11,6 +11,7 @@ repository.workspace = true
 rust-version.workspace = true
 keywords = ["icons", "lucide", "svg", "ui", "yav"]
 categories = ["gui", "rendering"]
+exclude = ["lucide/", "mynaui-icons-main/", "phosphor-icons/", "scripts/"]
 
 [dependencies]
 yav-core.workspace = true

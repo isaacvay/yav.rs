@@ -68,6 +68,51 @@ pub const AVAILABLE_TEMPLATES: &[(&str, &str, &str)] = &[
         "cursor_spotlight.rs",
         include_str!("../templates/CursorSpotlight.rs.txt"),
     ),
+    (
+        "charts",
+        "charts_panel.rs",
+        "use yav::prelude::*;\n\npub fn ChartsPanel() -> Node {\n    let pts = vec![ChartPoint::new(\"Q1\", 140.0), ChartPoint::new(\"Q2\", 230.0), ChartPoint::new(\"Q3\", 310.0)];\n    line_chart(pts).title(\"Quarterly Growth\").render()\n}\n",
+    ),
+    (
+        "data-grid",
+        "data_grid_view.rs",
+        "use yav::prelude::*;\n\npub fn DataGridView() -> Node {\n    let cols = vec![DataGridColumn::new(\"id\", \"ID\"), DataGridColumn::new(\"email\", \"Email\")];\n    let rows = vec![vec![\"1\".into(), \"alice@yav.rs\".into()]];\n    data_grid(cols, rows).searchable(true).selectable(true).render()\n}\n",
+    ),
+    (
+        "date-picker",
+        "date_picker_field.rs",
+        "use yav::prelude::*;\n\npub fn DatePickerField() -> Node {\n    DatePicker(DatePickerProps { name: \"scheduled_at\".into(), label: Some(\"Schedule Date\".into()), required: true, ..Default::default() })\n}\n",
+    ),
+    (
+        "input-otp",
+        "otp_verification.rs",
+        "use yav::prelude::*;\n\npub fn OtpVerification() -> Node {\n    InputOtp(InputOtpProps { name: \"totp_code\".into(), length: 6, ..Default::default() })\n}\n",
+    ),
+    (
+        "kanban-board",
+        "kanban_board_view.rs",
+        "use yav::prelude::*;\n\npub fn KanbanBoardView() -> Node {\n    KanbanBoard::new(\"sprint\").column(KanbanColumn::new(\"todo\", \"To Do\").card(KanbanCard::new(\"1\", \"Ship Yav.rs\", \"B\"))).render()\n}\n",
+    ),
+    (
+        "flow-canvas",
+        "flow_canvas_view.rs",
+        "use yav::prelude::*;\n\npub fn FlowCanvasView() -> Node {\n    FlowCanvas::new(\"workflow\").node(FlowNode::new(\"a\", \"Start\", 40.0, 80.0)).node(FlowNode::new(\"b\", \"End\", 260.0, 80.0)).edge(FlowEdge::new(\"a\", \"b\").animated(true)).render()\n}\n",
+    ),
+    (
+        "virtual-list",
+        "virtual_list_view.rs",
+        "use yav::prelude::*;\n\npub fn VirtualListView() -> Node {\n    VirtualList::new(100_000, 36).viewport_height_px(480).render()\n}\n",
+    ),
+    (
+        "rich-editor",
+        "rich_editor_view.rs",
+        "use yav::prelude::*;\n\npub fn RichEditorView() -> Node {\n    RichTextEditor::new(\"content\").initial_html(\"<p>Start writing...</p>\").render()\n}\n",
+    ),
+    (
+        "ai-chat",
+        "ai_chat_view.rs",
+        "use yav::prelude::*;\n\npub fn AiChatView() -> Node {\n    AiChat::new(\"/api/ai/chat\").message(AiChatBubble::assistant(\"How can I help?\")).render()\n}\n",
+    ),
 ];
 
 /// Executes the `yav add <name>` command.

@@ -6,6 +6,7 @@
 
 use crate::matcher::find_best_match;
 use crate::route::{Route, RouteMatch};
+use crate::trie::RouteTrie;
 
 /// A table holding registered routes, supporting request resolution.
 ///
@@ -24,12 +25,16 @@ use crate::route::{Route, RouteMatch};
 #[derive(Debug, Clone, Default)]
 pub struct RouteTable {
     routes: Vec<Route>,
+    trie: RouteTrie,
 }
 
 impl RouteTable {
     /// Create a new, empty route table.
     pub fn new() -> Self {
-        Self { routes: Vec::new() }
+        Self {
+            routes: Vec::new(),
+            trie: RouteTrie::new(),
+        }
     }
 
     /// Register a route in the table.
@@ -49,44 +54,19 @@ impl RouteTable {
             handler = %route.handler,
             "Added route to table"
         );
+        self.trie.insert(route.clone());
         self.routes.push(route);
     }
 
     /// Match an incoming HTTP request method and path against registered routes.
     ///
-    /// The path may contain a query string (e.g. `/search?q=rust`), which is
-    /// parsed into the resulting [`RouteMatch::query`].
-    ///
-    /// When multiple routes match the same path, resolution follows priority:
-    /// `static > dynamic > catch-all`.
-    ///
-    /// Returns `None` if no route matches the method and path.
-    ///
-    /// # Example
-    /// ```
-    /// use yav_router::{Route, RouteTable};
-    ///
-    /// let mut table = RouteTable::new();
-    /// table.add(Route::new("GET", "/posts/:slug", "show_post"));
-    ///
-    /// let m = table.resolve("GET", "/posts/hello-world?draft=true").unwrap();
-    /// assert_eq!(m.params.get("slug"), Some(&"hello-world".to_string()));
-    /// assert_eq!(m.query.get("draft"), Some(&"true".to_string()));
-    /// ```
+    /// First attempts fast $O(L)$ Radix Trie traversal, falling back to full matcher if needed.
     pub fn resolve(&self, method: &str, path: &str) -> Option<RouteMatch> {
         tracing::debug!(method = %method, path = %path, "Resolving request");
-        let matched = find_best_match(&self.routes, method, path);
-        if let Some(ref m) = matched {
-            tracing::debug!(
-                method = %method,
-                path = %path,
-                handler = %m.route.handler,
-                "Route resolved successfully"
-            );
-        } else {
-            tracing::trace!(method = %method, path = %path, "No route matched");
+        if let Some(m) = self.trie.resolve(method, path) {
+            return Some(m);
         }
-        matched
+        find_best_match(&self.routes, method, path)
     }
 
     /// Return a slice of all registered routes in registration order.

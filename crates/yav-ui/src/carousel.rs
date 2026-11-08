@@ -353,10 +353,20 @@ pub fn Carousel(props: CarouselProps) -> Node {
 
 /// Helper script that drives carousel navigation, indicators, and autoplay.
 pub fn carousel_script() -> Node {
-    let script = r#"<script>
-(function() {
-  function initCarousels() {
-    document.querySelectorAll('[data-carousel]').forEach(carousel => {
+    carousel_script_with_nonce(None)
+}
+
+/// Helper script that drives carousel navigation, indicators, and autoplay, with an optional CSP nonce.
+pub fn carousel_script_with_nonce(nonce: Option<&str>) -> Node {
+    let nonce_attr = match nonce {
+        Some(n) => format!(r#" nonce="{}""#, yav_core::escape_html(n)),
+        None => String::new(),
+    };
+    let script = format!(
+        r#"<script{nonce_attr}>
+(function() {{
+  function initCarousels() {{
+    document.querySelectorAll('[data-carousel]').forEach(carousel => {{
       if (carousel.__carousel_init) return;
       carousel.__carousel_init = true;
 
@@ -370,69 +380,71 @@ pub fn carousel_script() -> Node {
       let current = 0;
       let timer = null;
 
-      function goTo(idx) {
+      function goTo(idx) {{
         if (slides.length <= 1) return;
         current = (idx + slides.length) % slides.length;
 
-        slides.forEach((slide, i) => {
-          if (i === current) {
+        slides.forEach((slide, i) => {{
+          if (i === current) {{
             slide.classList.remove('opacity-0', 'pointer-events-none', 'z-0');
             slide.classList.add('opacity-100', 'z-10');
-          } else {
+          }} else {{
             slide.classList.remove('opacity-100', 'z-10');
             slide.classList.add('opacity-0', 'pointer-events-none', 'z-0');
-          }
-        });
+          }}
+        }});
 
-        dots.forEach((dot, i) => {
-          if (i === current) {
+        dots.forEach((dot, i) => {{
+          if (i === current) {{
             dot.classList.remove('bg-white/50', 'w-2.5');
             dot.classList.add('bg-white', 'w-6');
-          } else {
+          }} else {{
             dot.classList.remove('bg-white', 'w-6');
             dot.classList.add('bg-white/50', 'w-2.5');
-          }
-        });
-      }
+          }}
+        }});
+      }}
 
-      function next() { goTo(current + 1); }
-      function prev() { goTo(current - 1); }
+      function next() {{ goTo(current + 1); }}
+      function prev() {{ goTo(current - 1); }}
 
-      if (prevBtn) prevBtn.addEventListener('click', () => { prev(); restartAutoplay(); });
-      if (nextBtn) nextBtn.addEventListener('click', () => { next(); restartAutoplay(); });
+      if (prevBtn) prevBtn.addEventListener('click', () => {{ prev(); restartAutoplay(); }});
+      if (nextBtn) nextBtn.addEventListener('click', () => {{ next(); restartAutoplay(); }});
 
-      dots.forEach((dot, i) => {
-        dot.addEventListener('click', () => { goTo(i); restartAutoplay(); });
-      });
+      dots.forEach((dot, i) => {{
+        dot.addEventListener('click', () => {{ goTo(i); restartAutoplay(); }});
+      }});
 
-      function startAutoplay() {
-        if (autoplay && slides.length > 1) {
+      function startAutoplay() {{
+        if (autoplay && slides.length > 1) {{
           timer = setInterval(next, interval);
-        }
-      }
+        }}
+      }}
 
-      function stopAutoplay() {
+      function stopAutoplay() {{
         if (timer) clearInterval(timer);
-      }
+      }}
 
-      function restartAutoplay() {
+      function restartAutoplay() {{
         stopAutoplay();
         startAutoplay();
-      }
+      }}
 
       carousel.addEventListener('mouseenter', stopAutoplay);
       carousel.addEventListener('mouseleave', startAutoplay);
       startAutoplay();
-    });
-  }
+    }});
+  }}
 
-  if (document.readyState === 'loading') {
+  if (document.readyState === 'loading') {{
     document.addEventListener('DOMContentLoaded', initCarousels);
-  } else {
+  }} else {{
     initCarousels();
-  }
-})();
-</script>"#;
+  }}
+}})();
+</script>"#,
+        nonce_attr = nonce_attr
+    );
     Node::raw(script)
 }
 
@@ -471,5 +483,12 @@ mod tests {
         assert!(html.contains("aria-label=\"Next slide\""));
         assert!(html.contains("data-carousel-dot=\"0\""));
         assert!(html.contains("data-carousel-dot=\"1\""));
+    }
+
+    #[test]
+    fn test_carousel_script_nonce() {
+        let script = carousel_script_with_nonce(Some("caro_nonce_123"));
+        let html = render_to_string(&script);
+        assert!(html.contains("nonce=\"caro_nonce_123\""));
     }
 }

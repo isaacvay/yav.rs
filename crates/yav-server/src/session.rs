@@ -4,10 +4,10 @@
 //! protecting user authentication state and sensitive variables against client manipulation.
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc, Mutex,
+        Arc, Mutex, RwLock,
     },
 };
 
@@ -260,7 +260,10 @@ pub const DEFAULT_SESSION_TTL_SECS: u64 = 7 * 24 * 3600;
 /// - neither environment variable is set to `"development"` / `"dev"` / `"test"` AND
 ///   the binary was compiled in release mode (`#[cfg(not(debug_assertions))]`).
 pub fn is_production_mode() -> bool {
-    if let Ok(env) = std::env::var("YAV_ENV").or_else(|_| std::env::var("NODE_ENV")) {
+    if let Ok(env) = std::env::var("YAV_ENV")
+        .or_else(|_| std::env::var("APP_ENV"))
+        .or_else(|_| std::env::var("NODE_ENV"))
+    {
         let env = env.trim();
         if env.eq_ignore_ascii_case("production") || env.eq_ignore_ascii_case("prod") {
             return true;
@@ -279,16 +282,11 @@ pub fn is_production_mode() -> bool {
 pub const DEFAULT_DEV_SESSION_SECRET: &[u8] =
     b"yav_default_dev_session_secret_change_in_production_32b";
 
+use subtle::ConstantTimeEq;
+
 /// Constant-time byte slice comparison to mitigate timing attacks.
 pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut result = 0u8;
-    for (&x, &y) in a.iter().zip(b.iter()) {
-        result |= x ^ y;
-    }
-    result == 0
+    a.ct_eq(b).into()
 }
 
 /// SameSite cookie policy.
@@ -312,6 +310,65 @@ impl std::fmt::Display for SameSite {
     }
 }
 
+/// Thread-safe server-side revocation list for invalidated session IDs or tokens.
+#[derive(Debug, Clone, Default)]
+pub struct SessionRevocationList {
+    revoked: Arc<RwLock<HashSet<String>>>,
+}
+
+impl PartialEq for SessionRevocationList {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.revoked, &other.revoked)
+    }
+}
+
+impl Eq for SessionRevocationList {}
+
+impl SessionRevocationList {
+    /// Create a new empty revocation list.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Revoke a session identifier or token.
+    pub fn revoke(&self, id: impl Into<String>) {
+        if let Ok(mut set) = self.revoked.write() {
+            set.insert(id.into());
+        }
+    }
+
+    /// Check if a session identifier or token is revoked.
+    #[must_use]
+    pub fn is_revoked(&self, id: &str) -> bool {
+        self.revoked
+            .read()
+            .map(|set| set.contains(id))
+            .unwrap_or(false)
+    }
+
+    /// Remove a revoked identifier.
+    pub fn unrevoke(&self, id: &str) -> bool {
+        if let Ok(mut set) = self.revoked.write() {
+            set.remove(id)
+        } else {
+            false
+        }
+    }
+
+    /// Total count of currently revoked sessions.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.revoked.read().map(|set| set.len()).unwrap_or(0)
+    }
+
+    /// Check if the revocation list is empty.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
 /// Configuration for HTTP session cookies and behavior.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SessionConfig {
@@ -329,6 +386,8 @@ pub struct SessionConfig {
     pub secure: Option<bool>,
     /// Default Time-To-Live in seconds for sessions (optional).
     pub default_ttl: Option<u64>,
+    /// Optional server-side session revocation list.
+    pub revocation_list: Option<SessionRevocationList>,
 }
 
 impl Default for SessionConfig {
@@ -341,6 +400,7 @@ impl Default for SessionConfig {
             http_only: true,
             secure: None,
             default_ttl: Some(DEFAULT_SESSION_TTL_SECS),
+            revocation_list: None,
         }
     }
 }
@@ -407,6 +467,13 @@ impl SessionConfig {
         self.default_ttl = None;
         self
     }
+
+    /// Attach a server-side session revocation list to reject invalidated sessions.
+    #[must_use]
+    pub fn revocation_list(mut self, list: SessionRevocationList) -> Self {
+        self.revocation_list = Some(list);
+        self
+    }
 }
 
 /// Helper to extract a cryptographically signed [`Session`] from a `Cookie` header.
@@ -452,7 +519,24 @@ pub fn extract_session_from_cookie(
                                             false
                                         };
 
-                                        if !expired {
+                                        let is_revoked =
+                                            if let Some(ref rev_list) = config.revocation_list {
+                                                let id_revoked = map
+                                                    .get("session_id")
+                                                    .or_else(|| map.get("id"))
+                                                    .or_else(|| map.get("_id"))
+                                                    .map(|id| rev_list.is_revoked(id))
+                                                    .unwrap_or(false);
+                                                id_revoked || rev_list.is_revoked(payload)
+                                            } else {
+                                                false
+                                            };
+
+                                        if is_revoked {
+                                            tracing::info!(
+                                                "Session is revoked; starting with empty session"
+                                            );
+                                        } else if !expired {
                                             session_map = map;
                                         } else {
                                             tracing::debug!(
@@ -816,5 +900,38 @@ mod tests {
         assert!(huge_session
             .cookie_header_with_config(secret, &config)
             .is_none());
+    }
+
+    #[test]
+    fn test_session_revocation_list() {
+        let revocation_list = SessionRevocationList::new();
+        let config = SessionConfig::new().revocation_list(revocation_list.clone());
+        let secret = b"revocation_test_secret_32_bytes_";
+
+        let session = Session::new();
+        session.set("session_id", "sess_abc123");
+        session.set("user", "alice");
+
+        let header = session
+            .cookie_header_with_config(secret, &config)
+            .expect("cookie header");
+
+        // Prior to revocation: session is valid and extracts user
+        let extracted1 = extract_session_from_cookie(Some(&header), secret, &config);
+        assert_eq!(extracted1.get("user").as_deref(), Some("alice"));
+
+        // Revoke the session ID
+        revocation_list.revoke("sess_abc123");
+        assert!(revocation_list.is_revoked("sess_abc123"));
+        assert_eq!(revocation_list.len(), 1);
+
+        // After revocation: session is rejected and returns empty session
+        let extracted2 = extract_session_from_cookie(Some(&header), secret, &config);
+        assert_eq!(extracted2.get("user"), None);
+
+        // Unrevoke
+        assert!(revocation_list.unrevoke("sess_abc123"));
+        let extracted3 = extract_session_from_cookie(Some(&header), secret, &config);
+        assert_eq!(extracted3.get("user").as_deref(), Some("alice"));
     }
 }

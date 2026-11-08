@@ -420,16 +420,50 @@ fn collect_patterns_recursive(base_dir: &Path, current_dir: &Path, acc: &mut Vec
             let path = entry.path();
             if path.is_dir() {
                 collect_patterns_recursive(base_dir, &path, acc);
-            } else if path.extension().is_some_and(|ext| ext == "rs") {
+            } else if path
+                .extension()
+                .is_some_and(|ext| ext == "rs" || ext == "yav" || ext == "rsx")
+            {
                 if let Ok(rel) = path.strip_prefix(base_dir) {
                     let mut segments = Vec::new();
+                    let mut is_optional_catch_all = false;
                     for comp in rel.components() {
                         let s = comp.as_os_str().to_str().unwrap_or("");
-                        let clean = s.strip_suffix(".rs").unwrap_or(s);
+                        let clean = s
+                            .strip_suffix(".rs")
+                            .or_else(|| s.strip_suffix(".yav"))
+                            .or_else(|| s.strip_suffix(".rsx"))
+                            .unwrap_or(s);
                         if clean == "page" || clean == "index" || clean == "mod" {
                             continue;
                         }
-                        if clean.starts_with('[') && clean.ends_with(']') && clean.len() >= 2 {
+                        if clean.starts_with('@') && clean.len() > 1 {
+                            continue;
+                        }
+                        let clean = clean
+                            .strip_prefix("(...)")
+                            .or_else(|| clean.strip_prefix("(..)"))
+                            .or_else(|| clean.strip_prefix("(.)"))
+                            .unwrap_or(clean);
+                        if clean.is_empty() {
+                            continue;
+                        }
+                        if clean.starts_with('(') && clean.ends_with(')') && clean.len() >= 2 {
+                            continue;
+                        }
+                        if clean.starts_with("[[...") && clean.ends_with("]]") && clean.len() > 7 {
+                            let slug = &clean[5..clean.len() - 2];
+                            is_optional_catch_all = true;
+                            segments.push(format!("*{slug}"));
+                        } else if clean.starts_with("___")
+                            && clean.ends_with("___")
+                            && clean.len() > 6
+                        {
+                            let slug = &clean[3..clean.len() - 3];
+                            is_optional_catch_all = true;
+                            segments.push(format!("*{slug}"));
+                        } else if clean.starts_with('[') && clean.ends_with(']') && clean.len() >= 2
+                        {
                             let inner = &clean[1..clean.len() - 1];
                             if let Some(slug) = inner.strip_prefix("...") {
                                 segments.push(format!("*{}", slug));
@@ -440,12 +474,79 @@ fn collect_patterns_recursive(base_dir: &Path, current_dir: &Path, acc: &mut Vec
                             segments.push(clean.to_string());
                         }
                     }
+                    if is_optional_catch_all {
+                        let base_segs = &segments[..segments.len().saturating_sub(1)];
+                        let base_pattern = if base_segs.is_empty() {
+                            "/".to_string()
+                        } else {
+                            format!("/{}", base_segs.join("/"))
+                        };
+                        acc.push(base_pattern);
+                    }
                     let pattern = if segments.is_empty() {
                         "/".to_string()
                     } else {
                         format!("/{}", segments.join("/"))
                     };
                     acc.push(pattern);
+                }
+            }
+        }
+    }
+}
+
+/// Discover all `#[server]` and `#[server("/path")]` RPC functions in `src/`.
+pub fn scan_server_functions(root: &Path) -> Vec<(String, String)> {
+    let src_dir = root.join("src");
+    let mut fns = Vec::new();
+    if src_dir.exists() && src_dir.is_dir() {
+        collect_server_fns_recursive(&src_dir, &mut fns);
+    }
+    fns.sort();
+    fns.dedup();
+    fns
+}
+
+fn collect_server_fns_recursive(dir: &Path, acc: &mut Vec<(String, String)>) {
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                collect_server_fns_recursive(&path, acc);
+            } else if path.extension().is_some_and(|ext| ext == "rs") {
+                if let Ok(content) = fs::read_to_string(&path) {
+                    let lines: Vec<&str> = content.lines().collect();
+                    for (i, line) in lines.iter().enumerate() {
+                        let trimmed = line.trim();
+                        if trimmed.starts_with("#[server") || trimmed.starts_with("#[yav::server") {
+                            let custom_path = if let Some(q1) = trimmed.find('"') {
+                                let rest = &trimmed[q1 + 1..];
+                                rest.find('"').map(|q2| rest[..q2].to_string())
+                            } else {
+                                None
+                            };
+                            for next_line in lines.iter().skip(i + 1).take(5) {
+                                if let Some(fn_idx) = next_line.find("fn ") {
+                                    let after_fn = &next_line[fn_idx + 3..];
+                                    let fn_name: String = after_fn
+                                        .chars()
+                                        .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+                                        .collect();
+                                    if !fn_name.is_empty() {
+                                        let endpoint = custom_path
+                                            .unwrap_or_else(|| format!("/_server/{fn_name}"));
+                                        let normalized = if endpoint.starts_with('/') {
+                                            endpoint
+                                        } else {
+                                            format!("/{endpoint}")
+                                        };
+                                        acc.push((normalized, fn_name));
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -515,6 +616,15 @@ export type RouteParams = {
         }
     }
     ts.push_str("};\n");
+
+    let server_fns = scan_server_functions(root);
+    if !server_fns.is_empty() {
+        ts.push_str("\n/**\n * Discovered #[server] RPC endpoints.\n */\nexport type YavServerEndpoints = {\n");
+        for (endpoint, fn_name) in &server_fns {
+            ts.push_str(&format!("  \"{}\": \"{}\";\n", fn_name, endpoint));
+        }
+        ts.push_str("};\n");
+    }
 
     fs::write(&out_path, ts)?;
     println!(
@@ -600,6 +710,39 @@ pub fn generate_openapi(
         paths_obj.insert(openapi_path, serde_json::Value::Object(path_item));
     }
 
+    // Also include discovered #[server] RPC functions as POST operations
+    for (endpoint, fn_name) in scan_server_functions(root) {
+        let post_op = serde_json::json!({
+            "summary": format!("Server RPC Action `{}`", fn_name),
+            "operationId": format!("server_post_{}", fn_name),
+            "requestBody": {
+                "required": false,
+                "content": {
+                    "application/x-www-form-urlencoded": {
+                        "schema": { "type": "object" }
+                    },
+                    "application/json": {
+                        "schema": { "type": "object" }
+                    }
+                }
+            },
+            "responses": {
+                "200": {
+                    "description": "Successful Server Action response"
+                },
+                "422": {
+                    "description": "Form validation error"
+                }
+            }
+        });
+        let entry = paths_obj
+            .entry(endpoint)
+            .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
+        if let serde_json::Value::Object(ref mut map) = entry {
+            map.insert("post".to_string(), post_op);
+        }
+    }
+
     let spec = serde_json::json!({
         "openapi": "3.0.3",
         "info": {
@@ -640,7 +783,11 @@ mod tests {
         fs::create_dir_all(&routes_dir).unwrap();
 
         fs::write(routes_dir.join("page.rs"), "// index").unwrap();
-        fs::write(routes_dir.join("about.rs"), "// about").unwrap();
+        fs::write(
+            routes_dir.join("about.rs"),
+            "#[server(\"/_actions/contact\")]\npub async fn submit_contact() {}\n",
+        )
+        .unwrap();
 
         let patterns = scan_route_patterns(&temp_dir);
         assert!(patterns.contains(&"/".to_string()));
@@ -652,12 +799,15 @@ mod tests {
         assert!(ts_content.contains("export type YavRoute ="));
         assert!(ts_content.contains("\"/\""));
         assert!(ts_content.contains("\"/about\""));
+        assert!(ts_content.contains("\"submit_contact\": \"/_actions/contact\""));
 
         let api_path = temp_dir.join("openapi.json");
         generate_openapi(&temp_dir, Some(api_path.to_str().unwrap().to_string())).unwrap();
         let api_content = fs::read_to_string(&api_path).unwrap();
         assert!(api_content.contains("\"openapi\": \"3.0.3\""));
         assert!(api_content.contains("\"/about\""));
+        assert!(api_content.contains("\"/_actions/contact\""));
+        assert!(api_content.contains("\"server_post_submit_contact\""));
 
         let _ = fs::remove_dir_all(&temp_dir);
     }

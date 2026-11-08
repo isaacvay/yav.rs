@@ -13,9 +13,15 @@
 
 pub mod assets;
 pub mod config;
+pub mod fuzzy_search;
+pub mod i18n_lint;
 pub mod manifest;
 pub mod markdown;
+pub mod minifier;
+pub mod mock_server;
 pub mod pipeline;
+pub mod pwa;
+pub mod search;
 pub mod tailwind;
 
 pub use assets::{
@@ -24,12 +30,22 @@ pub use assets::{
 pub use config::{
     BuildConfig, ConfigError, ProjectConfig, ServerConfig, TailwindConfig, YavConfig,
 };
+pub use fuzzy_search::{
+    damerau_levenshtein, soundex, suggest_did_you_mean, FuzzyMatch, FuzzySearchIndex,
+};
+pub use i18n_lint::{lint_catalog, scan_source_code, I18nKeyOccurrence, I18nReport};
 pub use manifest::{
     AssetsSection, BuildSection, DependencySpec, DetailedDep, ManifestError, PackageMeta,
     PackageYav, ServerSection, TailwindSection, LEGACY_PACKAGE_YAV, MANIFEST_FILE,
 };
-pub use markdown::{load_markdown_dir, parse_markdown, slugify, MarkdownDoc, TocHeading};
+pub use markdown::{
+    highlight_code_html, load_markdown_dir, parse_markdown, slugify, MarkdownDoc, TocHeading,
+};
+pub use minifier::{minify_css, minify_html};
+pub use mock_server::{MockEndpoint, MockFaker, MockServer};
 pub use pipeline::{BuildError, BuildMode, BuildPipeline, BuildSummary};
+pub use pwa::{generate_service_worker, generate_webmanifest, pwa_register_script, PwaConfig};
+pub use search::{SearchDoc, SearchHit, SearchIndex};
 pub use tailwind::{
     construct_download_url, current_platform, detect_platform, TailwindError, TailwindManager,
 };

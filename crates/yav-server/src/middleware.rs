@@ -24,19 +24,30 @@ pub struct CspNonce(pub String);
 impl CspNonce {
     /// Generate a fresh 128-bit cryptographic hex nonce seeded from OS CSPRNG entropy.
     pub fn generate() -> Self {
-        use std::collections::hash_map::RandomState;
-        use std::hash::{BuildHasher, Hasher};
+        let mut random_bytes = [0u8; 16];
+        if getrandom::getrandom(&mut random_bytes).is_ok() {
+            let mut hex = String::with_capacity(32);
+            for b in random_bytes {
+                use std::fmt::Write;
+                let _ = write!(&mut hex, "{:02x}", b);
+            }
+            return Self(hex);
+        }
 
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_nanos();
-        let mut h1 = RandomState::new().build_hasher();
-        h1.write_u128(now);
-        let mut h2 = RandomState::new().build_hasher();
-        h2.write_u64(h1.finish());
-
-        Self(format!("{:016x}{:016x}", h1.finish(), h2.finish()))
+        let mut hasher = sha2::Sha256::new();
+        hasher.update(now.to_le_bytes());
+        hasher.update(std::process::id().to_le_bytes());
+        let digest = hasher.finalize();
+        let mut hex = String::with_capacity(32);
+        for b in &digest[..16] {
+            use std::fmt::Write;
+            let _ = write!(&mut hex, "{:02x}", b);
+        }
+        Self(hex)
     }
 
     /// Return the nonce string slice.

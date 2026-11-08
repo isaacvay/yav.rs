@@ -31,6 +31,10 @@ desktop.ini
 tmp/
 scratch/
 prompt.md
+.yav/
+*.db
+*.db-journal
+migrations/.yav_migrations.json
 
 # Raw upstream icon downloads (catalog is generated into src/catalog/)
 crates/yav-icons/lucide/

@@ -477,9 +477,19 @@ pub fn CommandMenu(props: CommandMenuProps) -> Node {
 
 /// Helper script that binds `Cmd+K` / `Ctrl+K`, search filtering, and keyboard navigation to command palettes.
 pub fn command_palette_script() -> Node {
-    let script = r#"<script>
-(function() {
-  function initCommandPalette() {
+    command_palette_script_with_nonce(None)
+}
+
+/// Helper script that binds `Cmd+K` / `Ctrl+K`, search filtering, and keyboard navigation to command palettes, with an optional CSP nonce.
+pub fn command_palette_script_with_nonce(nonce: Option<&str>) -> Node {
+    let nonce_attr = match nonce {
+        Some(n) => format!(r#" nonce="{}""#, yav_core::escape_html(n)),
+        None => String::new(),
+    };
+    let script = format!(
+        r#"<script{nonce_attr}>
+(function() {{
+  function initCommandPalette() {{
     const palette = document.querySelector('[data-command-palette]');
     if (!palette) return;
 
@@ -487,60 +497,62 @@ pub fn command_palette_script() -> Node {
     const backdrop = palette.querySelector('[data-command-backdrop]');
     const items = () => Array.from(palette.querySelectorAll('[data-command-item]'));
 
-    function open() {
+    function open() {{
       palette.classList.remove('hidden');
-      if (input) {
+      if (input) {{
         input.value = '';
         input.focus();
         filter('');
-      }
-    }
+      }}
+    }}
 
-    function close() {
+    function close() {{
       palette.classList.add('hidden');
-    }
+    }}
 
-    function filter(query) {
+    function filter(query) {{
       const q = query.toLowerCase().trim();
-      palette.querySelectorAll('[data-command-group]').forEach(group => {
+      palette.querySelectorAll('[data-command-group]').forEach(group => {{
         let anyVisible = false;
-        group.querySelectorAll('[data-command-item]').forEach(item => {
+        group.querySelectorAll('[data-command-item]').forEach(item => {{
           const text = item.textContent.toLowerCase();
           const match = !q || text.includes(q);
           item.style.display = match ? '' : 'none';
           if (match) anyVisible = true;
-        });
+        }});
         group.style.display = anyVisible ? '' : 'none';
-      });
-    }
+      }});
+    }}
 
-    document.addEventListener('keydown', (e) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+    document.addEventListener('keydown', (e) => {{
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {{
         e.preventDefault();
-        if (palette.classList.contains('hidden')) {
+        if (palette.classList.contains('hidden')) {{
           open();
-        } else {
+        }} else {{
           close();
-        }
-      } else if (e.key === 'Escape' && !palette.classList.contains('hidden')) {
+        }}
+      }} else if (e.key === 'Escape' && !palette.classList.contains('hidden')) {{
         e.preventDefault();
         close();
-      }
-    });
+      }}
+    }});
 
     if (backdrop) backdrop.addEventListener('click', close);
-    if (input) {
+    if (input) {{
       input.addEventListener('input', (e) => filter(e.target.value));
-    }
-  }
+    }}
+  }}
 
-  if (document.readyState === 'loading') {
+  if (document.readyState === 'loading') {{
     document.addEventListener('DOMContentLoaded', initCommandPalette);
-  } else {
+  }} else {{
     initCommandPalette();
-  }
-})();
-</script>"#;
+  }}
+}})();
+</script>"#,
+        nonce_attr = nonce_attr
+    );
     Node::raw(script)
 }
 

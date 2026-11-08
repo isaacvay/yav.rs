@@ -2337,8 +2337,9 @@ checksum = "3ad82d2a33cdc9674dc7465672f271e096168fcdbe0f799d9e6db8c5892679dc"
 
 [[package]]
 name = "yav"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
+ "serde_json",
  "tokio",
  "yav-build",
  "yav-core",
@@ -2351,7 +2352,7 @@ dependencies = [
 
 [[package]]
 name = "yav-build"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "flate2",
  "reqwest",
@@ -2365,7 +2366,7 @@ dependencies = [
 
 [[package]]
 name = "yav-cli"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "clap",
  "notify",
@@ -2386,18 +2387,18 @@ dependencies = [
 
 [[package]]
 name = "yav-core"
-version = "0.1.4"
+version = "0.1.5"
 
 [[package]]
 name = "yav-icons"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "yav-core",
 ]
 
 [[package]]
 name = "yav-macros"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2406,7 +2407,7 @@ dependencies = [
 
 [[package]]
 name = "yav-router"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "serde",
  "tracing",
@@ -2415,15 +2416,17 @@ dependencies = [
 
 [[package]]
 name = "yav-server"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "axum",
  "futures-util",
+ "getrandom 0.2.17",
  "hmac",
  "hyper",
  "serde",
  "serde_json",
  "sha2",
+ "subtle",
  "tokio",
  "tower",
  "tower-http",
@@ -2436,8 +2439,9 @@ dependencies = [
 
 [[package]]
 name = "yav-ui"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
+ "serde_json",
  "yav-core",
  "yav-icons",
 ]

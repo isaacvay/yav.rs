@@ -226,6 +226,7 @@ pub fn yav_component_impl(input: YavComponentInput) -> Result<TokenStream> {
 
     let rsx_node = crate::parser::parse_rsx(template_tokens)?;
     let rendered = crate::codegen::generate(rsx_node);
+    let core = crate::codegen::yav_core_root();
 
     let props_ident = quote::format_ident!("{}Props", struct_ident);
 
@@ -240,7 +241,7 @@ pub fn yav_component_impl(input: YavComponentInput) -> Result<TokenStream> {
         }
 
         #[allow(non_snake_case)]
-        pub fn #struct_ident(props: #props_ident) -> ::yav::yav_core::Node {
+        pub fn #struct_ident(props: #props_ident) -> #core::Node {
             #struct_ident { props }.render()
         }
 
@@ -249,7 +250,7 @@ pub fn yav_component_impl(input: YavComponentInput) -> Result<TokenStream> {
                 Self { props: props.into() }
             }
 
-            pub fn render(&self) -> ::yav::yav_core::Node {
+            pub fn render(&self) -> #core::Node {
                 const _: &[u8] = include_bytes!(#abs_str);
                 #[allow(unused_variables)]
                 let props = &self.props;
@@ -257,20 +258,20 @@ pub fn yav_component_impl(input: YavComponentInput) -> Result<TokenStream> {
             }
         }
 
-        impl ::yav::yav_core::Component for #struct_ident {
-            fn render(&self) -> ::yav::yav_core::Node {
+        impl #core::Component for #struct_ident {
+            fn render(&self) -> #core::Node {
                 self.render()
             }
         }
 
-        impl ::yav::yav_core::IntoNode for #struct_ident {
-            fn into_node(self) -> ::yav::yav_core::Node {
+        impl #core::IntoNode for #struct_ident {
+            fn into_node(self) -> #core::Node {
                 self.render()
             }
         }
 
-        impl ::yav::yav_core::IntoNode for &#struct_ident {
-            fn into_node(self) -> ::yav::yav_core::Node {
+        impl #core::IntoNode for &#struct_ident {
+            fn into_node(self) -> #core::Node {
                 self.render()
             }
         }

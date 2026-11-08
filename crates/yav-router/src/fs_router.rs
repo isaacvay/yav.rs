@@ -10,6 +10,79 @@ use crate::route::Route;
 use crate::table::RouteTable;
 use std::path::{Path, PathBuf};
 
+/// Interception level for Next.js-style intercepting routes (`(.)`, `(..)`, `(..)(..)`, `(...)`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InterceptLevel {
+    /// `(.)segment` — matches segment on the same level.
+    SameLevel,
+    /// `(..)segment` — matches segment one level above.
+    OneLevelUp,
+    /// `(..)(..)segment` — matches segment two levels above.
+    TwoLevelsUp,
+    /// `(...)segment` — matches segment from the root `routes` directory.
+    Root,
+}
+
+/// Parse an intercepting route segment prefix if present.
+pub fn parse_intercept_segment(segment: &str) -> Option<(InterceptLevel, &str)> {
+    if let Some(rest) = segment.strip_prefix("(..)(..)") {
+        if !rest.is_empty() {
+            return Some((InterceptLevel::TwoLevelsUp, rest));
+        }
+    }
+    if let Some(rest) = segment.strip_prefix("(...)") {
+        if !rest.is_empty() {
+            return Some((InterceptLevel::Root, rest));
+        }
+    }
+    if let Some(rest) = segment.strip_prefix("(..)") {
+        if !rest.is_empty() {
+            return Some((InterceptLevel::OneLevelUp, rest));
+        }
+    }
+    if let Some(rest) = segment.strip_prefix("(.)") {
+        if !rest.is_empty() {
+            return Some((InterceptLevel::SameLevel, rest));
+        }
+    }
+    None
+}
+
+/// Extract `@slot` parallel route names from a relative route file path.
+pub fn extract_parallel_slots(rel_path: impl AsRef<Path>) -> Vec<String> {
+    let mut slots = Vec::new();
+    for comp in rel_path.as_ref().components() {
+        let s = comp.as_os_str().to_str().unwrap_or("");
+        let clean = s
+            .strip_suffix(".rs")
+            .or_else(|| s.strip_suffix(".yav"))
+            .or_else(|| s.strip_suffix(".rsx"))
+            .unwrap_or(s);
+        if let Some(slot_name) = clean.strip_prefix('@') {
+            if !slot_name.is_empty() {
+                slots.push(slot_name.to_string());
+            }
+        }
+    }
+    slots
+}
+
+/// Extract intercepting route metadata from a relative route file path if present.
+pub fn extract_intercept_info(rel_path: impl AsRef<Path>) -> Option<(InterceptLevel, String)> {
+    for comp in rel_path.as_ref().components() {
+        let s = comp.as_os_str().to_str().unwrap_or("");
+        let clean = s
+            .strip_suffix(".rs")
+            .or_else(|| s.strip_suffix(".yav"))
+            .or_else(|| s.strip_suffix(".rsx"))
+            .unwrap_or(s);
+        if let Some((level, target)) = parse_intercept_segment(clean) {
+            return Some((level, target.to_string()));
+        }
+    }
+    None
+}
+
 /// Represents a discovered file route.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiscoveredRoute {
@@ -19,6 +92,12 @@ pub struct DiscoveredRoute {
     pub file_path: PathBuf,
     /// Associated layout file paths in hierarchical order (root layout first).
     pub layouts: Vec<PathBuf>,
+    /// Named parallel route slots (`@modal`, `@analytics`) along this route's path.
+    pub slots: Vec<String>,
+    /// Intercepting route metadata (`(.)photo`, `(..)feed`, `(...)login`) if any.
+    pub intercept: Option<(InterceptLevel, String)>,
+    /// True if this route contains an optional catch-all (`[[...slug]]`) or optional param (`[[id]]`).
+    pub is_optional_catch_all: bool,
 }
 
 /// Convert a relative file path inside a `routes` directory into a URL route pattern.
@@ -50,13 +129,44 @@ pub fn file_path_to_route_pattern(rel_path: impl AsRef<Path>) -> String {
             continue;
         }
 
+        // Parallel route slots (e.g. `@modal`, `@analytics`) do not affect the URL path
+        if clean.starts_with('@') && clean.len() > 1 {
+            continue;
+        }
+
+        // Intercepting routes: `(.)photo` -> `photo`, `(..)photo` -> one level up + `photo`, `(...)login` -> root `/login`
+        if let Some((level, target)) = parse_intercept_segment(clean) {
+            match level {
+                InterceptLevel::SameLevel => {}
+                InterceptLevel::OneLevelUp => {
+                    segments.pop();
+                }
+                InterceptLevel::TwoLevelsUp => {
+                    segments.pop();
+                    segments.pop();
+                }
+                InterceptLevel::Root => {
+                    segments.clear();
+                }
+            }
+            segments.push(target.to_string());
+            continue;
+        }
+
         // Route groups: folders enclosed in parentheses (e.g. `(auth)`, `(marketing)`) organize code without affecting URL
         if clean.starts_with('(') && clean.ends_with(')') && clean.len() >= 2 {
             continue;
         }
 
-        // Convert [id] -> :id or _id_ -> :id (Rust-friendly identifier syntax)
-        if clean.starts_with('[') && clean.ends_with(']') && clean.len() >= 2 {
+        // Optional catch-all `[[...slug]]` or optional param `[[id]]`
+        if clean.starts_with("[[") && clean.ends_with("]]") && clean.len() >= 4 {
+            let inner = &clean[2..clean.len() - 2];
+            if let Some(slug) = inner.strip_prefix("...") {
+                segments.push(format!("*{}", slug));
+            } else {
+                segments.push(format!(":{}", inner));
+            }
+        } else if clean.starts_with('[') && clean.ends_with(']') && clean.len() >= 2 {
             let inner = &clean[1..clean.len() - 1];
             if let Some(slug) = inner.strip_prefix("...") {
                 // Catch-all: [...slug] -> *slug
@@ -144,11 +254,16 @@ impl FileSystemRouter {
 
     /// Add a route mapping manually.
     pub fn add_route(&mut self, rel_path: impl AsRef<Path>) -> &mut Self {
-        let pattern = file_path_to_route_pattern(rel_path.as_ref());
+        let p = rel_path.as_ref();
+        let pattern = file_path_to_route_pattern(p);
+        let is_opt = p.to_string_lossy().contains("[[");
         self.discovered.push(DiscoveredRoute {
             path_pattern: pattern,
-            file_path: rel_path.as_ref().to_path_buf(),
+            file_path: p.to_path_buf(),
             layouts: Vec::new(),
+            slots: extract_parallel_slots(p),
+            intercept: extract_intercept_info(p),
+            is_optional_catch_all: is_opt,
         });
         self
     }
@@ -184,6 +299,11 @@ impl FileSystemRouter {
             if file_name == "layout.rs"
                 || file_name == "layout.yav"
                 || file_name == "layout.rsx"
+                || file_name == "_layout.rs"
+                || file_name == "_layout.yav"
+                || file_name == "_layout.rsx"
+                || file_name == "middleware.rs"
+                || file_name == "_middleware.rs"
                 || file_name == "loading.rs"
                 || file_name == "loading.yav"
                 || file_name == "loading.rsx"
@@ -193,8 +313,14 @@ impl FileSystemRouter {
                 || file_name == "not_found.rs"
                 || file_name == "not_found.yav"
                 || file_name == "not_found.rsx"
+                || file_name == "sitemap.rs"
+                || file_name == "sitemap.yav"
+                || file_name == "sitemap.rsx"
+                || file_name == "robots.rs"
+                || file_name == "robots.yav"
+                || file_name == "robots.rsx"
                 || file_name == "mod.rs"
-                || file_name.starts_with('_') && !file_name.ends_with("_.rs")
+                || (file_name.starts_with('_') && !file_name.ends_with("_.rs"))
             {
                 continue;
             }
@@ -212,10 +338,14 @@ impl FileSystemRouter {
             // Sort applicable layouts hierarchically by path component count (root layout first)
             applicable_layouts.sort_by_key(|l| l.components().count());
 
+            let is_opt = p.as_ref().to_string_lossy().contains("[[");
             fs.discovered.push(DiscoveredRoute {
                 path_pattern: pattern,
                 file_path: p.as_ref().to_path_buf(),
                 layouts: applicable_layouts,
+                slots: extract_parallel_slots(p.as_ref()),
+                intercept: extract_intercept_info(p.as_ref()),
+                is_optional_catch_all: is_opt,
             });
         }
         fs
@@ -339,5 +469,52 @@ mod tests {
             file_path_to_route_pattern("(marketing)/pricing/page.rs"),
             "/pricing"
         );
+    }
+
+    #[test]
+    fn test_parallel_routes_intercepting_and_optional_catch_all() {
+        // Parallel route @slots
+        assert_eq!(
+            file_path_to_route_pattern("dashboard/@analytics/page.rs"),
+            "/dashboard"
+        );
+        assert_eq!(
+            extract_parallel_slots("dashboard/@modal/@sidebar/page.rs"),
+            vec!["modal".to_string(), "sidebar".to_string()]
+        );
+
+        // Intercepting routes
+        assert_eq!(
+            file_path_to_route_pattern("feed/(.)photo/[id].rs"),
+            "/feed/photo/:id"
+        );
+        assert_eq!(
+            file_path_to_route_pattern("feed/modals/(..)photo/[id].rs"),
+            "/feed/photo/:id"
+        );
+        assert_eq!(
+            file_path_to_route_pattern("dashboard/settings/(...)login.rs"),
+            "/login"
+        );
+        assert_eq!(
+            extract_intercept_info("feed/(.)photo/[id].rs"),
+            Some((InterceptLevel::SameLevel, "photo".to_string()))
+        );
+
+        // Optional catch-all [[...slug]]
+        assert_eq!(
+            file_path_to_route_pattern("shop/[[...slug]]/page.rs"),
+            "/shop/*slug"
+        );
+        let fs = FileSystemRouter::from_paths(&[
+            PathBuf::from("dashboard/@modal/(.)photo/[id].rs"),
+            PathBuf::from("shop/[[...slug]]/page.rs"),
+        ]);
+        assert_eq!(fs.routes()[0].slots, vec!["modal".to_string()]);
+        assert_eq!(
+            fs.routes()[0].intercept,
+            Some((InterceptLevel::SameLevel, "photo".to_string()))
+        );
+        assert!(fs.routes()[1].is_optional_catch_all);
     }
 }

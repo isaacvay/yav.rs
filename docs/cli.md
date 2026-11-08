@@ -46,6 +46,15 @@ yav add carousel         # Responsive media carousel with swipe and dots
 yav add theme-selector   # Multi-theme dropdown & instant theme switcher (8 themes)
 yav add motion           # Spring-physics motion container & gestures
 yav add cursor-spotlight # Radial glow mouse-follower plate with CSS coordinates
+yav add charts           # Server-rendered SVG Line/Bar/Donut/Sparkline charts panel
+yav add data-grid        # Searchable, sortable, selectable enterprise DataGrid
+yav add date-picker      # Accessible calendar DatePicker field
+yav add input-otp        # Multi-digit 2FA/TOTP InputOtp verification block
+yav add kanban-board     # Multi-column drag-and-drop Kanban board with LexoRank
+yav add flow-canvas      # Interactive SVG node-graph and workflow builder canvas
+yav add virtual-list     # 100,000+ row virtualized scroll container
+yav add rich-editor      # Notion/TipTap-style rich text editor with toolbar
+yav add ai-chat          # Streaming SSE AI chat interface
 ```
 
 Once added, the component is automatically declared in `src/components/mod.rs` and can be imported immediately:
@@ -171,18 +180,31 @@ yav sitemap --base-url https://example.com
 ```
 
 ### 10. `yav db`
-Manages database initialization and timestamped SQL migration files:
+Manages database initialization, schema versioning, and migration execution for SQLite and PostgreSQL:
 
 ```bash
 # Initialize migrations/ directory and .env configuration
 yav db init
 
-# Create a new timestamped migration
+# Create a new timestamped migration (e.g. migrations/1730000000_add_user_profiles.sql)
 yav db new add_user_profiles
 
-# List existing migrations
+# List existing migrations, applied state, and checksum verification
 yav db status
+
+# Apply pending Up SQL migrations against SQLite or PostgreSQL database
+yav db migrate
+
+# Roll back the most recently applied Down SQL migration
+yav db rollback
+
+# Execute database seed data (migrations/seed.sql)
+yav db seed
 ```
+
+* **Automated Runner Execution**: Reads `DATABASE_URL` directly from `.env` or the environment. If targeting SQLite (`sqlite://app.db` or a file path), it automatically executes SQL statements against the SQLite database; if targeting PostgreSQL (`postgres://...`), it connects via `psql` to execute transactional migrations.
+* **Tamper-Evident SHA-256 Checksums**: Every applied migration records its cryptographic hash in the `_yav_migrations` journal table. If past migration files are altered or corrupted, `yav db status` flags the discrepancy immediately.
+* **Up / Down Delimiters**: Each generated `.sql` file contains `-- Up` and `-- Down` sections for clean, reversible schema changes.
 
 ---
 
@@ -190,7 +212,7 @@ yav db status
 Generates client-side TypeScript interfaces from Rust models/DTOs or exports OpenAPI 3.1 specifications:
 
 ```bash
-# Generate TypeScript definitions for frontend clients (src/types.d.ts by default)
+# Generate TypeScript definitions for frontend clients (types.d.ts by default)
 yav codegen --ts
 yav codegen --ts --output frontend/src/types.ts
 
@@ -198,6 +220,7 @@ yav codegen --ts --output frontend/src/types.ts
 yav codegen --openapi
 yav codegen --openapi --output docs/api.json
 ```
+* **Full Route & Server Action Discovery**: Automatically discovers all file-based routes (`src/routes/`) as well as all RPC Server Actions decorated with `#[server]` across `src/`, generating typed endpoint unions (`YavServerEndpoints`) in TypeScript and `POST` operations with schemas in `openapi.json`.
 * **Type-Safety across the Wire**: Ensures client-side forms and API fetchers stay in sync with Rust structs and enum types.
 * **OpenAPI 3.1 Ecosystem**: Export specifications directly to Postman, Insomnia, or client SDK generators.
 
@@ -301,9 +324,10 @@ yav routes
 
 ### 20. `yav export`
 Performs **Static Site Generation (SSG)**, crawling and rendering all static routes into standalone `.html` files in `dist/` (or a custom directory):
-- **Pre-renders all static pages**: Generates directory-structured `index.html` files (e.g. `dist/about/index.html` for `/about`).
-- **Asset Bundling**: Copies all static assets from `public/` into `dist/`.
+- **Pre-renders and minifies all static pages**: Generates directory-structured `index.html` files (e.g. `dist/about/index.html` for `/about`) with automated whitespace and comment minification via `yav_build::minify_html`.
+- **Asset Bundling & Minification**: Copies and minifies all CSS and HTML static assets from `public/` into `dist/`.
 - **Canonical URL Inlining**: Embeds the specified `--base-url` into `<link rel="canonical">` and Open Graph tags.
+- **Sitemap & Robots Generation**: Automatically creates `sitemap.xml` and `robots.txt` in the export root.
 - **Zero-Server Hosting**: Output is immediately ready for deployment on GitHub Pages, Cloudflare Pages, Netlify, Vercel, or AWS S3.
 
 ```bash

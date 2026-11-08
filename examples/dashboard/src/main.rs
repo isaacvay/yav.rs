@@ -12,9 +12,6 @@ async fn main() {
     let app = yav::server::YavApp::new().static_dir("public");
     let app = yav::auto_routes!(app);
 
-    println!(
-        "  ➜  Dashboard: http://{}:{}",
-        app.host, app.port
-    );
+    println!("  ➜  Dashboard: http://{}:{}", app.host, app.port);
     app.serve().await.unwrap();
 }

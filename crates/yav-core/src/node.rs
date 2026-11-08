@@ -160,10 +160,10 @@ impl Element {
         self
     }
 
-    /// Add a child node.
+    /// Add a child node. Accepts any type implementing [`IntoNode`], such as [`Node`] or [`Element`].
     #[must_use]
-    pub fn child(mut self, node: Node) -> Self {
-        self.children.push(node);
+    pub fn child(mut self, node: impl IntoNode) -> Self {
+        self.children.push(node.into_node());
         self
     }
 
@@ -217,6 +217,12 @@ impl IntoNode for Node {
 impl IntoNode for Element {
     fn into_node(self) -> Node {
         Node::Element(self)
+    }
+}
+
+impl From<Element> for Node {
+    fn from(el: Element) -> Self {
+        Node::Element(el)
     }
 }
 
