@@ -110,6 +110,40 @@ impl FormErrors {
     }
 }
 
+/// Result of parsing a `multipart/form-data` body: text fields **and** binary
+/// file parts. Use this extractor when a form actually uploads files; the
+/// legacy [`FormData::from_multipart_bytes`] only exposes the text view.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct MultipartForm {
+    /// Text fields (all parts, including a lossy UTF-8 view of binary parts).
+    pub fields: FormData,
+    /// Parts that carried a `filename=` parameter, with their raw bytes.
+    pub files: Vec<UploadedFile>,
+}
+
+impl MultipartForm {
+    /// Parse a complete multipart body. Rejects malformed boundaries, headers
+    /// and parts instead of silently returning an empty/partial form.
+    pub fn from_bytes(bytes: &[u8], boundary: &str) -> Result<Self, &'static str> {
+        parse_multipart_bytes(bytes, boundary)
+    }
+
+    /// First uploaded file for a given field name, if any.
+    pub fn file(&self, field: &str) -> Option<&UploadedFile> {
+        self.files.iter().find(|f| f.field_name == field)
+    }
+
+    /// All uploaded files for a given field name.
+    pub fn files_for<'a>(&'a self, field: &'a str) -> impl Iterator<Item = &'a UploadedFile> {
+        self.files.iter().filter(move |f| f.field_name == field)
+    }
+
+    /// Borrow the text fields as [`FormData`].
+    pub fn get(&self, key: &str) -> Option<&str> {
+        self.fields.get(key)
+    }
+}
+
 /// An uploaded file extracted from a multipart form.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UploadedFile {
@@ -189,6 +223,234 @@ impl UploadedFile {
             true
         }
     }
+}
+
+/// RFC 2046 boundary limits. A caller-controlled boundary must not contain
+/// line breaks (header/body smuggling) or be arbitrarily long.
+const MAX_BOUNDARY_LEN: usize = 70;
+const MAX_MULTIPART_PARTS: usize = 256;
+
+fn validate_multipart_boundary(boundary: &str) -> Result<(), &'static str> {
+    if boundary.is_empty() || boundary.len() > MAX_BOUNDARY_LEN {
+        return Err("Invalid multipart boundary length");
+    }
+    // RFC 2046 bcharsnospace / bchars, plus the common characters browsers use.
+    if !boundary.bytes().all(|b| {
+        b.is_ascii_alphanumeric()
+            || matches!(
+                b,
+                b'\'' | b'(' | b')' | b'+' | b'_' | b',' | b'-' | b'.' | b'/' | b':' | b'=' | b'?'
+            )
+    }) {
+        return Err("Invalid multipart boundary characters");
+    }
+    Ok(())
+}
+
+/// Strip directory components and control characters from a client-supplied
+/// filename. Never let `../../etc/passwd` reach a filesystem API downstream.
+fn sanitize_upload_filename(name: &str) -> Option<String> {
+    let replaced = name.replace('\\', "/");
+    let base = replaced.rsplit('/').next().unwrap_or_default();
+    let cleaned: String = base
+        .chars()
+        .filter(|c| !c.is_control() && *c != '"')
+        .collect();
+    let cleaned = cleaned.trim().to_string();
+    if cleaned.is_empty() || cleaned == "." || cleaned == ".." {
+        None
+    } else {
+        Some(cleaned)
+    }
+}
+
+/// Read a quoted (or token) parameter from a `Content-Disposition` value.
+fn header_param(value: &str, wanted: &str) -> Option<String> {
+    for segment in value.split(';').skip(1) {
+        let segment = segment.trim();
+        let Some((key, raw)) = segment.split_once('=') else {
+            continue;
+        };
+        let key = key.trim();
+        if !key.eq_ignore_ascii_case(wanted) {
+            // RFC 5987 extended parameters, e.g. `filename*=UTF-8''avatar.png`.
+            if key.eq_ignore_ascii_case(&format!("{wanted}*")) {
+                let raw = raw.trim();
+                if let Some((_, encoded)) = raw.rsplit_once("''") {
+                    let decoded = percent_decode_str(encoded);
+                    if !decoded.is_empty() {
+                        return sanitize_upload_filename(&decoded);
+                    }
+                }
+            }
+            continue;
+        }
+        let raw = raw.trim();
+        if !raw.starts_with('"') {
+            return Some(raw.to_string());
+        }
+        let mut out = String::new();
+        let mut chars = raw[1..].chars();
+        while let Some(c) = chars.next() {
+            match c {
+                '"' => break,
+                '\\' => {
+                    if let Some(next) = chars.next() {
+                        out.push(next);
+                    }
+                }
+                _ => out.push(c),
+            }
+        }
+        return Some(out);
+    }
+    None
+}
+
+fn percent_decode_str(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let hex = |b: u8| match b {
+                b'0'..=b'9' => Some(b - b'0'),
+                b'a'..=b'f' => Some(b - b'a' + 10),
+                b'A'..=b'F' => Some(b - b'A' + 10),
+                _ => None,
+            };
+            if let (Some(hi), Some(lo)) = (hex(bytes[i + 1]), hex(bytes[i + 2])) {
+                out.push((hi << 4) | lo);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() || haystack.len() < needle.len() {
+        return None;
+    }
+    haystack.windows(needle.len()).position(|w| w == needle)
+}
+
+fn parse_multipart_part(part: &[u8], form: &mut MultipartForm) -> Result<(), &'static str> {
+    let (sep_pos, sep_len) = find_subslice(part, b"\r\n\r\n")
+        .map(|p| (p, 4))
+        .or_else(|| find_subslice(part, b"\n\n").map(|p| (p, 2)))
+        .ok_or("Malformed multipart part: missing header separator")?;
+
+    let headers = std::str::from_utf8(&part[..sep_pos])
+        .map_err(|_| "Malformed multipart part: non-UTF-8 headers")?;
+    let body = &part[sep_pos + sep_len..];
+
+    let mut name: Option<String> = None;
+    let mut filename: Option<String> = None;
+    let mut content_type: Option<String> = None;
+
+    for line in headers.lines() {
+        let Some((key, value)) = line.split_once(':') else {
+            return Err("Malformed multipart part header");
+        };
+        let value = value.trim();
+        match key.trim().to_ascii_lowercase().as_str() {
+            "content-disposition" => {
+                if !value.to_ascii_lowercase().starts_with("form-data") {
+                    return Err("Unsupported multipart Content-Disposition");
+                }
+                name = header_param(value, "name");
+                filename = header_param(value, "filename").and_then(|f| {
+                    let sanitized = sanitize_upload_filename(&f);
+                    // An empty filename means "no file selected"; keep it as an
+                    // empty upload so callers can decide what to do.
+                    sanitized
+                });
+            }
+            "content-type" => content_type = Some(value.to_string()),
+            _ => {}
+        }
+    }
+
+    let name = name.ok_or("Multipart part is missing its field name")?;
+    // Keep the historical text view: even binary parts are visible (lossily)
+    // through FormData so existing callers keep working.
+    form.fields
+        .0
+        .insert(name.clone(), String::from_utf8_lossy(body).into_owned());
+
+    if filename.is_some() {
+        form.files.push(UploadedFile::new(
+            name,
+            filename,
+            content_type,
+            body.to_vec(),
+        ));
+    }
+    Ok(())
+}
+
+/// Parse a `multipart/form-data` body into text fields **and** real binary
+/// [`UploadedFile`] parts. Unlike the previous ad-hoc string splitting, this
+/// follows RFC 2046 delimiters (CRLF-prefixed boundaries, transport padding,
+/// closing `--`), parses each part's headers and never mangles file bytes.
+pub fn parse_multipart_bytes(bytes: &[u8], boundary: &str) -> Result<MultipartForm, &'static str> {
+    validate_multipart_boundary(boundary)?;
+    let delim = format!("--{boundary}");
+    let delim_bytes = delim.as_bytes();
+    let needle = format!("\r\n{delim}");
+
+    let mut positions = Vec::new();
+    if bytes.starts_with(delim_bytes) {
+        positions.push(0);
+    }
+    let mut search = 0;
+    while let Some(rel) = find_subslice(&bytes[search..], needle.as_bytes()) {
+        let at = search + rel + 2; // skip the CRLF, point at "--"
+        positions.push(at);
+        search = at + delim_bytes.len();
+        if positions.len() > MAX_MULTIPART_PARTS {
+            return Err("Too many multipart parts");
+        }
+    }
+    if positions.is_empty() {
+        return Err("Multipart boundary not found in body");
+    }
+
+    let mut form = MultipartForm::default();
+    for (i, &boundary_pos) in positions.iter().enumerate() {
+        let start = boundary_pos + delim_bytes.len();
+        if bytes.get(start..start + 2) == Some(b"--") {
+            break; // closing boundary
+        }
+        let mut p = start;
+        while matches!(bytes.get(p), Some(b' ' | b'\t')) {
+            p += 1; // RFC 2046 transport padding
+        }
+        if bytes.get(p..p + 2) == Some(b"\r\n") {
+            p += 2;
+        } else if bytes.get(p) == Some(&b'\n') {
+            p += 1;
+        } else {
+            return Err("Malformed multipart boundary line");
+        }
+
+        let end = positions.get(i + 1).copied().unwrap_or(bytes.len());
+        let mut body_end = end;
+        if end >= 2 && bytes.get(end - 2..end) == Some(b"\r\n") {
+            body_end -= 2;
+        } else if bytes.get(end - 1) == Some(&b'\n') {
+            body_end -= 1;
+        }
+        let part = bytes
+            .get(p..body_end)
+            .ok_or("Malformed multipart part boundaries")?;
+        parse_multipart_part(part, &mut form)?;
+    }
+    Ok(form)
 }
 
 /// Canonical HTML form input name for anti-CSRF token.
@@ -396,17 +658,95 @@ where
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CsrfToken(String);
 
+/// Resolve the secret used to derive a CSRF token.
+///
+/// In production a missing `SESSION_SECRET` / `YAV_SECRET` is an **explicit
+/// error** instead of a silent fallback to the well-known development constant.
+fn configured_csrf_secret() -> Result<Vec<u8>, String> {
+    if let Ok(s) = std::env::var("SESSION_SECRET").or_else(|_| std::env::var("YAV_SECRET")) {
+        if !s.is_empty() {
+            return Ok(s.into_bytes());
+        }
+    }
+    if crate::session::is_production_mode() {
+        return Err(
+            "CSRF: no SESSION_SECRET/YAV_SECRET configured in production; refusing to derive a \
+             token from DEFAULT_DEV_SESSION_SECRET. Honour the configured \
+             crate::session::SessionSecret by calling \
+             CsrfToken::from_session_with_secret from the CSRF middleware (middleware.rs)."
+                .to_string(),
+        );
+    }
+    Ok(crate::session::DEFAULT_DEV_SESSION_SECRET.to_vec())
+}
+
 impl CsrfToken {
     /// Retrieve the existing CSRF token from the user's [`Session`](crate::session::Session),
     /// or generate and store a new 64-character hex token seeded from OS CSPRNG entropy if none exists.
+    ///
+    /// # Production / configuration limitation
+    /// This helper only receives a `&Session`, so it cannot see request
+    /// extensions or application state: the only secret it can reach is
+    /// `SESSION_SECRET` / `YAV_SECRET` from the environment. A secret set via
+    /// `YavApp::session_secret()` (the `crate::session::SessionSecret`
+    /// extension) is therefore **not** visible here.
+    ///
+    /// To avoid silently degrading defense-in-depth, a missing secret in
+    /// production (`crate::session::is_production_mode()`) is now an explicit
+    /// error: it is surfaced (logged) and the call **fails closed** — no token
+    /// is ever bound to the session, so the CSRF middleware rejects every
+    /// state-changing request until a real secret is configured. It is
+    /// **never** a silent fallback to `DEFAULT_DEV_SESSION_SECRET`.
+    ///
+    /// The final wiring must be done in `middleware.rs` (outside this file's
+    /// scope): the CSRF middleware should read the `SessionSecret` extension
+    /// and call [`Self::from_session_with_secret`] instead of relying on this
+    /// environment-only helper.
     pub fn from_session(session: &crate::session::Session) -> Self {
+        // An already-bound token needs no secret at all: keep it so existing
+        // sessions are not broken by the production guard.
         if let Some(existing) = session.get("_csrf_token") {
             if !existing.is_empty() {
                 return Self(existing);
             }
         }
+        let secret = match configured_csrf_secret() {
+            Ok(secret) => secret,
+            Err(err) => {
+                // Explicit error + fail closed. Crucially, nothing is written
+                // to the session, so the CSRF middleware has no token to
+                // accept. We still return an unpredictable, unbound value so
+                // callers holding a `CsrfToken` never see a silently weak or
+                // empty token.
+                tracing::error!("{}", err);
+                return Self(Self::random_seed());
+            }
+        };
+        Self::from_session_with_secret(session, &secret)
+    }
+
+    /// Generate (or reuse) a CSRF token using an explicitly supplied secret.
+    ///
+    /// This is the secure entry point for callers that can reach request
+    /// extensions / application state: pass
+    /// `crate::session::SessionSecret::as_bytes()` so a secret configured with
+    /// `YavApp::session_secret()` is honoured instead of the environment.
+    /// Unlike [`Self::from_session`], this method never needs a silent fallback.
+    pub fn from_session_with_secret(session: &crate::session::Session, secret: &[u8]) -> Self {
+        if let Some(existing) = session.get("_csrf_token") {
+            if !existing.is_empty() {
+                return Self(existing);
+            }
+        }
+        let seed = Self::random_seed();
+        let token = crate::session::compute_hmac_sha256(seed.as_bytes(), secret);
+        session.set("_csrf_token", token.clone());
+        Self(token)
+    }
+
+    fn random_seed() -> String {
         let mut random_bytes = [0u8; 32];
-        let seed = if getrandom::getrandom(&mut random_bytes).is_ok() {
+        if getrandom::getrandom(&mut random_bytes).is_ok() {
             let mut hex = String::with_capacity(64);
             for b in random_bytes {
                 use std::fmt::Write;
@@ -421,14 +761,7 @@ impl CsrfToken {
             let seq = CSRF_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let pid = std::process::id();
             format!("yav-csrf-{nanos}-{seq}-{pid}")
-        };
-        let secret = std::env::var("SESSION_SECRET")
-            .or_else(|_| std::env::var("YAV_SECRET"))
-            .map(|s| s.into_bytes())
-            .unwrap_or_else(|_| crate::session::DEFAULT_DEV_SESSION_SECRET.to_vec());
-        let token = crate::session::compute_hmac_sha256(seed.as_bytes(), &secret);
-        session.set("_csrf_token", token.clone());
-        Self(token)
+        }
     }
 
     /// Return the raw token string.
@@ -477,8 +810,13 @@ pub fn verify_csrf_token(expected: &str, submitted: &str) -> bool {
 
 /// Standard response from a form submission or server action.
 pub enum ActionResponse {
-    /// Redirect to another page upon successful submission (Post/Redirect/Get pattern).
+    /// Redirect to a local page upon successful submission (Post/Redirect/Get pattern).
     Redirect(String),
+    /// Redirect to an external URL whose origin is explicitly allowlisted.
+    ///
+    /// This preserves external redirects (OAuth, payment gateways) without
+    /// reintroducing an open-redirect vulnerability.
+    RedirectAllowlisted(String, Vec<String>),
     /// Re-render with validation errors.
     Errors(FormErrors),
     /// Return custom rendered HTML.
@@ -486,9 +824,21 @@ pub enum ActionResponse {
 }
 
 impl ActionResponse {
-    /// Construct a redirect response to the given target URL.
+    /// Construct a redirect response to a local application path.
     pub fn redirect(url: impl Into<String>) -> Self {
         Self::Redirect(url.into())
+    }
+
+    /// Construct a redirect to an external URL, permitted only if its origin is
+    /// present in `allowed_origins` (e.g. `["https://accounts.example.com"]`).
+    pub fn redirect_allowlisted(
+        url: impl Into<String>,
+        allowed_origins: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        Self::RedirectAllowlisted(
+            url.into(),
+            allowed_origins.into_iter().map(Into::into).collect(),
+        )
     }
 
     /// Construct a validation error response.
@@ -509,11 +859,32 @@ impl IntoResponse for ActionResponse {
     fn into_response(self) -> Response {
         match self {
             ActionResponse::Redirect(url) => {
-                if !crate::handler::is_safe_redirect_target(&url) {
+                // Form actions commonly interpolate `?next=<user value>`. Only
+                // local paths are accepted so this cannot become an open redirect.
+                if !crate::handler::is_local_redirect_path(&url) {
                     return (
                         StatusCode::BAD_REQUEST,
                         [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
                         "Invalid or unsafe redirect URL",
+                    )
+                        .into_response();
+                }
+                match HeaderValue::try_from(url.trim()) {
+                    Ok(loc) => (StatusCode::SEE_OTHER, [(header::LOCATION, loc)]).into_response(),
+                    Err(_) => (
+                        StatusCode::BAD_REQUEST,
+                        [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+                        "Invalid redirect URL",
+                    )
+                        .into_response(),
+                }
+            }
+            ActionResponse::RedirectAllowlisted(url, allowed_origins) => {
+                if !crate::handler::is_allowlisted_redirect(&url, &allowed_origins) {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+                        "Redirect target is not in the allowed origin list",
                     )
                         .into_response();
                 }
@@ -708,5 +1079,51 @@ mod tests {
         binary_mp.extend_from_slice(b"--binbound\r\nContent-Disposition: form-data; name=\"binary_file\"\r\n\r\n\xFF\xFE\xFD\xFC\r\n--binbound--\r\n");
         let bin_res = FormData::from_multipart_bytes(&binary_mp, "binbound").unwrap();
         assert!(bin_res.get("binary_file").is_some());
+    }
+
+    #[test]
+    fn test_csrf_from_session_with_secret_uses_configured_secret() {
+        let s1 = crate::session::Session::new();
+        let s2 = crate::session::Session::new();
+        let secret = b"explicit-configured-secret-32-bytes!!";
+
+        let t1 = CsrfToken::from_session_with_secret(&s1, secret);
+        // The token stored in the session is exactly the returned token.
+        assert_eq!(t1.as_str(), s1.get("_csrf_token").unwrap().as_str());
+        assert!(!t1.as_str().is_empty());
+        assert!(t1.verify_token(t1.as_str()));
+
+        // A different secret yields a different token (the configured secret
+        // genuinely contributes to the HMAC, unlike a hard-coded fallback).
+        let t2 = CsrfToken::from_session_with_secret(&s2, b"a-totally-different-secret-000000");
+        assert_ne!(t1.as_str(), t2.as_str());
+
+        // Reuse: a second call returns the already-bound token unchanged.
+        let again = CsrfToken::from_session_with_secret(&s1, secret);
+        assert_eq!(t1.as_str(), again.as_str());
+    }
+
+    #[test]
+    fn test_configured_csrf_secret_is_explicit_and_never_panics() {
+        // Robust to any CI environment (production env may or may not be set):
+        // the resolver either yields a non-empty secret or an explicit error.
+        match configured_csrf_secret() {
+            Ok(secret) => assert!(!secret.is_empty()),
+            Err(err) => assert!(err.contains("production")),
+        }
+    }
+
+    #[test]
+    fn test_csrf_from_session_is_consistent_with_stored_token() {
+        let session = crate::session::Session::new();
+        let token = CsrfToken::from_session(&session);
+        // Never panics, and never binds a token derived from a silent weak
+        // fallback. If a real token was bound it must equal the returned one;
+        // otherwise the call failed closed (production, no configured secret)
+        // and stored nothing for the middleware to accept.
+        assert!(!token.as_str().is_empty());
+        if let Some(stored) = session.get("_csrf_token") {
+            assert_eq!(token.as_str(), stored.as_str());
+        }
     }
 }

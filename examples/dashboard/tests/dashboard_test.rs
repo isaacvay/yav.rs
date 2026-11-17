@@ -26,6 +26,16 @@ fn test_app() -> axum::Router {
         .into_router()
 }
 
+/// Explicit opt-out used to exercise the form handler itself. CSRF is enabled
+/// by default since v0.1.5, so a real application would send `_csrf` or the
+/// `x-csrf-token` header instead.
+fn app_without_csrf() -> axum::Router {
+    yav::server::YavApp::new()
+        .csrf_protection(yav::server::CsrfConfig::disabled())
+        .post("/settings", settings_post)
+        .into_router()
+}
+
 #[tokio::test]
 async fn test_dashboard_routes_render_html() {
     let app = test_app();
@@ -114,7 +124,17 @@ async fn test_dashboard_routes_render_html() {
         .uri("/settings")
         .body(axum::body::Body::empty())
         .unwrap();
+    // CSRF is enabled by default: an unprotected POST must be rejected.
     let resp_post = app.oneshot(req_post).await.unwrap();
+    assert_eq!(resp_post.status(), StatusCode::FORBIDDEN);
+
+    // With CSRF explicitly disabled, the same handler renders its success page.
+    let req_post = Request::builder()
+        .method("POST")
+        .uri("/settings")
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let resp_post = app_without_csrf().oneshot(req_post).await.unwrap();
     assert_eq!(resp_post.status(), StatusCode::OK);
     let bytes_post = axum::body::to_bytes(resp_post.into_body(), 1024 * 1024)
         .await

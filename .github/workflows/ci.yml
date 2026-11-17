@@ -6,6 +6,16 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
   test:
     name: Test (${{ matrix.os }})
@@ -29,20 +39,66 @@ jobs:
       - name: Check code formatting
         run: cargo fmt --all -- --check
 
-      - name: Check workspace compilation
-        run: cargo check --workspace
+      - name: Check workspace compilation (locked, all targets)
+        run: cargo check --workspace --all-targets --locked
 
       - name: Check examples compilation
-        run: cargo check --manifest-path examples/dashboard/Cargo.toml
+        run: cargo check --manifest-path examples/dashboard/Cargo.toml --locked
+
+      - name: Check second demo project compilation
+        run: cargo check --manifest-path test-app/Cargo.toml --locked
 
       - name: Run Clippy linter
-        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 
-      - name: Run test suite
-        run: cargo test --workspace
+      - name: Run test suite (all features, locked)
+        run: cargo test --workspace --all-features --locked
+
+      - name: Run documentation tests
+        run: cargo test --workspace --doc --locked
 
       - name: Run examples tests
-        run: cargo test --manifest-path examples/dashboard/Cargo.toml
+        run: cargo test --manifest-path examples/dashboard/Cargo.toml --locked
+
+      # `--lib` avoids Cargo's known bin/lib `target/doc/yav/index.html`
+      # collision (yav-cli has a `yav` binary, yav has a `yav` library).
+      # Linux-only: yav-ui exports `Card`/`card`-style pairs whose rustdoc
+      # filenames differ only by case, which collides on the case-insensitive
+      # filesystems used by the Windows and macOS runners.
+      - name: Build API documentation
+        if: runner.os == 'Linux'
+        run: cargo doc --workspace --no-deps --lib --locked
+
+      - name: Verify icon license files are packaged
+        shell: bash
+        run: |
+          cargo package --list -p yav-icons --allow-dirty > yav-icons-files.txt
+          for f in LICENSE-LUCIDE LICENSE-MYNAUI LICENSE-PHOSPHOR NOTICE.md; do
+            grep -q "$f" yav-icons-files.txt || { echo "missing packaged license: $f"; exit 1; }
+          done
+
+  msrv:
+    name: MSRV (Rust 1.88)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      # Keep this pinned to the `rust-version` in [workspace.package].
+      # The locked dependency graph contains `image` / `icu` / `encoding_rs`
+      # releases that require rustc 1.88, and Cargo.lock v4 needs >= 1.78.
+      - name: Install MSRV toolchain
+        uses: dtolnay/rust-toolchain@1.88.0
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check workspace on the minimum supported Rust version
+        run: cargo check --workspace --all-targets --locked
+
+      - name: Verify published rust-version matches the MSRV job
+        shell: bash
+        run: grep -q '^rust-version = "1.88"' Cargo.toml
 
   audit:
     name: Security Audit
@@ -51,8 +107,10 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@v4
 
+      # `--locked` makes the install reproducible by using cargo-audit's own
+      # published lockfile instead of re-resolving the dependency graph.
       - name: Install cargo-audit
-        run: cargo install cargo-audit
+        run: cargo install cargo-audit --locked
 
       - name: Run security audit
         run: cargo audit

@@ -147,7 +147,7 @@ Pure static pages emit **zero** JavaScript bytes.
 Compile-time static chunk folding in the `rsx!` procedural macro identifies immutable DOM subtrees and packs them into `Node::Static(&'static str)`. During SSR rendering, these branches bypass dynamic attribute serialization and string allocations, writing directly to pooled string buffers.
 
 ### 8. Automatic HTTP ETag & Conditional Requests (`compute_etag`)
-Built-in caching middleware (`YavApp::etag(true)`) computes deterministic Blake3/SHA-256 ETags over rendered responses. When incoming requests include `If-None-Match`, Yav immediately halts pipeline execution and returns `304 Not Modified`, saving server bandwidth and client battery life.
+Built-in caching middleware (`YavApp::etag(true)`) computes deterministic SHA-256 ETags over rendered responses. When incoming requests include `If-None-Match`, Yav immediately halts pipeline execution and returns `304 Not Modified`, saving server bandwidth and client battery life.
 
 ### 9. View Transitions API & Progressive Client Routing
 The client navigation engine (`client_router_script()`) integrates the browser's modern **View Transitions API** (`document.startViewTransition()`):
@@ -207,7 +207,8 @@ In-memory broadcast channel allowing async server events, background tasks, or p
 
 ### 21. Zero-Dependency GraphQL Engine & GraphiQL Explorer (`yav::server::graphql`)
 - Fully typed GraphQL schema definition in pure Rust with synchronous and asynchronous field resolvers.
-- Embedded GraphiQL 3.x developer playground served directly from the server binary.
+- A small self-contained, hand-written HTML playground (`graphiql_html`) with no
+  CDN assets or external JavaScript. It is **not** the GraphiQL 3.x IDE.
 
 ### 22. Geolocation Context & European Union VAT Engine (`yav::server::geo_ip`)
 - Automatic edge proxy header resolution (`cf-ipcountry`, `x-country-code`, `x-geo-country`).
@@ -215,10 +216,10 @@ In-memory broadcast channel allowing async server events, background tasks, or p
 
 ### 23. Micro-Frontends & Module Federation Gateway (`yav::server::federation`)
 - Declarative upstream route mapping with automatic path stripping and authentication forwarding.
-- Parallel remote slot stitching (`stitch_slot`) with timeout-guarded fallbacks for resilient multi-team architectures.
+- Real HTTP reverse proxying (`proxy_request`) with per-request timeouts and an explicit upstream host allowlist, plus slot stitching with fallback HTML for resilient multi-team architectures. `fetch_and_stitch_slots(&[FederationSlot])` fetches all fragments in parallel via `join_all` and stitches them in declaration order; `fetch_and_stitch_slot` remains the single-slot entry point. Stitching itself is ordered string replacement, not DOM/`<head>` merging.
 
 ### 24. Pure Rust Vector Barcode & QR Code Engine (`yav::server::barcode`)
-- ISO/IEC 18004 QR code matrix generation (Version 2, 25x25) and Code 128 (Subset B) barcode generation.
+- Full ISO/IEC 18004 QR code generation with automatic version selection, Reed–Solomon error correction and mask optimisation (via the `qrcode` crate), plus Code 128 (Subset B) barcode generation.
 - Emits lightweight vector SVGs with zero native C dependencies.
 
 ### 25. Automated Security Auditor & W3C CSP Reporting (`yav::server::security_audit`)
@@ -273,8 +274,9 @@ In-memory broadcast channel allowing async server events, background tasks, or p
   ```
 - **Read-Your-Own-Writes Consistency**: Automatically pins a user session to the primary writer for a configurable time window (e.g. 5 seconds) after any `POST`/`PUT`/`DELETE` mutation, preventing stale read artifacts.
 
-### 32. Pure-Rust WebP / AVIF & Image Pipeline (`yav-server::image_pipeline`)
+### 32. Pure-Rust WebP Output & Image Pipeline (`yav-server::image_pipeline`)
 - Zero native C/C++ dependencies: image transcoding, metadata inspection, and downsampling implemented entirely in pure Rust.
+- **AVIF encoding is not supported**: AVIF *input* can be sniffed and its metadata parsed, but every output of `ImagePipeline` is a WebP container. Use an external encoder for AVIF output.
 - **Magic Byte Sniffing**: Reliably detects PNG, JPEG, GIF, WebP, and AVIF byte headers.
 - **Pure-Rust WebP VP8 Container Encoder**: Direct RIFF WebP container packing and VP8 intra-frame encoding with bilinear downsampling for responsive `srcset` generation.
 - Integrated into `GET /_yav/image` with path traversal guards and immutable cache headers.
@@ -318,7 +320,7 @@ In-memory broadcast channel allowing async server events, background tasks, or p
 - Built-in metrics collection tracking request throughput, SSR render latencies (p50, p95, p99), memory usage, and active SSE/WebSocket streams.
 - Live in-app telemetry dashboard served at `/_yav/metrics/dashboard` with responsive SVG gauges, throughput bar charts, and percentile latency distributions with zero external monitoring dependencies required.
 
-### 38. Phonetic & Typo-Tolerant Fuzzy Search (`yav-server::fuzzy_search`)
+### 38. Phonetic & Typo-Tolerant Fuzzy Search (`yav-build::fuzzy_search`)
 - Intelligent typo-tolerant indexing supporting:
   - **Damerau-Levenshtein Distance**: Handles character insertions, deletions, substitutions, and adjacent transpositions.
   - **American Soundex**: Phonetic encoding grouping phonetically similar names and words (e.g. "Smith" and "Smyth").
@@ -350,13 +352,13 @@ In-memory broadcast channel allowing async server events, background tasks, or p
   - Encrypts notification payloads using AES-128-GCM framing per RFC 8291.
   - Directly dispatches HTTP/2 push requests to browser push services (Mozilla, Google FCM, Apple APNs).
 
-### 43. Mock API Server & Realistic Data Faker (`yav-server::mock_server`)
+### 43. Mock API Server & Realistic Data Faker (`yav-build::mock_server`)
 - Embedded mock server for rapid prototyping, frontend development, and E2E test fixtures:
   - Declarative route registration with path pattern matching and method filtering.
   - Configurable synthetic latency and failure rates to simulate edge network conditions.
   - Deterministic fake data generator (`MockFaker`) producing realistic names, emails, addresses, UUIDs, dates, and currency values.
 
-### 44. Static i18n Key Extractor & Translation Linter (`yav-server::i18n_lint`)
+### 44. Static i18n Key Extractor & Translation Linter (`yav-build::i18n_lint`)
 - Static analysis engine scanning Rust source files for `t!("...")` macro invocations:
   - Identifies missing translation keys across language catalogs (`en.json`, `fr.json`, etc.).
   - Detects dead or orphaned translation keys present in dictionaries but never referenced in code.

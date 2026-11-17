@@ -90,7 +90,7 @@ pub async fn user_profile(htmx: HtmxRequest) -> impl IntoResponse {
 
 ## 4. Native Zero-JS Micro-Actions
 
-Yav v0.1.4 introduces a ultra-compact (<2KB), zero-dependency client micro-runtime embedded in `yav-core`. You write declarative `yav:*` attributes directly on HTML tags in `rsx!` without writing a single line of JavaScript.
+Yav v0.1.5 introduces a ultra-compact (<2KB), zero-dependency client micro-runtime embedded in `yav-core`. You write declarative `yav:*` attributes directly on HTML tags in `rsx!` without writing a single line of JavaScript.
 
 ### A. Popovers, Drawers, Modals & Menus
 Toggle elements, close on outside clicks, and automatically dismiss on window resize:

@@ -1,0 +1,9 @@
+# Local-only image tooling for assets/process_assets.py.
+# These are NOT dependencies of the Rust crates and are never shipped or published.
+# Install in a virtual environment: pip install -r assets/requirements.txt
+#
+# assets/generate_all_svgs.py uses only the Python standard library.
+
+numpy>=1.26
+opencv-python>=4.9
+Pillow>=10.0

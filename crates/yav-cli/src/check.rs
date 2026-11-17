@@ -121,7 +121,8 @@ mod tests {
 
     #[test]
     fn test_validate_empty_dir() {
-        let temp_dir = std::env::temp_dir().join("yav_test_check_empty");
+        let temp_dir =
+            std::env::temp_dir().join(format!("yav_test_check_empty_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&temp_dir);
         let _ = std::fs::create_dir_all(&temp_dir);
 
@@ -135,7 +136,8 @@ mod tests {
 
     #[test]
     fn test_validate_valid_dir() {
-        let temp_dir = std::env::temp_dir().join("yav_test_check_valid");
+        let temp_dir =
+            std::env::temp_dir().join(format!("yav_test_check_valid_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&temp_dir);
         let _ = std::fs::create_dir_all(temp_dir.join("src"));
 

@@ -147,7 +147,7 @@ pub use layout::{
     StackJustify, StackProps,
 };
 pub use log_viewer::{LogEntry, LogLevel, LogViewer};
-pub use markdown_editor::MarkdownEditor;
+pub use markdown_editor::{sanitize_preview_html, MarkdownEditor};
 pub use media_diff::{
     compute_line_diff, DiffLine, DiffViewer, MediaChapter, MediaPlayer, SubtitleTrack,
 };

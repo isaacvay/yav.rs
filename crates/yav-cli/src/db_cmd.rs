@@ -172,7 +172,21 @@ DROP TABLE IF EXISTS users;
                 )?;
                 println!("  created {}", seed_path.display());
             }
-            println!("🌱 Seed file ready at {}", seed_path.display());
+
+            // Actually execute the seed SQL against the configured database
+            let seed_sql = fs::read_to_string(&seed_path)
+                .map_err(|e| format!("Failed to read seed file: {e}"))?;
+            match execute_sql_against_database(&seed_sql) {
+                Ok(()) => println!("🌱 Seed data applied from {}", seed_path.display()),
+                Err(e) => {
+                    eprintln!("✗ Failed to execute seed SQL: {e}");
+                    eprintln!(
+                        "  Seed file is available at {}. Run it manually with your SQL client.",
+                        seed_path.display()
+                    );
+                    return Err(e.into());
+                }
+            }
         }
     }
 
@@ -201,8 +215,10 @@ fn read_database_url() -> Option<String> {
 
 fn execute_sql_against_database(sql: &str) -> Result<(), String> {
     let Some(db_url) = read_database_url() else {
-        println!("  ℹ️  DATABASE_URL not set: updated migration journal.");
-        return Ok(());
+        return Err(
+            "DATABASE_URL is not set. Configure it in .env or as an environment variable to run migrations."
+                .to_string(),
+        );
     };
 
     if db_url.starts_with("sqlite:") || db_url.ends_with(".db") || db_url.ends_with(".sqlite") {
@@ -223,12 +239,10 @@ fn execute_sql_against_database(sql: &str) -> Result<(), String> {
                 "sqlite3 returned non-zero exit code: {:?}",
                 s.code()
             )),
-            Err(_) => {
-                println!(
-                    "  ℹ️  sqlite3 binary not in PATH: migration journal updated for '{db_path}'."
-                );
-                Ok(())
-            }
+            Err(_) => Err(
+                "sqlite3 binary not found in PATH. Install sqlite3 to run migrations against SQLite."
+                    .to_string(),
+            ),
         }
     } else if db_url.starts_with("postgres://") || db_url.starts_with("postgresql://") {
         let status = std::process::Command::new("psql")
@@ -242,14 +256,15 @@ fn execute_sql_against_database(sql: &str) -> Result<(), String> {
                 Ok(())
             }
             Ok(s) => Err(format!("psql returned non-zero exit code: {:?}", s.code())),
-            Err(_) => {
-                println!("  ℹ️  psql binary not in PATH: migration journal updated.");
-                Ok(())
-            }
+            Err(_) => Err(
+                "psql binary not found in PATH. Install PostgreSQL client tools to run migrations."
+                    .to_string(),
+            ),
         }
     } else {
-        println!("  ℹ️  Custom DATABASE_URL detected: migration journal updated.");
-        Ok(())
+        Err(format!(
+            "Unsupported DATABASE_URL format: '{db_url}'. Supported formats: sqlite:path, postgres://..., postgresql://..."
+        ))
     }
 }
 

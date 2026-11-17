@@ -113,6 +113,31 @@ pub fn construct_download_url(version: &str, platform: &str) -> String {
     )
 }
 
+/// Validates that a version string matches the strict `MAJOR.MINOR.PATCH` format
+/// (with optional leading `v`). Rejects path traversal characters, whitespace,
+/// and pre-release/build metadata to prevent cache path injection.
+pub fn validate_version(version: &str) -> Result<(), TailwindError> {
+    let clean = version.trim().trim_start_matches('v');
+    if clean.is_empty() {
+        return Err(TailwindError::DownloadFailed(
+            "Tailwind version string is empty".to_string(),
+        ));
+    }
+    let mut parts = clean.split('.');
+    let major = parts.next().and_then(|p| p.parse::<u32>().ok());
+    let minor = parts.next().and_then(|p| p.parse::<u32>().ok());
+    let patch = parts.next().and_then(|p| p.parse::<u32>().ok());
+    if let (Some(_), Some(_), Some(_)) = (major, minor, patch) {
+        // Ensure no extra components or path characters
+        if !clean.contains('/') && !clean.contains('\\') && !clean.contains("..") {
+            return Ok(());
+        }
+    }
+    Err(TailwindError::DownloadFailed(format!(
+        "Invalid Tailwind version '{version}': expected format MAJOR.MINOR.PATCH (e.g. 3.4.17)"
+    )))
+}
+
 /// Returns the official pinned SHA-256 checksum for a known Tailwind standalone release and platform.
 pub fn known_sha256_for_binary(version: &str, platform: &str) -> Option<&'static str> {
     let clean_version = version.trim_start_matches('v');
@@ -191,6 +216,7 @@ impl TailwindManager {
 
     /// Returns the full cached path for the current platform's binary.
     pub fn binary_path(&self) -> Result<PathBuf, TailwindError> {
+        validate_version(&self.version)?;
         let filename = self.binary_filename()?;
         let clean_version = self.version.trim_start_matches('v');
         Ok(self.cache_dir.join(clean_version).join(filename))
@@ -210,9 +236,50 @@ impl TailwindManager {
     }
 
     /// Ensures the Tailwind CLI binary is available locally, downloading if necessary.
+    /// Validates the version string and re-verifies checksums for cached binaries.
     pub async fn ensure_binary(&self) -> Result<PathBuf, TailwindError> {
+        validate_version(&self.version)?;
         let bin_path = self.binary_path()?;
         if bin_path.is_file() {
+            // Re-verify checksum of cached binary to detect tampering
+            let platform = current_platform()?;
+            let expected = known_sha256_for_binary(&self.version, &platform);
+            if let Some(expected_hash) = expected {
+                if let Ok(cached_bytes) = tokio::fs::read(&bin_path).await {
+                    use sha2::{Digest, Sha256};
+                    let mut hasher = Sha256::new();
+                    hasher.update(&cached_bytes);
+                    let actual = format!("{:x}", hasher.finalize());
+                    if !actual.eq_ignore_ascii_case(expected_hash) {
+                        tracing::warn!(
+                            "Cached Tailwind binary checksum mismatch (expected {}, got {}); re-downloading",
+                            expected_hash, actual
+                        );
+                        // Delete the tampered binary and re-download
+                        let _ = tokio::fs::remove_file(&bin_path).await;
+                        // Fall through to download
+                    } else {
+                        #[cfg(unix)]
+                        {
+                            use std::os::unix::fs::PermissionsExt;
+                            if let Ok(metadata) = std::fs::metadata(&bin_path) {
+                                let mut perms = metadata.permissions();
+                                if perms.mode() & 0o111 == 0 {
+                                    perms.set_mode(0o755);
+                                    let _ = std::fs::set_permissions(&bin_path, perms);
+                                }
+                            }
+                        }
+                        tracing::debug!(
+                            "Using cached Tailwind CLI binary at {}",
+                            bin_path.display()
+                        );
+                        return Ok(bin_path);
+                    }
+                }
+            }
+            // If no known checksum, we already validated version format above.
+            // Proceed only if we have a known checksum (otherwise download_binary will reject).
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
@@ -337,10 +404,18 @@ impl TailwindManager {
             }
             tracing::info!("Verified SHA-256 checksum for tailwindcss-{platform}");
         } else {
-            tracing::warn!(
-                "No pinned SHA256 checksum available for Tailwind v{} ({platform})",
-                self.version
-            );
+            // No checksum available — reject unverified binaries to prevent
+            // supply-chain attacks. The caller must provide an explicit
+            // expected_sha256 or use a version with a pinned checksum.
+            return Err(TailwindError::ChecksumMismatch {
+                expected: "N/A (no pinned checksum for this version)".to_string(),
+                actual: format!(
+                    "No SHA-256 checksum available for Tailwind v{} ({}). \
+                     Refusing to execute unverified binary. \
+                     Use a pinned version (e.g. 3.4.17) or provide an explicit checksum.",
+                    self.version, platform
+                ),
+            });
         }
 
         let temp_dest = dest_path.with_extension(format!("tmp.{}", std::process::id()));

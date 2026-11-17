@@ -456,7 +456,7 @@ if Honeypot::is_bot(&form_data.0, None) {
 
 ## Zero-Dependency GraphQL Schema & Playground (`yav::server::graphql`)
 
-Expose a compiled, type-safe GraphQL API and an embedded GraphiQL 3.x developer playground with zero external runtime dependencies.
+Expose a compiled, type-safe GraphQL API and a small self-contained, hand-written HTML playground (`graphiql_html`) with zero external runtime dependencies. It is **not** the upstream GraphiQL 3.x IDE and loads no CDN assets.
 
 ```rust
 use yav::server::graphql::{GraphQlSchema, GraphQlObject, GraphQlType, graphql_handler, graphiql_html};
@@ -466,7 +466,7 @@ let query = GraphQlObject::new("Query")
         Ok(serde_json::json!(42_000))
     })
     .field("version", GraphQlType::String, |_args| {
-        Ok(serde_json::json!("0.1.4"))
+        Ok(serde_json::json!(env!("CARGO_PKG_VERSION")))
     });
 
 let schema = GraphQlSchema::new(query);
@@ -501,20 +501,25 @@ let breakdown = VatRule::calculate_tax(net_price, &geo.country);
 
 ## Micro-Frontends & Module Federation Gateway (`yav::server::federation`)
 
-Orchestrate complex distributed web architectures by stitching independent remote microservices into a unified parent page layout with parallel slot hydration and automatic fallbacks.
+Orchestrate complex distributed web architectures by stitching independent remote microservices into a unified parent page layout. `fetch_and_stitch_slots` fetches fragments in parallel and stitches them in declaration order, with automatic fallback HTML when an upstream fails.
 
 ```rust
-use yav::server::federation::{FederationGateway, FederationRoute};
+use yav::server::federation::{FederationGateway, FederationSlot};
 
 let gateway = FederationGateway::new()
     .route("/checkout", "https://checkout.internal.service")
     .route("/blog", "https://cms.internal.service")
+    // Empty by default is an explicit deny: opt in to the upstream hosts.
+    .with_allowed_upstream_hosts(["checkout.internal.service", "cms.internal.service"])
     .with_fallback("/checkout", "<div class=\"p-4 text-amber-500\">Système de paiement temporairement indisponible</div>");
 
-if let Some(upstream) = gateway.resolve("/checkout/pay") {
-    let url = gateway.target_url(upstream, "/checkout/pay");
-    // Proxy request with authentication forwarding
-}
+let slots = [
+    FederationSlot::new("cart", "/checkout/cart", 5),
+    FederationSlot::new("posts", "/blog/latest", 5),
+];
+let shell = "<main><!-- FEDERATION_SLOT:cart --><!-- FEDERATION_SLOT:posts --></main>";
+// Both fragments are fetched concurrently, then stitched in declaration order.
+let html = gateway.fetch_and_stitch_slots(shell, &slots).await?;
 ```
 
 ---
@@ -645,9 +650,9 @@ let target = pool.route("GET", Some("eu-central"), Some("session_cookie_token"))
 
 ---
 
-## Pure-Rust WebP / AVIF & Image Pipeline (`yav::server::image_pipeline`)
+## Pure-Rust WebP Output & Image Pipeline (`yav::server::image_pipeline`)
 
-Sniff image formats, parse metadata, and resize buffers with zero external C/C++ dependencies:
+Sniff image formats, parse metadata, and resize buffers with zero external C/C++ dependencies. AVIF *input* is detected and parsed, but **AVIF encoding is not supported** — output is always a WebP container:
 
 ```rust
 use yav::server::image_pipeline::{

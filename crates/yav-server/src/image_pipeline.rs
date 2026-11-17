@@ -1,7 +1,19 @@
-//! Pure-Rust WebP / AVIF & Lightweight Image Pipeline.
+//! Pure-Rust WebP & Lightweight Image Pipeline.
 //!
 //! Provides zero-dependency format sniffing, metadata parsing, bilinear/nearest-neighbor
 //! downsampling, and WebP container encoding for high-performance server-side image processing.
+//!
+//! # Note
+//!
+//! For production image optimization (resize, re-encode to WebP/JPEG/PNG), prefer the
+//! [`image_opt`](crate::image_opt) module which uses the `image` crate with full
+//! codec support including Lanczos3 resampling. This module provides a lightweight
+//! fallback for environments where the `image` dependency is not desired.
+//!
+//! **AVIF encoding is not currently supported.** Use an external tool or crate for AVIF output.
+//!
+//! [`ImagePipeline`] is the public facade chaining the real primitives below
+//! (sniffing → metadata → downsampling → WebP container framing).
 
 /// Supported image formats detected by magic bytes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -504,7 +516,7 @@ impl WebPEncoder {
     pub fn pack_vp8_chunk(vp8_payload: &[u8]) -> Vec<u8> {
         let chunk_size = vp8_payload.len() as u32;
         // Pad to even byte boundary if chunk_size is odd
-        let padding = if chunk_size % 2 != 0 { 1 } else { 0 };
+        let padding = if !chunk_size.is_multiple_of(2) { 1 } else { 0 };
         let file_size = 4 + 8 + chunk_size + padding; // "WEBP" + "VP8 " + len + payload + pad
 
         let mut output = Vec::with_capacity(12 + 8 + vp8_payload.len() + (padding as usize));
@@ -554,6 +566,91 @@ impl WebPEncoder {
         vp8.extend_from_slice(macroblock_data);
 
         Self::pack_vp8_chunk(&vp8)
+    }
+}
+
+/// Output of the [`ImagePipeline`] facade: the real result of every stage.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PipelineOutput {
+    /// Format sniffed from the original source bytes.
+    pub source_format: ImageFormat,
+    /// Metadata parsed from the original source bytes.
+    pub source_metadata: ImageMetadata,
+    /// The (possibly downsampled) RGB buffer that was encoded.
+    pub resized: RawRgbImage,
+    /// WebP container bytes built by [`WebPEncoder`].
+    pub webp: Vec<u8>,
+}
+
+/// High-level facade chaining this module's **real** primitives, in order:
+///
+/// 1. [`detect_image_format`] — magic-byte format sniffing of the source file.
+/// 2. [`parse_image_metadata`] — real dimension/channel parsing of the source file.
+/// 3. [`RawRgbImage::resize_bilinear`] — real bilinear downsampling of decoded RGB pixels.
+/// 4. [`WebPEncoder::build_lossy_container`] — real RIFF/WebP container + VP8
+///    keyframe-header framing, using the downsampled dimensions.
+///
+/// # Honest limitations
+///
+/// - **AVIF encoding is NOT supported.** AVIF input can be sniffed and its metadata
+///   parsed, but output is always a WebP container; use an external tool/crate for AVIF.
+/// - [`WebPEncoder`] builds the WebP container and the VP8 uncompressed keyframe header;
+///   it does **not** perform DCT/entropy coding. Callers must supply the VP8 macroblock
+///   payload via `vp8_payload`. This facade never claims to have produced a fully
+///   decodable lossy WebP from arbitrary RGB pixels.
+/// - Metadata errors are propagated; the pipeline never returns a fake `Ok`.
+pub struct ImagePipeline;
+
+impl ImagePipeline {
+    /// Sniff the format of raw bytes (stage 1 on its own).
+    #[must_use]
+    pub fn sniff(bytes: &[u8]) -> ImageFormat {
+        detect_image_format(bytes)
+    }
+
+    /// Parse real image metadata (stage 2 on its own).
+    pub fn metadata(bytes: &[u8]) -> Result<ImageMetadata, &'static str> {
+        parse_image_metadata(bytes)
+    }
+
+    /// Run the full pipeline and return the real result of each stage.
+    ///
+    /// * `source` — original encoded bytes (sniffed + parsed for metadata).
+    /// * `rgb` — their decoded RGB pixels.
+    /// * `target` — optional `(width, height)` to downsample to via bilinear interpolation.
+    /// * `vp8_payload` — caller-supplied VP8 macroblock bitstream (this module does not
+    ///   implement DCT/entropy coding).
+    pub fn process(
+        source: &[u8],
+        rgb: &RawRgbImage,
+        target: Option<(u32, u32)>,
+        vp8_payload: &[u8],
+    ) -> Result<PipelineOutput, &'static str> {
+        let source_format = detect_image_format(source);
+        let source_metadata = parse_image_metadata(source)?;
+
+        let resized = match target {
+            Some((w, h)) => rgb.resize_bilinear(w, h),
+            None => rgb.clone(),
+        };
+        if resized.width == 0 || resized.height == 0 {
+            return Err("ImagePipeline: cannot encode a zero-dimension image");
+        }
+        if resized.width > u16::MAX as u32 || resized.height > u16::MAX as u32 {
+            return Err("ImagePipeline: encoded dimensions exceed u16");
+        }
+
+        let webp = WebPEncoder::build_lossy_container(
+            resized.width as u16,
+            resized.height as u16,
+            vp8_payload,
+        );
+        Ok(PipelineOutput {
+            source_format,
+            source_metadata,
+            resized,
+            webp,
+        })
     }
 }
 
@@ -675,5 +772,50 @@ mod tests {
         assert_eq!(meta_avif.format, ImageFormat::Avif);
         assert_eq!(meta_avif.width, 640);
         assert_eq!(meta_avif.height, 480);
+    }
+
+    #[test]
+    fn test_image_pipeline_chains_real_stages() {
+        // A minimal, genuinely parseable PNG header (signature + IHDR).
+        let mut png = vec![0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+        png.extend_from_slice(&[0x00, 0x00, 0x00, 0x0D]); // IHDR length = 13
+        png.extend_from_slice(b"IHDR");
+        png.extend_from_slice(&8u32.to_be_bytes()); // width
+        png.extend_from_slice(&8u32.to_be_bytes()); // height
+        png.push(8); // bit depth
+        png.push(2); // color type 2 = RGB (3 channels)
+        png.extend_from_slice(&[0, 0, 0, 0, 0, 0, 0, 0]); // compression/filter/interlace + CRC
+
+        let rgb = RawRgbImage::from_rgb(8, 8, vec![128u8; 8 * 8 * 3]).unwrap();
+        let vp8_payload = [0xDE, 0xAD, 0xBE, 0xEF];
+
+        let out = ImagePipeline::process(&png, &rgb, Some((4, 4)), &vp8_payload)
+            .expect("valid PNG metadata must parse");
+
+        // Stages 1 + 2: real sniffing and metadata parsing.
+        assert_eq!(out.source_format, ImageFormat::Png);
+        assert_eq!(out.source_metadata.width, 8);
+        assert_eq!(out.source_metadata.height, 8);
+        assert_eq!(out.source_metadata.channels, 3);
+
+        // Stage 3: real bilinear downsampling.
+        assert_eq!(out.resized.width, 4);
+        assert_eq!(out.resized.height, 4);
+        assert_eq!(out.resized.data.len(), 4 * 4 * 3);
+
+        // Stage 4: a real RIFF/WebP container carrying the downsampled dimensions.
+        assert_eq!(detect_image_format(&out.webp), ImageFormat::WebP);
+        assert_eq!(&out.webp[12..16], b"VP8 ");
+        let meta = parse_image_metadata(&out.webp).expect("WebP metadata must parse");
+        assert_eq!(meta.width, 4);
+        assert_eq!(meta.height, 4);
+
+        // AVIF is sniffable/parsable but is never an output format of this facade.
+        assert_ne!(detect_image_format(&out.webp), ImageFormat::Avif);
+
+        // Errors are surfaced, never swallowed into a fake Ok.
+        assert!(ImagePipeline::process(b"garbage", &rgb, None, &vp8_payload).is_err());
+        assert_eq!(ImagePipeline::sniff(&png), ImageFormat::Png);
+        assert!(ImagePipeline::metadata(b"garbage").is_err());
     }
 }

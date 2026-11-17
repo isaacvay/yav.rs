@@ -297,9 +297,12 @@ impl Component for OrgChart {
         let mut node_elements = Vec::new();
         for node in &positioned_nodes {
             let avatar_markup = if let Some(ref url) = node.avatar_url {
+                // Validate the URL scheme (blocking javascript:/vbscript:/...) and
+                // attribute-escape it. A refused URL falls back to an empty src.
+                let safe_url = yav_core::escape_url(url).unwrap_or_default();
                 format!(
                     "<img src=\"{}\" alt=\"{}\" class=\"h-10 w-10 rounded-full object-cover ring-2 ring-indigo-500/30\" />",
-                    escape_html(url),
+                    safe_url,
                     escape_html(&node.name)
                 )
             } else {
@@ -413,5 +416,21 @@ mod tests {
         let html = render_to_string(&node);
         assert!(html.contains("Alpha"));
         assert!(html.contains("Beta"));
+    }
+
+    #[test]
+    fn test_avatar_url_xss_protection() {
+        let chart = OrgChart::new()
+            .node(OrgNode::new("x", "Mallory", "Attacker").avatar("javascript:alert(1)"));
+        let html = render_to_string(&chart.render());
+        // The dangerous scheme must not survive into the img src attribute.
+        assert!(!html.contains("javascript:"));
+        assert!(!html.contains("src=\"javascript"));
+        assert!(html.contains("src=\"\""));
+
+        let safe = OrgChart::new()
+            .node(OrgNode::new("y", "Alice", "Engineer").avatar("https://example.com/a.png"));
+        let safe_html = render_to_string(&safe.render());
+        assert!(safe_html.contains("src=\"https://example.com/a.png\""));
     }
 }

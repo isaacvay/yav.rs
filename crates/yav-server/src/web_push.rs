@@ -1,10 +1,29 @@
 //! # YAV WebPush & VAPID Notification Engine (RFC 8291 / RFC 8292)
 //!
-//! Provides browser push notification payload structuring, subscription management,
-//! and VAPID (Voluntary Application Server Identification) JWT authorization headers.
+//! Provides browser push notification payload encryption, subscription management,
+//! VAPID (Voluntary Application Server Identification) JWT authorization headers
+//! with real ECDSA P-256 (ES256) signing, and actual HTTP delivery to push endpoints.
+//!
+//! ## Features
+//! - **RFC 8292 VAPID**: ES256 JWT signed with a real P-256 ECDSA key (not HMAC).
+//! - **RFC 8291 Payload Encryption**: aes128gcm content-encryption with ECDH
+//!   key agreement on the subscriber's P-256 public key.
+//! - **HTTP delivery**: `send_notification()` POSTs the encrypted payload to the
+//!   push service endpoint with proper TTL and Authorization headers.
+//! - **Subscription management**: `PushSubscription` models browser subscription
+//!   data from `registration.pushManager.subscribe()`.
 
+use aes_gcm::{aead::Aead, Aes128Gcm, KeyInit, Nonce};
+use base64::Engine;
+use p256::{
+    ecdh::EphemeralSecret,
+    ecdsa::{Signature, SigningKey},
+    PublicKey,
+};
+use rand_core::{OsRng, RngCore};
 use serde::{Deserialize, Serialize};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// Web Push subscription details gathered from `registration.pushManager.subscribe()`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -51,7 +70,7 @@ impl WebPushNotification {
             badge: None,
             tag: None,
             data: None,
-            ttl_secs: 86400, // 24 hours default TTL
+            ttl_secs: 86400,
         }
     }
 
@@ -93,14 +112,28 @@ impl WebPushNotification {
 }
 
 /// VAPID Server Keypair and authorization header generator (RFC 8292).
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// The `private_key` must be a 32-byte P-256 ECDSA secret key, base64url-encoded
+/// without padding. The `public_key` must be the uncompressed (65-byte) SEC1
+/// encoded P-256 public key, base64url-encoded without padding.
+#[derive(Debug, Clone)]
 pub struct VapidSigner {
     pub subject: String,
     pub public_key: String,
     pub private_key: String,
 }
 
+impl PartialEq for VapidSigner {
+    fn eq(&self, other: &Self) -> bool {
+        self.subject == other.subject
+            && self.public_key == other.public_key
+            && self.private_key == other.private_key
+    }
+}
+impl Eq for VapidSigner {}
+
 impl VapidSigner {
+    /// Create a new VAPID signer.
     #[must_use]
     pub fn new(
         subject: impl Into<String>,
@@ -114,61 +147,64 @@ impl VapidSigner {
         }
     }
 
-    /// Extract audience origin from push endpoint URL (e.g. `https://fcm.googleapis.com`).
+    /// Extract the audience origin (`scheme://host[:port]`) from a push endpoint.
+    ///
+    /// The audience is only derived from an endpoint that passed
+    /// `validate_push_endpoint_syntax`; quotes, control characters, userinfo,
+    /// fragments and unsafe hosts are therefore refused before any value can
+    /// reach a JWT claim or the `Authorization` header. An invalid endpoint
+    /// yields an empty string instead of a partially-parsed, injectable value.
     #[must_use]
     pub fn extract_audience(endpoint: &str) -> String {
-        if let Some(pos) = endpoint.find("://") {
-            let after_scheme = &endpoint[pos + 3..];
-            if let Some(slash) = after_scheme.find('/') {
-                return format!("{}://{}", &endpoint[..pos], &after_scheme[..slash]);
-            }
+        if validate_push_endpoint_syntax(endpoint).is_err() {
+            return String::new();
         }
-        endpoint.to_string()
+        let Ok(url) = reqwest::Url::parse(endpoint) else {
+            return String::new();
+        };
+        let host = url.host_str().unwrap_or_default();
+        match url.port() {
+            Some(port) => format!("{}://{}:{}", url.scheme(), host, port),
+            None => format!("{}://{}", url.scheme(), host),
+        }
     }
 
-    /// Construct a development VAPID JWT Authorization header for the given audience origin.
-    #[must_use]
-    pub fn create_authorization_header(&self, audience: &str, expiration_secs: u64) -> String {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-        let exp = now + expiration_secs;
-
-        let header_json = r#"{"typ":"JWT","alg":"HS256"}"#;
-        let claims_json = format!(
-            r#"{{"aud":"{}","exp":{},"sub":"{}"}}"#,
-            audience, exp, self.subject
-        );
-
-        let header_b64 = base64_url_encode(header_json.as_bytes());
-        let claims_b64 = base64_url_encode(claims_json.as_bytes());
-        let signing_input = format!("{header_b64}.{claims_b64}");
-
-        // HMAC-SHA256 signature using the private key
-        let signature = simple_hmac_sha256(self.private_key.as_bytes(), signing_input.as_bytes());
-        let sig_b64 = base64_url_encode(&signature);
-
-        let jwt = format!("{signing_input}.{sig_b64}");
-        format!("vapid t={jwt}, k={}", self.public_key)
+    /// Decode the base64url-encoded private key into a `p256::ecdsa::SigningKey`.
+    fn decode_signing_key(&self) -> Result<SigningKey, WebPushError> {
+        let raw = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(self.private_key.as_bytes())
+            .map_err(|_| WebPushError::InvalidPrivateKey)?;
+        if raw.len() != 32 {
+            return Err(WebPushError::InvalidPrivateKey);
+        }
+        let mut arr = [0u8; 32];
+        arr.copy_from_slice(&raw);
+        SigningKey::from_bytes(&arr.into()).map_err(|_| WebPushError::InvalidPrivateKey)
     }
 
-    /// Construct a standards-compliant RFC 8292 ES256 VAPID Authorization header using ECDSA P-256 signature bytes.
-    #[must_use]
-    pub fn create_es256_authorization_header(
+    /// Construct a standards-compliant RFC 8292 ES256 VAPID Authorization header.
+    ///
+    /// This uses a real ECDSA P-256 signature (ES256) — not HMAC.
+    pub fn create_authorization_header(
         &self,
         audience: &str,
         expiration_secs: u64,
-        ecdsa_signature_raw: &[u8],
-    ) -> String {
+    ) -> Result<String, WebPushError> {
+        let signing_key = self.decode_signing_key()?;
         let signing_input = self.create_es256_signing_input(audience, expiration_secs);
-        let sig_b64 = base64_url_encode(ecdsa_signature_raw);
+
+        // Real ECDSA P-256 signature using the p256 crate
+        use p256::ecdsa::signature::Signer;
+        let signature: Signature = signing_key.sign(signing_input.as_bytes());
+        let sig_bytes = signature.to_bytes();
+        let sig_vec: Vec<u8> = sig_bytes.to_vec();
+        let sig_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&sig_vec);
 
         let jwt = format!("{signing_input}.{sig_b64}");
-        format!("vapid t={jwt}, k={}", self.public_key)
+        Ok(format!("vapid t={jwt}, k={}", self.public_key))
     }
 
-    /// Generate the exact signing input `base64url(header).base64url(claims)` according to RFC 8292 ES256 VAPID.
+    /// Generate the exact signing input `base64url(header).base64url(claims)` for ES256 VAPID.
     #[must_use]
     pub fn create_es256_signing_input(&self, audience: &str, expiration_secs: u64) -> String {
         let now = SystemTime::now()
@@ -178,216 +214,514 @@ impl VapidSigner {
         let exp = now + expiration_secs;
 
         let header_json = r#"{"typ":"JWT","alg":"ES256"}"#;
-        let claims_json = format!(
-            r#"{{"aud":"{}","exp":{},"sub":"{}"}}"#,
-            audience, exp, self.subject
-        );
+        // Never build JSON with `format!`: `audience` and `subject` are
+        // attacker-influenceable strings and a quote would break out of the
+        // claim. `serde_json::json!` escapes every value correctly.
+        let claims_json = serde_json::json!({
+            "aud": audience,
+            "exp": exp,
+            "sub": self.subject.as_str(),
+        })
+        .to_string();
 
-        let header_b64 = base64_url_encode(header_json.as_bytes());
-        let claims_b64 = base64_url_encode(claims_json.as_bytes());
+        let header_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(header_json);
+        let claims_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(claims_json);
         format!("{header_b64}.{claims_b64}")
     }
+}
 
-    /// Construct a standards-compliant RFC 8292 ES256 VAPID Authorization header from an ECDSA P-256 signer closure.
-    pub fn create_es256_header_with_signer<F>(
-        &self,
-        audience: &str,
-        expiration_secs: u64,
-        signer: F,
-    ) -> Result<String, &'static str>
-    where
-        F: FnOnce(&[u8]) -> Result<Vec<u8>, &'static str>,
+/// Errors that can occur during Web Push operations.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WebPushError {
+    /// The provided private key is not a valid 32-byte P-256 secret key.
+    InvalidPrivateKey,
+    /// The provided public key is not a valid P-256 SEC1 encoded key.
+    InvalidPublicKey,
+    /// The subscriber's p256dh key could not be decoded.
+    InvalidSubscriptionP256dh,
+    /// The subscriber's auth secret could not be decoded.
+    InvalidSubscriptionAuth,
+    /// The payload is too large (RFC 8291 limits to 4078 bytes).
+    PayloadTooLarge,
+    /// Encryption failed.
+    EncryptionFailed,
+    /// The HTTP POST to the push endpoint failed.
+    DeliveryFailed(String),
+    /// The subscription endpoint was rejected by the SSRF guard (bad scheme,
+    /// userinfo/fragment, private/loopback/link-local host, unsafe DNS result…).
+    UnsafeEndpoint(String),
+}
+
+impl std::fmt::Display for WebPushError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidPrivateKey => write!(
+                f,
+                "Invalid VAPID private key (expected 32-byte P-256 secret)"
+            ),
+            Self::InvalidPublicKey => write!(
+                f,
+                "Invalid VAPID public key (expected SEC1-encoded P-256 public)"
+            ),
+            Self::InvalidSubscriptionP256dh => write!(f, "Invalid subscription p256dh key"),
+            Self::InvalidSubscriptionAuth => write!(f, "Invalid subscription auth secret"),
+            Self::PayloadTooLarge => write!(
+                f,
+                "Notification payload exceeds 4078 bytes (RFC 8291 limit)"
+            ),
+            Self::EncryptionFailed => write!(f, "RFC 8291 aes128gcm encryption failed"),
+            Self::DeliveryFailed(msg) => write!(f, "Push delivery failed: {msg}"),
+            Self::UnsafeEndpoint(reason) => {
+                write!(f, "Unsafe push endpoint rejected: {reason}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for WebPushError {}
+
+/// RFC 8291 content-encryption: ECDH key agreement + HKDF-SHA-256 + aes128gcm.
+///
+/// Encrypts the notification payload for a specific subscriber using:
+/// 1. ECDH key agreement between an ephemeral P-256 key and the subscriber's p256dh key.
+/// 2. HKDF-SHA-256 to derive the content-encryption key (16 bytes) and nonce (12 bytes).
+/// 3. aes128gcm authenticated encryption.
+///
+/// Returns the complete RFC 8291 encrypted message (binary).
+pub fn encrypt_payload(
+    subscription: &PushSubscription,
+    payload: &[u8],
+) -> Result<Vec<u8>, WebPushError> {
+    if payload.len() > 4078 {
+        return Err(WebPushError::PayloadTooLarge);
+    }
+
+    // 1. Decode subscriber's p256dh public key (base64url → SEC1 bytes)
+    let p256dh_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(subscription.p256dh.as_bytes())
+        .map_err(|_| WebPushError::InvalidSubscriptionP256dh)?;
+    let subscriber_pubkey = PublicKey::from_sec1_bytes(&p256dh_bytes)
+        .map_err(|_| WebPushError::InvalidSubscriptionP256dh)?;
+
+    // 2. Decode subscriber's auth secret (base64url → 16 bytes)
+    let auth_secret = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(subscription.auth.as_bytes())
+        .map_err(|_| WebPushError::InvalidSubscriptionAuth)?;
+    if auth_secret.len() != 16 {
+        return Err(WebPushError::InvalidSubscriptionAuth);
+    }
+
+    // 3. Generate ephemeral P-256 key pair
+    let ephemeral_secret = EphemeralSecret::random(&mut OsRng);
+    let ephemeral_public = ephemeral_secret.public_key();
+    let ephemeral_public_bytes = ephemeral_public.to_sec1_bytes();
+
+    // 4. ECDH shared secret
+    let shared_secret = ephemeral_secret.diffie_hellman(&subscriber_pubkey);
+    let shared_secret_bytes = shared_secret.raw_secret_bytes();
+
+    // 5. RFC 8291 key derivation — two HKDF stages, bound to `salt_random`.
+    //
+    // Stage 1 mixes the ECDH shared secret with the subscription auth secret:
+    //   PRK_key = HKDF-Extract(auth_secret, ecdh_secret)
+    //   IKM     = HKDF-Expand(PRK_key, "WebPush: info\0" || ua_public || as_public, 32)
+    // `hkdf_sha256_expand(prk, info_prefix, context, len)` builds
+    // `info_prefix || context || counter`, so the fixed "WebPush: info\0" label
+    // is the prefix and the two public keys (with no label) are the context.
+    let mut key_context = Vec::with_capacity(p256dh_bytes.len() + ephemeral_public_bytes.len());
+    key_context.extend_from_slice(&p256dh_bytes);
+    key_context.extend_from_slice(&ephemeral_public_bytes);
+
+    let prk_key = hkdf_sha256_extract(&auth_secret, shared_secret_bytes);
+    let ikm = hkdf_sha256_expand(&prk_key, b"WebPush: info\0", &key_context, 32);
+
+    // The 16-byte salt is generated before the second stage: it is both the
+    // HKDF salt and the value written into the header. A fresh salt therefore
+    // changes the CEK for every message, which the old code never did.
+    let mut salt_random = [0u8; 16];
+    OsRng.fill_bytes(&mut salt_random);
+
+    // Stage 2 (RFC 8188 §2): PRK = HKDF-Extract(salt, IKM), then CEK and
+    // NONCE are expanded with an EMPTY context (not the WebPush info).
+    let prk = hkdf_sha256_extract(&salt_random, &ikm);
+    let content_key = hkdf_sha256_expand(&prk, b"Content-Encoding: aes128gcm\0", b"", 16);
+    let nonce_bytes = hkdf_sha256_expand(&prk, b"Content-Encoding: nonce\0", b"", 12);
+
+    // 6. aes128gcm encrypt. RFC 8188: the plaintext is the payload followed by
+    // the 0x02 "last record" delimiter (the old 0x00,0x00 padding was wrong).
+    let cipher =
+        Aes128Gcm::new_from_slice(&content_key).map_err(|_| WebPushError::EncryptionFailed)?;
+    let nonce = Nonce::from_slice(&nonce_bytes);
+
+    let mut plaintext = Vec::with_capacity(payload.len() + 1);
+    plaintext.extend_from_slice(payload);
+    plaintext.push(0x02);
+
+    let ciphertext = cipher
+        .encrypt(nonce, plaintext.as_ref())
+        .map_err(|_| WebPushError::EncryptionFailed)?;
+
+    // 7. Build the RFC 8291 message structure.
+    // Header: salt(16) || record_size(4) || key_id_len(1) || key_id(65)
+    // Body: ciphertext. `record_size` is the total message length, computed
+    // after encryption (the ciphertext length includes the 16-byte GCM tag).
+    let key_id_len = ephemeral_public_bytes.len() as u8;
+    let header_len = 16 + 4 + 1 + key_id_len as usize;
+    let record_size = (header_len + ciphertext.len()) as u32;
+
+    let mut message = Vec::with_capacity(header_len + ciphertext.len());
+    message.extend_from_slice(&salt_random);
+    message.extend_from_slice(&record_size.to_be_bytes());
+    message.push(key_id_len);
+    message.extend_from_slice(&ephemeral_public_bytes);
+    message.extend_from_slice(&ciphertext);
+
+    Ok(message)
+}
+
+/// HKDF-SHA-256 extract step: PRK = HMAC-SHA-256(salt, IKM).
+fn hkdf_sha256_extract(salt: &[u8], ikm: &[u8]) -> [u8; 32] {
+    use hmac::{Hmac, Mac};
+    type HmacSha256 = Hmac<sha2::Sha256>;
+    let mut mac = <HmacSha256 as Mac>::new_from_slice(salt).expect("HMAC accepts any key size");
+    mac.update(ikm);
+    mac.finalize().into_bytes().into()
+}
+
+/// HKDF-SHA-256 expand step.
+fn hkdf_sha256_expand(prk: &[u8], info_prefix: &[u8], context: &[u8], length: usize) -> Vec<u8> {
+    use hmac::{Hmac, Mac};
+    type HmacSha256 = Hmac<sha2::Sha256>;
+
+    let mut output = Vec::with_capacity(length);
+    let mut prev: Vec<u8> = Vec::new();
+    let mut counter: u8 = 1;
+
+    while output.len() < length {
+        let mut mac = <HmacSha256 as Mac>::new_from_slice(prk).expect("HMAC accepts any key size");
+        mac.update(&prev);
+        mac.update(info_prefix);
+        mac.update(context);
+        mac.update(&[counter]);
+        let result = mac.finalize().into_bytes();
+        output.extend_from_slice(&result);
+        prev = result.to_vec();
+        counter += 1;
+    }
+    output.truncate(length);
+    output
+}
+
+// ── SSRF guards ─────────────────────────────────────────────────────────────
+
+/// Returns `true` for IPv4 addresses that must never be contacted: loopback,
+/// RFC 1918 private ranges, link-local, shared/CGNAT, multicast, unspecified
+/// and reserved/broadcast ranges.
+fn is_forbidden_ipv4(ip: Ipv4Addr) -> bool {
+    let o = ip.octets();
+    o[0] == 0                                      // 0.0.0.0/8 (incl. unspecified)
+        || o[0] == 10                               // 10.0.0.0/8 private
+        || (o[0] == 100 && (o[1] & 0xc0) == 64)    // 100.64.0.0/10 shared (CGNAT)
+        || o[0] == 127                              // 127.0.0.0/8 loopback
+        || (o[0] == 169 && o[1] == 254)             // 169.254.0.0/16 link-local
+        || (o[0] == 172 && (o[1] & 0xf0) == 16)    // 172.16.0.0/12 private
+        || (o[0] == 192 && o[1] == 168)             // 192.168.0.0/16 private
+        || ((o[0] & 0xf0) == 224)                   // 224.0.0.0/4 multicast
+        || ((o[0] & 0xf0) == 240) // 240.0.0.0/4 reserved + broadcast
+}
+
+/// Returns `true` for forbidden IPv6 addresses: unspecified, loopback,
+/// unique-local, link-local, multicast, and IPv4-mapped/compatible forms that
+/// embed a forbidden IPv4 address.
+fn is_forbidden_ipv6(ip: Ipv6Addr) -> bool {
+    let o = ip.octets();
+    let s = ip.segments();
+    // :: (unspecified) and ::1 (loopback)
+    if o.iter().all(|&b| b == 0) || (o[..15].iter().all(|&b| b == 0) && o[15] == 1) {
+        return true;
+    }
+    // fc00::/7 unique-local, fe80::/10 link-local, ff00::/8 multicast
+    if (s[0] & 0xfe00) == 0xfc00 || (s[0] & 0xffc0) == 0xfe80 || (s[0] & 0xff00) == 0xff00 {
+        return true;
+    }
+    // IPv4-mapped (::ffff:a.b.c.d) / IPv4-compatible (::a.b.c.d): re-evaluate
+    // the embedded IPv4 address when the first 10 bytes are zero.
+    if o[..10].iter().all(|&b| b == 0) {
+        let v4 = Ipv4Addr::new(o[12], o[13], o[14], o[15]);
+        if is_forbidden_ipv4(v4) {
+            return true;
+        }
+    }
+    false
+}
+
+fn is_forbidden_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => is_forbidden_ipv4(v4),
+        IpAddr::V6(v6) => is_forbidden_ipv6(v6),
+    }
+}
+
+/// Parse and fully validate a client-supplied push endpoint.
+///
+/// Returns the lowercased host and the effective port on success. Reused by the
+/// synchronous guard, the DNS guard and `VapidSigner::extract_audience`.
+fn parse_validated_endpoint(endpoint: &str) -> Result<(String, u16), WebPushError> {
+    let deny = |reason: &str| WebPushError::UnsafeEndpoint(reason.to_string());
+
+    // WHATWG URL parsing silently strips tabs/newlines, leading/trailing C0
+    // controls and spaces. Reject control/quote characters up front so a
+    // smuggled payload cannot be normalised into a "safe" URL.
+    if endpoint
+        .chars()
+        .any(|c| c.is_control() || c.is_whitespace() || matches!(c, '"' | '\'' | '\\'))
     {
-        let signing_input = self.create_es256_signing_input(audience, expiration_secs);
-        let sig_bytes = signer(signing_input.as_bytes())?;
-        let sig_b64 = base64_url_encode(&sig_bytes);
-        let jwt = format!("{signing_input}.{sig_b64}");
-        Ok(format!("vapid t={jwt}, k={}", self.public_key))
+        return Err(deny(
+            "endpoint contains control/whitespace or quote characters",
+        ));
     }
+
+    // Require an explicit https scheme (case-insensitive per RFC 3986).
+    if endpoint
+        .get(..8)
+        .map(|s| !s.eq_ignore_ascii_case("https://"))
+        .unwrap_or(true)
+    {
+        return Err(deny("endpoint must use https://"));
+    }
+
+    let url = reqwest::Url::parse(endpoint).map_err(|_| deny("malformed endpoint URL"))?;
+    if url.scheme() != "https" {
+        return Err(deny("endpoint must use https://"));
+    }
+
+    // Reject userinfo. `url.username()` handles `user:pw@`; the raw-authority
+    // check also covers `https://@host`, which the parser normalises to an
+    // empty username.
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err(deny("userinfo is not allowed in endpoint"));
+    }
+    let authority = endpoint
+        .get(8..)
+        .unwrap_or("")
+        .split(['/', '?', '#'])
+        .next()
+        .unwrap_or("");
+    if authority.contains('@') {
+        return Err(deny("userinfo is not allowed in endpoint"));
+    }
+    if url.fragment().is_some() {
+        return Err(deny("fragment is not allowed in endpoint"));
+    }
+
+    let host = url.host_str().ok_or_else(|| deny("empty host"))?;
+    if host.is_empty() {
+        return Err(deny("empty host"));
+    }
+    // `host_str()` keeps the brackets around IPv6 literals.
+    let host_lower = host
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .to_ascii_lowercase();
+
+    if host_lower == "localhost"
+        || host_lower.ends_with(".localhost")
+        || host_lower.ends_with(".internal")
+    {
+        return Err(deny("localhost/.internal hosts are not allowed"));
+    }
+
+    if let Ok(ip) = host_lower.parse::<IpAddr>() {
+        if is_forbidden_ip(ip) {
+            return Err(deny(
+                "private/loopback/link-local IP literal is not allowed",
+            ));
+        }
+    }
+
+    // A resolvable push endpoint is a dotted FQDN. Single-label hostnames
+    // (intranet names, `localhost` aliases) are refused; no allowlist exists.
+    if !host_lower.contains('.') {
+        return Err(deny("host without a dot is not allowed"));
+    }
+
+    let port = url.port_or_known_default().unwrap_or(443);
+    Ok((host_lower, port))
 }
 
-fn base64_url_encode(data: &[u8]) -> String {
-    const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
-    let mut result = String::new();
-    let mut i = 0;
-
-    while i < data.len() {
-        let b0 = data[i];
-        let b1 = if i + 1 < data.len() { data[i + 1] } else { 0 };
-        let b2 = if i + 2 < data.len() { data[i + 2] } else { 0 };
-
-        let n = ((b0 as u32) << 16) | ((b1 as u32) << 8) | (b2 as u32);
-
-        result.push(CHARSET[((n >> 18) & 63) as usize] as char);
-        result.push(CHARSET[((n >> 12) & 63) as usize] as char);
-
-        if i + 1 < data.len() {
-            result.push(CHARSET[((n >> 6) & 63) as usize] as char);
-        }
-        if i + 2 < data.len() {
-            result.push(CHARSET[(n & 63) as usize] as char);
-        }
-
-        i += 3;
-    }
-    result
+/// Synchronous, network-free validation of a push endpoint's syntax/host.
+fn validate_push_endpoint_syntax(endpoint: &str) -> Result<(), WebPushError> {
+    parse_validated_endpoint(endpoint).map(|_| ())
 }
 
-fn simple_hmac_sha256(key: &[u8], message: &[u8]) -> [u8; 32] {
-    // Pure-Rust HMAC-SHA256 simulation using inner and outer state hashing
-    let mut key_pad = [0u8; 64];
-    if key.len() > 64 {
-        // Hash key if too long
-        let h = simple_sha256(key);
-        key_pad[..32].copy_from_slice(&h);
+/// Resolve the endpoint's host and reject any result that lands on a private,
+/// loopback, link-local, multicast or unspecified address (IPv4 and IPv6).
+async fn check_push_endpoint_dns(endpoint: &str) -> Result<(), WebPushError> {
+    let (host, port) = parse_validated_endpoint(endpoint)?;
+    let addrs = tokio::net::lookup_host((host.as_str(), port))
+        .await
+        .map_err(|e| WebPushError::UnsafeEndpoint(format!("DNS lookup failed: {e}")))?;
+    let mut seen = false;
+    for addr in addrs {
+        seen = true;
+        if is_forbidden_ip(addr.ip()) {
+            return Err(WebPushError::UnsafeEndpoint(
+                "endpoint resolves to a forbidden address".into(),
+            ));
+        }
+    }
+    if !seen {
+        return Err(WebPushError::UnsafeEndpoint(
+            "endpoint resolved to no address".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// Send a Web Push notification to a subscriber's push endpoint.
+///
+/// This encrypts the notification payload with RFC 8291 aes128gcm, generates
+/// a VAPID ES256 authorization header, and POSTs the encrypted binary to the
+/// push service endpoint.
+///
+/// # Errors
+/// Returns `WebPushError::UnsafeEndpoint` if the subscription endpoint fails the
+/// SSRF guard (bad scheme, userinfo, private/loopback host or DNS result),
+/// `WebPushError::EncryptionFailed` if payload encryption fails, or
+/// `WebPushError::DeliveryFailed` if the HTTP POST fails or returns non-2xx.
+pub async fn send_notification(
+    subscription: &PushSubscription,
+    notification: &WebPushNotification,
+    vapid: &VapidSigner,
+) -> Result<(), WebPushError> {
+    // The endpoint is supplied by the browser. Validate it BEFORE signing and
+    // sending: `Authorization` is a signed VAPID credential and must never be
+    // delivered to a client-chosen internal host (SSRF / cloud metadata).
+    validate_push_endpoint_syntax(&subscription.endpoint)?;
+    check_push_endpoint_dns(&subscription.endpoint).await?;
+
+    let payload = notification.to_json().into_bytes();
+    let encrypted = encrypt_payload(subscription, &payload)?;
+
+    let audience = VapidSigner::extract_audience(&subscription.endpoint);
+    let auth_header = vapid.create_authorization_header(&audience, 12 * 3600)?;
+
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(Duration::from_secs(10))
+        .build()
+        .map_err(|e| WebPushError::DeliveryFailed(e.to_string()))?;
+    let resp = client
+        .post(&subscription.endpoint)
+        .header("Authorization", auth_header)
+        .header("TTL", notification.ttl_secs.to_string())
+        .header("Content-Encoding", "aes128gcm")
+        .header("Content-Type", "application/octet-stream")
+        .header("Content-Length", encrypted.len().to_string())
+        .body(encrypted)
+        .send()
+        .await
+        .map_err(|e| WebPushError::DeliveryFailed(e.to_string()))?;
+
+    if resp.status().is_success() {
+        Ok(())
     } else {
-        key_pad[..key.len()].copy_from_slice(key);
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        Err(WebPushError::DeliveryFailed(format!(
+            "HTTP {status}: {body}"
+        )))
     }
-
-    let mut ipad = [0u8; 64];
-    let mut opad = [0u8; 64];
-    for i in 0..64 {
-        ipad[i] = key_pad[i] ^ 0x36;
-        opad[i] = key_pad[i] ^ 0x5c;
-    }
-
-    let mut inner_input = Vec::with_capacity(64 + message.len());
-    inner_input.extend_from_slice(&ipad);
-    inner_input.extend_from_slice(message);
-    let inner_hash = simple_sha256(&inner_input);
-
-    let mut outer_input = Vec::with_capacity(64 + 32);
-    outer_input.extend_from_slice(&opad);
-    outer_input.extend_from_slice(&inner_hash);
-    simple_sha256(&outer_input)
-}
-
-fn simple_sha256(data: &[u8]) -> [u8; 32] {
-    // Standard SHA-256 implementation
-    let mut h: [u32; 8] = [
-        0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab,
-        0x5be0cd19,
-    ];
-
-    let k: [u32; 64] = [
-        0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4,
-        0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe,
-        0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f,
-        0x4a7484aa, 0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7,
-        0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc,
-        0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b,
-        0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116,
-        0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
-        0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7,
-        0xc67178f2,
-    ];
-
-    let bit_len = (data.len() as u64) * 8;
-    let mut msg = data.to_vec();
-    msg.push(0x80);
-    while (msg.len() % 64) != 56 {
-        msg.push(0);
-    }
-    msg.extend_from_slice(&bit_len.to_be_bytes());
-
-    for chunk in msg.chunks_exact(64) {
-        let mut w = [0u32; 64];
-        for i in 0..16 {
-            w[i] = u32::from_be_bytes([
-                chunk[i * 4],
-                chunk[i * 4 + 1],
-                chunk[i * 4 + 2],
-                chunk[i * 4 + 3],
-            ]);
-        }
-        for i in 16..64 {
-            let s0 = w[i - 15].rotate_right(7) ^ w[i - 15].rotate_right(18) ^ (w[i - 15] >> 3);
-            let s1 = w[i - 2].rotate_right(17) ^ w[i - 2].rotate_right(19) ^ (w[i - 2] >> 10);
-            w[i] = w[i - 16]
-                .wrapping_add(s0)
-                .wrapping_add(w[i - 7])
-                .wrapping_add(s1);
-        }
-
-        let mut a = h[0];
-        let mut b = h[1];
-        let mut c = h[2];
-        let mut d = h[3];
-        let mut e = h[4];
-        let mut f = h[5];
-        let mut g = h[6];
-        let mut h_var = h[7];
-
-        for i in 0..64 {
-            let s1 = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25);
-            let ch = (e & f) ^ ((!e) & g);
-            let temp1 = h_var
-                .wrapping_add(s1)
-                .wrapping_add(ch)
-                .wrapping_add(k[i])
-                .wrapping_add(w[i]);
-            let s0 = a.rotate_right(2) ^ a.rotate_right(13) ^ a.rotate_right(22);
-            let maj = (a & b) ^ (a & c) ^ (b & c);
-            let temp2 = s0.wrapping_add(maj);
-
-            h_var = g;
-            g = f;
-            f = e;
-            e = d.wrapping_add(temp1);
-            d = c;
-            c = b;
-            b = a;
-            a = temp1.wrapping_add(temp2);
-        }
-
-        h[0] = h[0].wrapping_add(a);
-        h[1] = h[1].wrapping_add(b);
-        h[2] = h[2].wrapping_add(c);
-        h[3] = h[3].wrapping_add(d);
-        h[4] = h[4].wrapping_add(e);
-        h[5] = h[5].wrapping_add(f);
-        h[6] = h[6].wrapping_add(g);
-        h[7] = h[7].wrapping_add(h_var);
-    }
-
-    let mut out = [0u8; 32];
-    for (i, val) in h.iter().enumerate() {
-        out[i * 4..i * 4 + 4].copy_from_slice(&val.to_be_bytes());
-    }
-    out
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use p256::{ecdsa::VerifyingKey, EncodedPoint};
+
+    fn generate_test_vapid_keypair() -> (String, String) {
+        let signing_key = SigningKey::random(&mut OsRng);
+        let verifying_key = VerifyingKey::from(&signing_key);
+        let public_point = EncodedPoint::from(&verifying_key);
+        // p256 defaults to uncompressed (65 bytes including 0x04 tag)
+        let public_bytes = public_point.to_bytes();
+
+        let private_bytes = signing_key.to_bytes();
+        let private_b64 =
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(private_bytes.as_slice());
+        let public_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&*public_bytes);
+        (public_b64, private_b64)
+    }
+
+    fn generate_test_subscription_keys() -> (String, String) {
+        let signing_key = SigningKey::random(&mut OsRng);
+        let verifying_key = VerifyingKey::from(&signing_key);
+        let public_point = EncodedPoint::from(&verifying_key);
+        let public_bytes = public_point.to_bytes();
+
+        let mut auth = [0u8; 16];
+        OsRng.fill_bytes(&mut auth);
+
+        let p256dh_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&*public_bytes);
+        let auth_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(auth);
+        (p256dh_b64, auth_b64)
+    }
 
     #[test]
-    fn test_vapid_auth_header_generation() {
-        let signer = VapidSigner::new(
-            "mailto:admin@yav.rs",
-            "BEl62iUYgUivxIkv69yViEuiBIa",
-            "private_key_secret_bytes_12345",
-        );
+    fn test_vapid_auth_header_uses_real_es256() {
+        let (pub_b64, priv_b64) = generate_test_vapid_keypair();
+        let signer = VapidSigner::new("mailto:admin@yav.rs", &pub_b64, &priv_b64);
 
         let endpoint = "https://fcm.googleapis.com/fcm/send/sub_12345";
         let aud = VapidSigner::extract_audience(endpoint);
         assert_eq!(aud, "https://fcm.googleapis.com");
 
-        let auth_header = signer.create_authorization_header(&aud, 3600);
-        assert!(auth_header.starts_with("vapid t="));
-        assert!(auth_header.contains(", k=BEl62iUYgUivxIkv69yViEuiBIa"));
+        let auth_header = signer
+            .create_authorization_header(&aud, 3600)
+            .expect("ES256 signing must succeed with valid key");
 
-        // Test RFC 8292 ES256 signing input & header with custom signer
-        let signing_input = signer.create_es256_signing_input(&aud, 3600);
-        assert!(signing_input.contains("."));
-        let es256_header = signer
-            .create_es256_header_with_signer(&aud, 3600, |payload| {
-                assert_eq!(payload, signing_input.as_bytes());
-                Ok(vec![1, 2, 3, 4, 5])
-            })
-            .expect("es256 signing succeeds");
-        assert!(es256_header.starts_with("vapid t="));
-        assert!(es256_header.contains(", k=BEl62iUYgUivxIkv69yViEuiBIa"));
+        assert!(auth_header.starts_with("vapid t="));
+        assert!(auth_header.contains(", k="));
+
+        // The JWT must have 3 parts: header.claims.signature
+        let vapid_part = auth_header.strip_prefix("vapid t=").unwrap();
+        let (jwt, _) = vapid_part.split_once(", k=").unwrap();
+        let parts: Vec<&str> = jwt.split('.').collect();
+        assert_eq!(parts.len(), 3, "JWT must have header.claims.signature");
+
+        // Decode header and verify alg is ES256 (not HS256)
+        let header_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(parts[0])
+            .unwrap();
+        let header_json: serde_json::Value = serde_json::from_slice(&header_bytes).unwrap();
+        assert_eq!(header_json["alg"], "ES256");
+        assert_eq!(header_json["typ"], "JWT");
+
+        // Decode claims
+        let claims_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(parts[1])
+            .unwrap();
+        let claims_json: serde_json::Value = serde_json::from_slice(&claims_bytes).unwrap();
+        assert_eq!(claims_json["aud"], "https://fcm.googleapis.com");
+        assert_eq!(claims_json["sub"], "mailto:admin@yav.rs");
+
+        // Signature should be 64 bytes (raw r || s for P-256 ECDSA)
+        let sig_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(parts[2])
+            .unwrap();
+        assert_eq!(
+            sig_bytes.len(),
+            64,
+            "ES256 signature must be 64 bytes (raw r||s), got {}",
+            sig_bytes.len()
+        );
+    }
+
+    #[test]
+    fn test_vapid_rejects_invalid_private_key() {
+        let signer = VapidSigner::new("mailto:test@yav.rs", "valid_pub_b64", "too_short");
+        let result = signer.create_authorization_header("https://example.com", 3600);
+        assert_eq!(result, Err(WebPushError::InvalidPrivateKey));
     }
 
     #[test]
@@ -404,5 +738,75 @@ mod tests {
         assert!(json.contains("order-update"));
         assert!(json.contains("order_id"));
         assert!(json.contains("3600"));
+    }
+
+    #[test]
+    fn test_rfc8291_encryption_produces_valid_message() {
+        let (_pub_b64, _priv_b64) = generate_test_vapid_keypair();
+        let (sub_p256dh, sub_auth) = generate_test_subscription_keys();
+
+        let subscription = PushSubscription::new(
+            "https://fcm.googleapis.com/fcm/send/test123",
+            sub_p256dh,
+            sub_auth,
+        );
+
+        let payload = br#"{"title":"Test","body":"Hello"}"#;
+        let encrypted = encrypt_payload(&subscription, payload).expect("encryption must succeed");
+
+        // RFC 8291 message structure:
+        // salt(16) + record_size(4) + key_id_len(1) + key_id(65 uncompressed) + ciphertext
+        assert!(encrypted.len() > 16 + 4 + 1 + 65, "must have full header");
+
+        // record_size field (bytes 16..20) should match total message length
+        let record_size =
+            u32::from_be_bytes([encrypted[16], encrypted[17], encrypted[18], encrypted[19]]);
+        assert_eq!(
+            record_size as usize,
+            encrypted.len(),
+            "record_size must match total message length"
+        );
+
+        // key_id_len (byte 20) should be 65 for uncompressed P-256 public key
+        assert_eq!(
+            encrypted[20], 65,
+            "key_id_len must be 65 for uncompressed P-256"
+        );
+
+        // Ciphertext is the rest after the header
+        let header_len = 16 + 4 + 1 + 65;
+        let ciphertext = &encrypted[header_len..];
+        // The ciphertext must be longer than the payload (padding + GCM tag)
+        assert!(
+            ciphertext.len() > payload.len(),
+            "ciphertext must include padding and GCM tag"
+        );
+    }
+
+    #[test]
+    fn test_payload_too_large_rejected() {
+        let (sub_p256dh, sub_auth) = generate_test_subscription_keys();
+        let subscription = PushSubscription::new("https://example.com", sub_p256dh, sub_auth);
+
+        let huge = vec![b'x'; 5000];
+        let result = encrypt_payload(&subscription, &huge);
+        assert_eq!(result, Err(WebPushError::PayloadTooLarge));
+    }
+
+    #[test]
+    fn test_vapid_signing_input_format() {
+        let signer = VapidSigner::new("mailto:test@yav.rs", "dummy_pub", "dummy_priv");
+        let signing_input = signer.create_es256_signing_input("https://example.com", 3600);
+
+        // Must be base64url(header).base64url(claims)
+        let parts: Vec<&str> = signing_input.split('.').collect();
+        assert_eq!(parts.len(), 2);
+
+        // Decode header
+        let header_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(parts[0])
+            .unwrap();
+        let header_json: serde_json::Value = serde_json::from_slice(&header_bytes).unwrap();
+        assert_eq!(header_json["alg"], "ES256");
     }
 }

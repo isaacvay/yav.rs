@@ -21,7 +21,9 @@ yav-core.workspace = true
 yav-server.workspace = true
 yav-build.workspace = true
 yav-router.workspace = true
-yav-icons.workspace = true
+# The `yav icon` command needs a populated catalog even when the CLI is built
+# on its own (the workspace dependency sets `default-features = false`).
+yav-icons = { workspace = true, features = ["classic", "minimal", "system"] }
 clap.workspace = true
 tokio.workspace = true
 tracing.workspace = true
@@ -32,3 +34,13 @@ reqwest.workspace = true
 serde.workspace = true
 toml.workspace = true
 serde_json.workspace = true
+cargo_metadata = { workspace = true, optional = true }
+tracing-tree = { workspace = true, optional = true }
+
+[dev-dependencies]
+assert_cmd.workspace = true
+insta.workspace = true
+
+[features]
+default = []
+dx-inspect = ["dep:cargo_metadata", "dep:tracing-tree"]

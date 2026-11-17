@@ -483,7 +483,12 @@ impl PackageYav {
             return Ok(Self::from_legacy(&cfg));
         }
 
-        // No manifest found — return defaults
+        // No manifest found — return defaults but warn the user
+        tracing::warn!(
+            "No package.yavml, package.yav, or yav.toml found in {}. Using default configuration. \
+             Run 'yav init' to create a project manifest.",
+            root.display()
+        );
         Ok(Self::default())
     }
 

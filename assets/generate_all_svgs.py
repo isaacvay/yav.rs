@@ -4,7 +4,8 @@ Generate crisp, scalable vector graphics (SVG) for the 4 Yav logos in yav.rs/ass
 
 import os
 
-SVG_DIR = r"d:\deep\yav.rs\assets\svg"
+# Resolve relative to this script so the generator works on any machine.
+SVG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "svg")
 os.makedirs(SVG_DIR, exist_ok=True)
 
 # ---------------------------------------------------------------------------

@@ -270,6 +270,12 @@ fn is_yav_project_dir() -> bool {
     false
 }
 
+/// Returns the current CLI version as a fallback when crates.io is unreachable.
+/// This is clearly labeled in output so the user knows the version check was skipped.
+fn latest_yav_fallback() -> String {
+    CURRENT_CLI_VERSION.to_string()
+}
+
 /// Executes the `yav update` command.
 pub async fn run(args: &UpdateArgs) -> Result<(), Box<dyn std::error::Error>> {
     println!("\x1b[1;36m╔═══════════════════════════════════════════════════╗\x1b[0m");
@@ -324,16 +330,27 @@ pub async fn run(args: &UpdateArgs) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // 2. Project Dependencies Update
+    let mut project_errors: Vec<String> = Vec::new();
     if update_project {
         println!();
         let spinner =
             crate::spinner::Spinner::start("Checking crates.io for latest yav framework version");
-        let latest_yav = fetch_latest_crate_version("yav")
-            .await
-            .unwrap_or_else(|| CURRENT_CLI_VERSION.to_string());
-        spinner.finish_with_success(format!(
-            "Latest yav framework version: \x1b[1;32mv{latest_yav}\x1b[0m"
-        ));
+        let latest_yav = match fetch_latest_crate_version("yav").await {
+            Some(v) => {
+                spinner.finish_with_success(format!(
+                    "Latest yav framework version: \x1b[1;32mv{v}\x1b[0m"
+                ));
+                v
+            }
+            None => {
+                spinner.finish_with_warning(format!(
+                    "Could not reach crates.io to check yav framework version (current: v{CURRENT_CLI_VERSION}). Skipping project dependency update."
+                ));
+                project_errors
+                    .push("Could not reach crates.io to check latest yav version".to_string());
+                latest_yav_fallback()
+            }
+        };
 
         for manifest_path in ["package.yavml", "package.yav", "Cargo.toml"] {
             let path = Path::new(manifest_path);
@@ -376,13 +393,17 @@ pub async fn run(args: &UpdateArgs) -> Result<(), Box<dyn std::error::Error>> {
                 }
                 Ok(out) => {
                     let stderr = String::from_utf8_lossy(&out.stderr);
-                    cargo_spinner.finish_with_warning(format!(
-                        "cargo update reported a warning: {}",
+                    let msg = format!(
+                        "cargo update failed: {}",
                         stderr.lines().next().unwrap_or("unknown error")
-                    ));
+                    );
+                    cargo_spinner.finish_with_error(&msg);
+                    project_errors.push(msg);
                 }
                 Err(e) => {
-                    cargo_spinner.finish_with_warning(format!("Failed to run cargo update: {e}"));
+                    let msg = format!("Failed to run cargo update: {e}");
+                    cargo_spinner.finish_with_error(&msg);
+                    project_errors.push(msg);
                 }
             }
         }
@@ -395,8 +416,24 @@ pub async fn run(args: &UpdateArgs) -> Result<(), Box<dyn std::error::Error>> {
                     let mgr = TailwindManager::new(&cfg.tailwind.version);
                     if !mgr.is_cached() || args.force {
                         if let Ok(bin_path) = mgr.binary_path() {
-                            let _ = crate::tailwind_setup::download_with_progress(&mgr, &bin_path)
-                                .await;
+                            match crate::tailwind_setup::download_with_progress(&mgr, &bin_path)
+                                .await
+                            {
+                                Ok(()) => {
+                                    println!(
+                                        "\x1b[32m✔\x1b[0m Tailwind CSS v{} downloaded successfully",
+                                        cfg.tailwind.version
+                                    );
+                                }
+                                Err(e) => {
+                                    let msg = format!(
+                                        "Failed to download Tailwind CSS v{}: {e}",
+                                        cfg.tailwind.version
+                                    );
+                                    eprintln!("\x1b[31m{msg}\x1b[0m");
+                                    project_errors.push(msg);
+                                }
+                            }
                         }
                     } else {
                         println!(
@@ -409,8 +446,19 @@ pub async fn run(args: &UpdateArgs) -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    println!("\n\x1b[1;32m✨ Update complete!\x1b[0m");
-    Ok(())
+    if project_errors.is_empty() {
+        println!("\n\x1b[1;32m✨ Update complete!\x1b[0m");
+        Ok(())
+    } else {
+        eprintln!(
+            "\n\x1b[1;31m✗ Update completed with {} error(s):\x1b[0m",
+            project_errors.len()
+        );
+        for err in &project_errors {
+            eprintln!("  • {err}");
+        }
+        Err(format!("Update failed with {} error(s)", project_errors.len()).into())
+    }
 }
 
 #[cfg(test)]

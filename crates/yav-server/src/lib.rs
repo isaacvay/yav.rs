@@ -83,6 +83,7 @@ pub mod rebac;
 pub mod replica_pool;
 pub mod resilience;
 pub mod resumable_upload;
+pub mod roadmap;
 pub mod security_audit;
 pub mod seo;
 pub mod session;
@@ -102,6 +103,7 @@ pub mod ws;
 pub use action::{ActionValidatorFn, BoxLoaderFn, FormAction, Loader, RouteContext};
 
 // Pluggable Infrastructure Adapters (Database, Cache, Storage, LLM, Mail)
+#[allow(deprecated)] // legacy compatibility aliases are intentionally re-exported
 pub use adapters::{
     CacheAdapter, DatabaseAdapter, EmbeddedDatabaseAdapter, LlmAdapter, LocalLlmAdapter,
     MailAdapter, MemoryCacheAdapter, MemoryMailAdapter, MemoryStorageAdapter, ServiceAdapters,
@@ -120,7 +122,7 @@ pub use app::{AppRoute, BoxedHandler, IntoBoxedHandler, YavApp};
 // Authentication, JWT, OAuth2/PKCE, Password Hashing & TOTP 2FA
 pub use auth::{
     base64url_decode, base64url_encode, constant_time_eq, AuthUser, JwtClaims, JwtManager,
-    OAuthConfig, OAuthProvider, PasswordHasher, Totp,
+    JwtValidation, OAuthConfig, OAuthProvider, PasswordHasher, Totp,
 };
 
 // Billing, Exact Money, Webhook Verifier & Idempotency
@@ -153,8 +155,10 @@ pub use email::{extract_plain_text_from_node, EmailMessage, Mailer};
 
 // Dynamic Image Optimization Endpoint (`/_yav/image`)
 pub use image_opt::{
-    generate_blur_svg_data_uri, image_optimizer_handler, optimized_image_url,
-    resolve_safe_asset_path, ImageOptParams, ImageOptimizerConfig,
+    generate_blur_placeholder_from_bytes, generate_blur_svg_data_uri,
+    generate_blur_svg_document_from_bytes, image_optimizer_handler, optimize_image_bytes,
+    optimized_image_url, resolve_safe_asset_path, ImageOptParams, ImageOptRequest,
+    ImageOptimizerConfig, OutputFormat,
 };
 
 // Background Job Queue & Cron Scheduler
@@ -177,9 +181,9 @@ pub use forms::{
 
 // Response and handler helpers
 pub use handler::{
-    html_response, is_local_redirect_path, is_safe_redirect_target, json_response, not_found,
-    redirect, robots_response, safe_redirect, sitemap_response, HtmlFragment, HtmlPage,
-    HtmxRequest,
+    html_response, is_allowlisted_redirect, is_local_redirect_path, is_safe_redirect_target,
+    json_response, not_found, redirect, redirect_allowlisted, robots_response, safe_redirect,
+    sitemap_response, HtmlFragment, HtmlPage, HtmxRequest,
 };
 
 // Health checks and server telemetry
@@ -187,8 +191,10 @@ pub use health::{healthz, metrics_handler, readyz, HealthStatus, MetricsSnapshot
 
 // Middleware
 pub use middleware::{
-    apply_default_security_headers, compute_etag, etag_middleware, request_logger_middleware,
-    security_headers_middleware, CspNonce, SecurityHeadersConfig,
+    apply_default_security_headers, compute_etag, csrf_middleware, etag_matches, etag_middleware,
+    inject_nonce_into_html_response, request_logger_middleware, security_headers_middleware,
+    CspNonce, CsrfConfig, SecurityHeadersConfig, DEFAULT_CONTENT_SECURITY_POLICY,
+    FALLBACK_CONTENT_SECURITY_POLICY, STREAMING_NONCE_HEADER,
 };
 
 // OpenAPI & API documentation
@@ -267,7 +273,7 @@ pub use graphql::{
 pub use geo_ip::{extract_geo_context, GeoIpContext, TaxBreakdown, VatRule};
 
 // Micro-Frontends & Module Federation Gateway
-pub use federation::{FederationGateway, FederationRoute};
+pub use federation::{FederationGateway, FederationRoute, FederationSlot};
 
 // Pure Rust Vector Barcode & QR Code Generator
 pub use barcode::{Barcode128, QrCode};
@@ -335,6 +341,7 @@ pub use axum::{
 /// Convenience prelude module bringing common server types into scope.
 pub mod prelude {
     pub use crate::action::{ActionValidatorFn, BoxLoaderFn, FormAction, Loader, RouteContext};
+    #[allow(deprecated)] // legacy compatibility aliases are intentionally re-exported
     pub use crate::adapters::{
         CacheAdapter, DatabaseAdapter, EmbeddedDatabaseAdapter, LlmAdapter, LocalLlmAdapter,
         MailAdapter, MemoryCacheAdapter, MemoryMailAdapter, MemoryStorageAdapter, ServiceAdapters,
@@ -346,7 +353,8 @@ pub mod prelude {
     };
     pub use crate::app::{AppRoute, BoxedHandler, YavApp};
     pub use crate::auth::{
-        AuthUser, JwtClaims, JwtManager, OAuthConfig, OAuthProvider, PasswordHasher, Totp,
+        AuthUser, JwtClaims, JwtManager, JwtValidation, OAuthConfig, OAuthProvider, PasswordHasher,
+        Totp,
     };
     pub use crate::barcode::{Barcode128, QrCode};
     pub use crate::billing::{
@@ -362,7 +370,7 @@ pub mod prelude {
     pub use crate::export_docs::{
         csv_response, pdf_response, CsvBuilder, PdfDocument, PdfTableRow,
     };
-    pub use crate::federation::{FederationGateway, FederationRoute};
+    pub use crate::federation::{FederationGateway, FederationRoute, FederationSlot};
     pub use crate::flags::{
         AuditEvent, AuditTrail, FeatureFlag, FlagEngine, PolicyEngine, PolicyResource,
         PolicySubject, TenantContext,
@@ -383,7 +391,9 @@ pub mod prelude {
     };
     pub use crate::health::{healthz, readyz, ServerMetrics};
     pub use crate::image_opt::{
-        generate_blur_svg_data_uri, image_optimizer_handler, optimized_image_url,
+        generate_blur_placeholder_from_bytes, generate_blur_svg_data_uri,
+        generate_blur_svg_document_from_bytes, image_optimizer_handler, optimize_image_bytes,
+        optimized_image_url, OutputFormat,
     };
     pub use crate::image_pipeline::{
         detect_image_format, parse_image_metadata, ImageFormat, ImageMetadata, RawRgbImage,
@@ -398,7 +408,7 @@ pub mod prelude {
         JsonRpcError, JsonRpcRequest, JsonRpcResponse, McpPrompt, McpResource, McpServer,
     };
     pub use crate::metrics_dashboard::{metrics_dashboard_handler, render_metrics_dashboard_html};
-    pub use crate::middleware::SecurityHeadersConfig;
+    pub use crate::middleware::{CsrfConfig, SecurityHeadersConfig};
     pub use crate::og::{generate_og_svg, og_image_handler, og_image_url, OgImageParams};
     pub use crate::openapi::{scalar_ui_handler, swagger_ui_handler, OpenApiSpec};
     pub use crate::otel::{

@@ -10,7 +10,8 @@ import cv2
 import numpy as np
 from PIL import Image
 
-ASSETS_DIR = r"d:\deep\yav.rs\assets"
+# Resolve relative to this script so the generator works on any machine.
+ASSETS_DIR = os.path.dirname(os.path.abspath(__file__))
 PNG_DIR = os.path.join(ASSETS_DIR, "png")
 SVG_DIR = os.path.join(ASSETS_DIR, "svg")
 

@@ -49,25 +49,82 @@ pub fn mime_type_for_path(path: &Path) -> &'static str {
     }
 }
 
+fn hex_digit(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
+
+/// Decode `%XX` escapes in a URL path before any security check.
+///
+/// `Uri::path()` exposes the *encoded* path. Without decoding, `%2e%2e/secret`,
+/// `%2f`, `%00` and similar encodings bypass the parent-directory, dotfile and
+/// NUL-byte checks entirely. A stray `%` that is not a valid escape is kept
+/// literally so unusual (but legitimate) filenames still resolve.
+///
+/// Returns `None` when decoding produces invalid UTF-8 or control characters.
+pub fn decode_url_path(path: &str) -> Option<String> {
+    let bytes = path.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let (Some(hi), Some(lo)) = (hex_digit(bytes[i + 1]), hex_digit(bytes[i + 2])) {
+                out.push((hi << 4) | lo);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    let decoded = String::from_utf8(out).ok()?;
+    if decoded.chars().any(char::is_control) {
+        return None;
+    }
+    Some(decoded)
+}
+
+/// Returns `true` when a path component is a hidden file/directory that must
+/// never be served (`.env`, `.git`, `.htaccess`, …).
+///
+/// `/.well-known/` is intentionally allowed: it is required for ACME HTTP-01
+/// challenges, OAuth metadata and other standard discovery endpoints.
+fn is_forbidden_dot_component(component: &std::ffi::OsStr) -> bool {
+    let Some(name) = component.to_str() else {
+        return true;
+    };
+    name.starts_with('.') && name != "." && name != ".." && name != ".well-known"
+}
+
 /// Safely resolve a request path relative to a base directory, preventing path traversal attacks.
 ///
 /// Rejects:
-/// - Paths containing null bytes (`\0`)
-/// - Directory traversal components (`..`)
+/// - Paths containing null bytes (`\0`), including percent-encoded ones
+/// - Hidden files/dot-directories (except `.well-known`)
+/// - Directory traversal components (`..`), including percent-encoded ones
 /// - Absolute paths or drive prefixes
 /// - Symlinks escaping the base directory
 ///
 /// # Errors
 /// Returns [`YavError::BadRequest`] if any traversal attempt is detected.
 pub fn resolve_static_path(base_dir: &Path, request_path: &str) -> Result<PathBuf, YavError> {
-    if request_path.contains('\0') {
+    // Decode first, then validate: encoded traversal must not slip through.
+    let decoded = decode_url_path(request_path).ok_or_else(|| {
+        YavError::BadRequest("Invalid static file path: malformed percent-encoding".to_string())
+    })?;
+
+    if decoded.contains('\0') {
         return Err(YavError::BadRequest(
             "Invalid static file path: contains null byte".to_string(),
         ));
     }
 
     // Normalize Windows backslashes and strip leading forward slashes
-    let normalized = request_path.replace('\\', "/");
+    let normalized = decoded.replace('\\', "/");
     let trimmed = normalized.trim_start_matches('/');
 
     let rel_path = Path::new(trimmed);
@@ -84,6 +141,11 @@ pub fn resolve_static_path(base_dir: &Path, request_path: &str) -> Result<PathBu
             Component::Prefix(_) | Component::RootDir => {
                 return Err(YavError::BadRequest(
                     "Path traversal detected: absolute paths are forbidden".to_string(),
+                ));
+            }
+            Component::Normal(name) if is_forbidden_dot_component(name) => {
+                return Err(YavError::BadRequest(
+                    "Access denied: hidden files and directories are not served".to_string(),
                 ));
             }
             _ => {}
@@ -398,12 +460,14 @@ pub fn static_router(base_dir: PathBuf) -> axum::Router {
             let base = base_dir.clone();
             async move {
                 if method == Method::OPTIONS {
+                    // Never emit `Access-Control-Allow-Origin: *` from a static
+                    // file server: it lets any site read private assets. CORS is
+                    // configured explicitly at the application layer instead.
                     return (
                         StatusCode::NO_CONTENT,
                         [
                             (header::ALLOW, "GET, HEAD, OPTIONS"),
                             (header::ACCESS_CONTROL_ALLOW_METHODS, "GET, HEAD, OPTIONS"),
-                            (header::ACCESS_CONTROL_ALLOW_ORIGIN, "*"),
                         ],
                         "",
                     )
@@ -509,6 +573,45 @@ mod tests {
         let base = Path::new("/var/www/public");
         let result = resolve_static_path(base, "app\0.js");
         assert!(matches!(result, Err(YavError::BadRequest(_))));
+    }
+
+    #[test]
+    fn test_static_route_resolution_percent_encoded_traversal() {
+        let base = Path::new("/var/www/public");
+        for attack in [
+            "%2e%2e/secret.txt",
+            "images/%2e%2e/%2e%2e/etc/passwd",
+            "css%2f..%2f.env",
+            "app%00.js",
+            "%2e%2e%2F.env",
+        ] {
+            let result = resolve_static_path(base, attack);
+            assert!(
+                matches!(result, Err(YavError::BadRequest(_))),
+                "encoded attack must be rejected: {attack}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_static_route_resolution_percent_decodes_legitimate_paths() {
+        let base = Path::new("/var/www/public");
+        let resolved = resolve_static_path(base, "/assets/my%20file.png").unwrap();
+        assert_eq!(resolved, base.join("assets/my file.png"));
+    }
+
+    #[test]
+    fn test_static_route_resolution_blocks_dotfiles() {
+        let base = Path::new("/var/www/public");
+        for hidden in [".env", ".git/config", "assets/.htaccess", ".env.local"] {
+            let result = resolve_static_path(base, hidden);
+            assert!(
+                matches!(result, Err(YavError::BadRequest(_))),
+                "hidden path must be rejected: {hidden}"
+            );
+        }
+        // ACME / OAuth discovery must remain reachable.
+        assert!(resolve_static_path(base, ".well-known/acme-challenge/token").is_ok());
     }
 
     #[tokio::test]

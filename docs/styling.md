@@ -101,7 +101,7 @@ rsx! {
 
 ## Multi-Theme System (`yav-ui::theme`)
 
-In addition to simple light/dark toggling, Yav v0.1.4 features a comprehensive design system with **8 pre-built themes**:
+In addition to simple light/dark toggling, Yav v0.1.5 features a comprehensive design system with **8 pre-built themes**:
 
 | Theme Slug | Name | Accent Colors | Atmosphere |
 |------------|------|---------------|------------|
@@ -154,7 +154,7 @@ Each theme configures semantic CSS custom properties:
 
 ## Class Directives in RSX (`class:<name>={bool}`)
 
-Yav v0.1.4 supports ergonomic class directives to conditionally toggle CSS classes:
+Yav v0.1.5 supports ergonomic class directives to conditionally toggle CSS classes:
 
 ```rust
 let is_open = true;
@@ -177,7 +177,7 @@ Directives are evaluated at runtime with zero string allocation overhead when fa
 
 ## Inline `<style>` and Pseudo-Classes in RSX
 
-In Yav v0.1.4, `<style>` tags in `rsx!` support dynamic Rust variables and correctly preserve CSS pseudo-classes (like `:hover`, `:focus`, `:root[data-theme="..."]`) without inserting unwanted whitespace:
+In Yav v0.1.5, `<style>` tags in `rsx!` support dynamic Rust variables and correctly preserve CSS pseudo-classes (like `:hover`, `:focus`, `:root[data-theme="..."]`) without inserting unwanted whitespace:
 
 ```rust
 let brand_color = "#e0592f";

@@ -1,7 +1,9 @@
 //! Pure Rust Vector Barcode & QR Code Generator.
 //!
-//! Generates zero-dependency SVG vector QR Codes (ISO/IEC 18004) and Code 128 barcodes
-//! for invoices, 2FA pairing (TOTP), event tickets, and logistics tracking.
+//! Generates scannable SVG vector QR Codes (full ISO/IEC 18004 with Reed–Solomon
+//! error correction, format/version information and mask optimisation via the
+//! `qrcode` crate) and Code 128 barcodes for invoices, 2FA pairing (TOTP),
+//! event tickets, and logistics tracking.
 
 /// Code 128 Barcode Generator (Subset B).
 pub struct Barcode128;
@@ -207,6 +209,11 @@ fn get_code128_pattern(code: usize) -> [bool; 11] {
 }
 
 /// Standalone QR Code Matrix & SVG Generator.
+///
+/// Backed by the `qrcode` crate: a full ISO/IEC 18004 encoder with automatic
+/// version selection, byte/kanji/alphanumeric mode selection, Reed–Solomon error
+/// correction, format/version information and optimal mask selection. The matrix
+/// produced here is genuinely scannable by any QR reader.
 #[derive(Debug, Clone)]
 pub struct QrCode {
     size: usize,
@@ -214,65 +221,72 @@ pub struct QrCode {
 }
 
 impl QrCode {
-    /// Encode a text payload into a QR code matrix (Version 2, 25x25 grid).
+    /// Encode a text payload into a real QR code matrix (error-correction level M).
+    ///
+    /// The version (matrix size) is chosen automatically by the encoder. If the
+    /// payload exceeds the maximum QR capacity, a scannable QR encoding an
+    /// explicit error marker is returned rather than an invalid matrix; use
+    /// [`QrCode::try_encode`] to handle the error explicitly.
     pub fn encode(text: &str) -> Self {
-        let size = 25; // Version 2 QR Code
-        let mut modules = vec![false; size * size];
-
-        // 1. Draw 7x7 Finder Patterns at (0,0), (size-7, 0), (0, size-7)
-        Self::draw_finder_pattern(&mut modules, size, 0, 0);
-        Self::draw_finder_pattern(&mut modules, size, size - 7, 0);
-        Self::draw_finder_pattern(&mut modules, size, 0, size - 7);
-
-        // 2. Timing patterns (row 6 and col 6)
-        for i in 8..size - 8 {
-            let is_black = i % 2 == 0;
-            modules[6 * size + i] = is_black;
-            modules[i * size + 6] = is_black;
-        }
-
-        // 3. Dark module at (4*V + 9, 8) = (17, 8)
-        modules[17 * size + 8] = true;
-
-        // 3b. Alignment pattern for Version 2 centered at (18, 18)
-        Self::draw_alignment_pattern(&mut modules, size, 18, 18);
-
-        // 4. Populate data modules using deterministic payload hashing
-        let bytes = text.as_bytes();
-        let mut byte_idx = 0;
-        let mut bit_idx = 0;
-
-        for r in (0..size).rev() {
-            for c in (0..size).rev() {
-                // Skip finder patterns & timing patterns
-                if Self::is_function_pattern(r, c, size) {
-                    continue;
-                }
-
-                let bit = if byte_idx < bytes.len() {
-                    let b = bytes[byte_idx];
-                    let val = (b >> (7 - bit_idx)) & 1 == 1;
-                    bit_idx += 1;
-                    if bit_idx == 8 {
-                        bit_idx = 0;
-                        byte_idx += 1;
-                    }
-                    val
-                } else {
-                    // Padding pattern (alternating 0xEC and 0x11)
-                    ((r + c) % 2) == 0
-                };
-
-                // Standard mask condition: (row + col) % 2 == 0
-                let mask = (r + c) % 2 == 0;
-                modules[r * size + c] = bit ^ mask;
+        match Self::try_encode_with_ec_level(text, qrcode::EcLevel::M) {
+            Ok(code) => code,
+            Err(err) => {
+                tracing::warn!(error = %err, "QR payload too large; emitting error marker QR");
+                Self::try_encode_with_ec_level("ERROR: QR payload too large", qrcode::EcLevel::M)
+                    .unwrap_or(Self {
+                        size: 21,
+                        modules: vec![false; 21 * 21],
+                    })
             }
         }
-
-        Self { size, modules }
     }
 
-    fn draw_finder_pattern(modules: &mut [bool], size: usize, r0: usize, c0: usize) {
+    /// Encode with an explicit ISO/IEC 18004 error-correction level
+    /// (`L` 7%, `M` 15%, `Q` 25%, `H` 30%).
+    pub fn encode_with_ec_level(text: &str, ec_level: qrcode::EcLevel) -> Self {
+        Self::try_encode_with_ec_level(text, ec_level).unwrap_or_else(|err| {
+            tracing::warn!(error = %err, "QR payload too large; emitting error marker QR");
+            Self::try_encode_with_ec_level("ERROR: QR payload too large", qrcode::EcLevel::M)
+                .unwrap_or(Self {
+                    size: 21,
+                    modules: vec![false; 21 * 21],
+                })
+        })
+    }
+
+    /// Fallible QR encoding. Returns the encoder error when the payload cannot
+    /// fit into any standard QR version at the requested correction level.
+    pub fn try_encode(text: &str) -> Result<Self, String> {
+        Self::try_encode_with_ec_level(text, qrcode::EcLevel::M)
+    }
+
+    /// Fallible QR encoding with an explicit error-correction level.
+    pub fn try_encode_with_ec_level(text: &str, ec_level: qrcode::EcLevel) -> Result<Self, String> {
+        let code = qrcode::QrCode::with_error_correction_level(text, ec_level)
+            .map_err(|err| err.to_string())?;
+        let size = code.width();
+        let modules = code
+            .to_colors()
+            .into_iter()
+            .map(|color| color == qrcode::types::Color::Dark)
+            .collect::<Vec<bool>>();
+        debug_assert_eq!(modules.len(), size * size);
+        Ok(Self { size, modules })
+    }
+
+    /// Matrix width in modules (21 for Version 1, up to 177 for Version 40).
+    pub fn size(&self) -> usize {
+        self.size
+    }
+
+    /// Raw row-major module matrix (`true` = dark module).
+    pub fn modules(&self) -> &[bool] {
+        &self.modules
+    }
+
+    /// Reference 7x7 finder pattern, kept as a public helper for tests and
+    /// custom renderers.
+    pub fn draw_finder_pattern(modules: &mut [bool], size: usize, r0: usize, c0: usize) {
         for dr in 0..7 {
             for dc in 0..7 {
                 let is_border = dr == 0 || dr == 6 || dc == 0 || dc == 6;
@@ -282,7 +296,14 @@ impl QrCode {
         }
     }
 
-    fn draw_alignment_pattern(modules: &mut [bool], size: usize, center_r: usize, center_c: usize) {
+    /// Reference 5x5 alignment pattern, kept as a public helper for tests and
+    /// custom renderers.
+    pub fn draw_alignment_pattern(
+        modules: &mut [bool],
+        size: usize,
+        center_r: usize,
+        center_c: usize,
+    ) {
         for dr in 0..5 {
             for dc in 0..5 {
                 let r = center_r - 2 + dr;
@@ -294,7 +315,9 @@ impl QrCode {
         }
     }
 
-    fn is_function_pattern(r: usize, c: usize, size: usize) -> bool {
+    /// Whether a module belongs to a function pattern in a fixed-size reference
+    /// matrix. Kept as a public helper for tests and custom renderers.
+    pub fn is_function_pattern(r: usize, c: usize, size: usize) -> bool {
         // Top-left finder + separator
         if r <= 8 && c <= 8 {
             return true;
@@ -318,29 +341,42 @@ impl QrCode {
         false
     }
 
-    /// Render QR Code as standalone vector SVG string.
+    /// Render the QR matrix as a standalone, scalable SVG document.
+    ///
+    /// The `viewBox` uses module coordinates (one unit per module) so adjacent
+    /// dark modules join exactly with no sub-pixel gaps, and a four-module quiet
+    /// zone is included as required by ISO/IEC 18004. Consecutive dark modules
+    /// in a row are merged into one `<rect>` to keep the output small.
     pub fn svg(&self, pixel_size: u32) -> String {
-        let margin = 4;
+        let margin = 4usize;
         let total_modules = self.size + margin * 2;
-        let module_size = (pixel_size as f64) / (total_modules as f64);
+        let pixel_size = pixel_size.max(total_modules as u32);
 
         let mut svg = format!(
-            r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {pixel_size} {pixel_size}" width="{pixel_size}" height="{pixel_size}" shape-rendering="crispEdges">
-  <rect width="100%" height="100%" fill="#ffffff" />
+            r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {total_modules} {total_modules}" width="{pixel_size}" height="{pixel_size}" shape-rendering="crispEdges">
+  <rect width="{total_modules}" height="{total_modules}" fill="#ffffff" />
   <g fill="#000000">
 "##
         );
 
         for r in 0..self.size {
-            for c in 0..self.size {
-                if self.modules[r * self.size + c] {
-                    let x = ((c + margin) as f64) * module_size;
-                    let y = ((r + margin) as f64) * module_size;
-                    svg.push_str(&format!(
-                        r#"    <rect x="{x:.1}" y="{y:.1}" width="{module_size:.1}" height="{module_size:.1}" />
-"#
-                    ));
+            let mut c = 0;
+            while c < self.size {
+                if !self.modules[r * self.size + c] {
+                    c += 1;
+                    continue;
                 }
+                let start = c;
+                while c < self.size && self.modules[r * self.size + c] {
+                    c += 1;
+                }
+                svg.push_str(&format!(
+                    r#"    <rect x="{}" y="{}" width="{}" height="1" />
+"#,
+                    start + margin,
+                    r + margin,
+                    c - start
+                ));
             }
         }
 
@@ -366,7 +402,58 @@ mod tests {
         let qr = QrCode::encode("https://yav.rs");
         let svg = qr.svg(240);
         assert!(svg.contains("<svg"));
-        assert!(svg.contains("viewBox=\"0 0 240 240\""));
+        assert!(svg.contains("width=\"240\" height=\"240\""));
         assert!(svg.contains("<rect"));
+        // Version 1 = 21x21 + 4-module quiet zone on each side.
+        assert!(qr.size() >= 21);
+        assert_eq!(qr.modules().len(), qr.size() * qr.size());
+        assert!(svg.contains(&format!(
+            "viewBox=\"0 0 {} {}\"",
+            qr.size() + 8,
+            qr.size() + 8
+        )));
+    }
+
+    #[test]
+    fn test_qr_is_scannable_not_a_decorative_matrix() {
+        // The previous implementation always produced a fixed 25x25 matrix with
+        // no error-correction codewords. A real encoder must choose versions
+        // based on payload length and must include the three finder patterns.
+        let short = QrCode::encode("A");
+        let long = QrCode::encode(&"x".repeat(300));
+        assert!(short.size() < long.size());
+
+        assert!(short.modules()[0], "top-left finder border");
+        assert!(!short.modules()[short.size() + 1], "finder ring");
+        assert!(short.modules()[3 * short.size() + 3], "finder centre");
+        assert_ne!(
+            short.modules()[6 * short.size() + 8],
+            short.modules()[6 * short.size() + 9],
+            "timing pattern must alternate"
+        );
+    }
+
+    #[test]
+    fn test_qr_payloads_differ_and_error_correction_levels_work() {
+        let a = QrCode::encode("PAYLOAD-A");
+        let b = QrCode::encode("PAYLOAD-B");
+        assert_ne!(a.modules(), b.modules());
+
+        let h = QrCode::encode_with_ec_level("HELLO", qrcode::EcLevel::H);
+        let l = QrCode::encode_with_ec_level("HELLO", qrcode::EcLevel::L);
+        assert!(h.size() >= l.size());
+        assert!(QrCode::try_encode("valid").is_ok());
+    }
+
+    #[test]
+    fn test_svg_merges_adjacent_modules_and_keeps_quiet_zone() {
+        let qr = QrCode::encode("TEST");
+        let svg = qr.svg(200);
+        let rect_count = svg.matches("<rect").count();
+        assert!(rect_count > 1);
+        // Quiet zone: no dark module may be drawn in the first 4 module rows/cols.
+        assert!(!svg.contains("y=\"0\""));
+        assert!(!svg.contains("y=\"1\""));
+        assert!(!svg.contains("x=\"0\""));
     }
 }

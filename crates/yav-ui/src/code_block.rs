@@ -145,7 +145,7 @@ impl CodeBlock {
                 "class",
                 "rounded px-2 py-1 text-[11px] font-medium text-gray-400 hover:text-white hover:bg-gray-700/50 transition-colors",
             )
-            .attr("onclick", "var c=this.closest('.yav-codeblock').querySelector('code').cloneNode(true);c.querySelectorAll('[data-line-num]').forEach(function(n){n.remove()});navigator.clipboard.writeText(c.innerText);this.innerText='Copied!';setTimeout(()=>this.innerText='Copy',2000)")
+            .attr("data-copy-code", "")
             .child(Node::text("Copy"));
         header = header.child(Node::Element(copy_btn));
 

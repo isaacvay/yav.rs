@@ -1,11 +1,37 @@
 # Built-in Icon System
 
-Yav includes a curated, high-performance icon system with over 13,000 icons organized into 3 aesthetic families:
+Yav includes a curated, high-performance icon system with roughly 13,600 compiled icon variants (`ICON_COUNT` with `full-icons`; ~1,900 with the default Classic-only build) organized into 3 aesthetic families. The upstream source tree contains more SVG files (~22,600) because it also holds styles that are not all compiled into the catalog:
 - **Classic** (based on [Lucide Icons](https://lucide.dev/))
 - **Minimal** (based on [MynaUI Icons](https://mynaui.com/))
 - **System** (based on [Phosphor Icons](https://phosphoricons.com/))
 
 Icons are embedded as pre-optimized SVG strings directly in the binary, requiring no external font downloads, SVG sprite sheets, or network requests.
+
+## Feature gates (which icons are actually compiled)
+
+The umbrella `yav` crate enables only the **Classic** family by default. This
+keeps compile times and binary size low for applications that use the standard
+Lucide-style set (~1,900 variants). Select what you need in `Cargo.toml`:
+
+```toml
+# Default: Classic only
+yav = "0.1.6"
+
+# All three families (~13,600 variants)
+yav = { version = "0.1.6", features = ["full-icons"] }
+
+# Or mix and match
+yav = { version = "0.1.6", features = ["system-icons"] }
+```
+
+Available features: `classic-icons` (default), `minimal-icons`, `system-icons`
+and `full-icons` (= minimal + system). Slices for disabled families are empty,
+so `render_icon("minimal:bell", …)` returns the fallback SVG until the matching
+feature is enabled. `ICON_COUNT` always reports the number of **compiled**
+variants for the active feature set — it is not a constant 13,600.
+
+If you depend on `yav-icons` directly, its own defaults still enable all three
+families; use `default-features = false, features = ["classic"]` there too.
 
 ## Basic Usage
 

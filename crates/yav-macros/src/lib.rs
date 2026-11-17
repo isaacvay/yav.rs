@@ -1,4 +1,4 @@
-//! YAV Macros (v0.1.4) — Procedural macros for the Yav web framework.
+//! YAV Macros — Procedural macros for the Yav web framework.
 //!
 //! Provides:
 //! - [`rsx!`] — JSX-like declarative UI authoring with native `if`/`else`, `for` iteration, class directives, and static subtree folding
@@ -7,6 +7,18 @@
 //! - [`t!`] / [`t_strict!`] — Translation interpolation macros with XSS-safe JSON escaping
 //! - [`typed_routes!`] — Strongly-typed route constants generation
 //! - [`include_rsx!`] / [`include_yav!`] / [`include_routes!`] — External file component embedding
+//!
+//! ## About the examples below
+//!
+//! These snippets are illustrative API sketches and are marked `ignore`. A
+//! procedural-macro crate's doctest environment cannot resolve the umbrella
+//! `yav` facade without a circular dev-dependency, and the file/route macros
+//! (`include_rsx!`, `include_yav!`, `include_routes!`, `auto_routes!`,
+//! `typed_routes!`) read real `templates/*.rsx` and `src/routes/` files from
+//! the consuming project at compile time. They are therefore **not** compiled
+//! here. Real, compiled examples of `rsx!`, `#[component]`, `#[server]` and
+//! the route macros live in the `yav` crate documentation, where
+//! `use yav::prelude::*;` is available; see `docs/limitations.md`.
 
 extern crate proc_macro;
 
@@ -36,7 +48,7 @@ use syn::parse_macro_input;
 /// ```
 ///
 /// # Example
-/// ```ignore
+/// ```rust,ignore
 /// use yav::prelude::*;
 ///
 /// let page = rsx! {
@@ -58,7 +70,7 @@ pub fn rsx(input: TokenStream) -> TokenStream {
 /// Include and compile an external `.rsx` template file.
 ///
 /// # Example
-/// ```ignore
+/// ```rust,ignore
 /// let card = include_rsx!("templates/card.rsx");
 /// ```
 #[proc_macro]
@@ -73,7 +85,7 @@ pub fn include_rsx(input: TokenStream) -> TokenStream {
 /// Include and compile an external `.yav` template file.
 ///
 /// # Example
-/// ```ignore
+/// ```rust,ignore
 /// let card = include_yav!("templates/card.yav");
 /// ```
 #[proc_macro]
@@ -91,7 +103,7 @@ pub fn include_yav(input: TokenStream) -> TokenStream {
 /// imports and `pub struct Props { ... }`, followed by the RSX markup.
 ///
 /// # Example
-/// ```ignore
+/// ```rust,ignore
 /// yav_component!("components/UserCard.yav");
 ///
 /// let card = UserCard::new(Props { name: "Alice".into() });
@@ -110,7 +122,7 @@ pub fn yav_component(input: TokenStream) -> TokenStream {
 /// The function should return `yav_core::Node` and can accept props as arguments.
 ///
 /// # Example
-/// ```ignore
+/// ```rust,ignore
 /// #[component]
 /// pub fn Greeting(name: String) -> Node {
 ///     rsx! { <p>{format!("Hello, {}!", name)}</p> }
@@ -129,7 +141,7 @@ pub fn component(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// Returns a slice of `(&'static str, &'static str)` representing `(url_pattern, file_relative_path)`.
 ///
 /// # Example
-/// ```ignore
+/// ```rust,ignore
 /// let routes: &[(&str, &str)] = include_routes!("src/routes");
 /// ```
 #[proc_macro]
@@ -148,7 +160,7 @@ pub fn include_routes(input: TokenStream) -> TokenStream {
 /// `.route()` registrations onto the passed application builder.
 ///
 /// # Example
-/// ```ignore
+/// ```rust,ignore
 /// use yav::prelude::*;
 ///
 /// let app = yav::server::YavApp::new();
@@ -166,7 +178,7 @@ pub fn auto_routes(input: TokenStream) -> TokenStream {
 /// Generate type-safe route constant definitions from the routes directory.
 ///
 /// # Example
-/// ```ignore
+/// ```rust,ignore
 /// yav::typed_routes!();
 /// assert_eq!(Routes::ROOT, "/");
 /// ```
@@ -248,7 +260,7 @@ fn check_compile_time_locale_key(key_lit: &syn::LitStr) -> Result<(), syn::Error
 /// Translate an i18n key or return it as fallback if no catalog is attached.
 ///
 /// Supports optional named parameter interpolation:
-/// ```ignore
+/// ```rust,ignore
 /// let title = t!("nav.overview");
 /// let greeting = t!("welcome.user", "name" => username);
 /// ```
@@ -296,7 +308,7 @@ pub fn t(input: TokenStream) -> TokenStream {
 /// and panics at runtime if the key is missing from the active locale catalog.
 ///
 /// # Example
-/// ```ignore
+/// ```rust,ignore
 /// let title = t_strict!("nav.overview");
 /// ```
 #[proc_macro]

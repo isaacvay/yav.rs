@@ -2,6 +2,9 @@
 //!
 //! Provides static schema-based mock API responses, deterministic data fuzzing/faking,
 //! and contract stubbing for offline development and testing.
+//!
+//! `MockEndpoint::delay_ms` is a **real** simulated latency: the response path
+//! [`MockServer::handle_with_latency`] blocks for that duration before returning.
 
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
@@ -106,6 +109,8 @@ pub struct MockEndpoint {
     pub path: String,
     pub status: u16,
     pub body: Value,
+    /// Simulated response latency in milliseconds, consumed by
+    /// [`MockServer::handle_with_latency`] (and [`MockServer::handle`]).
     pub delay_ms: u64,
 }
 
@@ -126,6 +131,7 @@ impl MockEndpoint {
         }
     }
 
+    /// Set the simulated latency (milliseconds) applied by the response path.
     #[must_use]
     pub fn delay(mut self, ms: u64) -> Self {
         self.delay_ms = ms;
@@ -134,6 +140,9 @@ impl MockEndpoint {
 }
 
 /// In-memory mock server for offline contract testing and client simulation.
+///
+/// Use [`MockServer::handle_with_latency`] (or [`MockServer::handle`]) to serve a
+/// request: those methods actually consume [`MockEndpoint::delay_ms`].
 #[derive(Debug, Clone, Default)]
 pub struct MockServer {
     endpoints: Arc<RwLock<HashMap<String, MockEndpoint>>>,
@@ -147,7 +156,7 @@ impl MockServer {
         }
     }
 
-    /// Register a mock endpoint.
+    /// Register a mock endpoint (with no latency).
     pub fn mock(&self, method: &str, path: &str, status: u16, body: Value) -> &Self {
         let key = format!("{}:{}", method.to_uppercase(), path);
         let ep = MockEndpoint::new(method, path, status, body);
@@ -156,11 +165,45 @@ impl MockServer {
         self
     }
 
-    /// Resolve an incoming request against registered mocks.
+    /// Register a fully-configured [`MockEndpoint`], including its `delay_ms`.
+    ///
+    /// This is the way to install an endpoint built with [`MockEndpoint::delay`];
+    /// [`MockServer::mock`] always registers a zero-delay endpoint.
+    pub fn register(&self, endpoint: MockEndpoint) -> &Self {
+        let key = format!("{}:{}", endpoint.method.to_uppercase(), endpoint.path);
+        let mut map = self.endpoints.write().expect("Lock poisoned");
+        map.insert(key, endpoint);
+        self
+    }
+
+    /// Pure lookup against registered mocks (does **not** apply latency).
+    ///
+    /// To actually serve a request and honour `delay_ms`, use
+    /// [`MockServer::handle_with_latency`] instead.
     pub fn resolve(&self, method: &str, path: &str) -> Option<MockEndpoint> {
         let key = format!("{}:{}", method.to_uppercase(), path);
         let map = self.endpoints.read().expect("Lock poisoned");
         map.get(&key).cloned()
+    }
+
+    /// Serve a request through the mock server, applying the configured latency.
+    ///
+    /// This is the primary response path: unlike [`MockServer::resolve`] (a pure
+    /// lookup), it **consumes** [`MockEndpoint::delay_ms`] by blocking for that many
+    /// milliseconds before returning the matched endpoint. The module is deliberately
+    /// synchronous, so latency is simulated with `std::thread::sleep`; no async runtime
+    /// is required. A missing route returns `None` immediately (no sleep).
+    pub fn handle_with_latency(&self, method: &str, path: &str) -> Option<MockEndpoint> {
+        let endpoint = self.resolve(method, path)?;
+        if endpoint.delay_ms > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(endpoint.delay_ms));
+        }
+        Some(endpoint)
+    }
+
+    /// Alias for [`MockServer::handle_with_latency`], the latency-aware response path.
+    pub fn handle(&self, method: &str, path: &str) -> Option<MockEndpoint> {
+        self.handle_with_latency(method, path)
     }
 
     /// Auto-generate realistic mock data from a JSON Schema type definition.
@@ -185,7 +228,7 @@ impl MockServer {
                 let max = schema.get("maximum").and_then(Value::as_u64).unwrap_or(100);
                 json!(MockFaker::amount(seed as u64, min, max))
             }
-            "boolean" => json!(seed % 2 == 0),
+            "boolean" => json!(seed.is_multiple_of(2)),
             "array" => {
                 let default_item = json!({"type": "string"});
                 let item_schema = schema.get("items").unwrap_or(&default_item);
@@ -262,5 +305,40 @@ mod tests {
         assert!(mock_obj["email"].as_str().unwrap().contains('@'));
         let age = mock_obj["age"].as_u64().unwrap();
         assert!((18..=90).contains(&age));
+    }
+
+    #[test]
+    fn test_mock_server_delay_is_really_applied() {
+        use std::time::{Duration, Instant};
+
+        let server = MockServer::new();
+        server.register(MockEndpoint::new("GET", "/fast", 200, json!({"ok": true})));
+        server.register(MockEndpoint::new("GET", "/slow", 200, json!({"ok": true})).delay(25));
+
+        let fast_start = Instant::now();
+        let fast = server
+            .handle_with_latency("GET", "/fast")
+            .expect("fast route must resolve");
+        let fast_elapsed = fast_start.elapsed();
+
+        let slow_start = Instant::now();
+        let slow = server
+            .handle_with_latency("GET", "/slow")
+            .expect("slow route must resolve");
+        let slow_elapsed = slow_start.elapsed();
+
+        assert_eq!(fast.delay_ms, 0);
+        assert_eq!(slow.delay_ms, 25);
+        assert_eq!(slow.status, 200);
+
+        // Generous margin: sleep(25ms) must add at least ~20ms vs the zero-delay path.
+        assert!(
+            slow_elapsed >= fast_elapsed + Duration::from_millis(20),
+            "expected >= 20ms extra latency, slow={slow_elapsed:?}, fast={fast_elapsed:?}"
+        );
+
+        // `handle` is the same latency-aware path; `resolve` stays a pure lookup.
+        assert_eq!(server.handle("GET", "/slow").map(|e| e.delay_ms), Some(25));
+        assert!(server.resolve("GET", "/missing").is_none());
     }
 }

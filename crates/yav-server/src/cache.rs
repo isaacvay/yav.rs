@@ -4,7 +4,7 @@
 //! and optional `stale-while-revalidate` background regeneration.
 
 use axum::body::Bytes;
-use axum::http::{HeaderValue, StatusCode};
+use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use std::{
     collections::HashMap,
@@ -38,6 +38,19 @@ impl CachePolicy {
     }
 }
 
+/// Headers that must never be replayed verbatim from a cached response.
+/// Hop-by-hop / framing headers are rebuilt by the server for the new body.
+const NON_REPLAYABLE_HEADERS: [&str; 8] = [
+    "content-length",
+    "transfer-encoding",
+    "connection",
+    "content-encoding",
+    "cache-control",
+    "x-yav-cache",
+    "vary",
+    "set-cookie",
+];
+
 /// A cached SSR HTTP response snapshot.
 #[derive(Debug, Clone)]
 pub struct CacheEntry {
@@ -46,6 +59,9 @@ pub struct CacheEntry {
     pub body: Bytes,
     pub created_at: Instant,
     pub revalidating: bool,
+    /// Full response headers (except hop-by-hop ones) so a HIT is indistinguishable
+    /// from a MISS for redirects, custom headers, CORS, etc.
+    pub headers: HeaderMap,
 }
 
 impl CacheEntry {
@@ -54,25 +70,62 @@ impl CacheEntry {
         self.created_at.elapsed() < ttl
     }
 
+    /// Build a cache entry from a rendered response, dropping only hop-by-hop headers.
+    pub fn from_response(status: StatusCode, headers: &HeaderMap, body: Bytes) -> Self {
+        let content_type = headers
+            .get(header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("text/html; charset=utf-8")
+            .to_string();
+        let mut stored = headers.clone();
+        for name in NON_REPLAYABLE_HEADERS {
+            stored.remove(name);
+        }
+        Self {
+            status,
+            content_type,
+            body,
+            created_at: Instant::now(),
+            revalidating: false,
+            headers: stored,
+        }
+    }
+
     /// Convert this cached snapshot into an HTTP [`Response`] with cache telemetry headers.
+    ///
+    /// Cached SSR pages are always `private` and vary on `Cookie`/`Accept-Language`:
+    /// a public cache directive would allow a shared proxy to serve one user's page
+    /// to another. Responses that set cookies are never cached (see `get_cached`).
     pub fn into_response_with_status(&self, cache_status: &'static str, ttl: Duration) -> Response {
         let mut resp = (
             self.status,
-            [(axum::http::header::CONTENT_TYPE, self.content_type.as_str())],
+            [(header::CONTENT_TYPE, self.content_type.as_str())],
             self.body.clone(),
         )
             .into_response();
 
-        resp.headers_mut()
-            .insert("x-yav-cache", HeaderValue::from_static(cache_status));
+        let out_headers = resp.headers_mut();
+        for (name, value) in self.headers.iter() {
+            if !NON_REPLAYABLE_HEADERS
+                .iter()
+                .any(|skip| name.as_str() == *skip)
+            {
+                out_headers.append(name.clone(), value.clone());
+            }
+        }
+
+        out_headers.insert("x-yav-cache", HeaderValue::from_static(cache_status));
         if let Ok(cc) = HeaderValue::from_str(&format!(
-            "public, max-age={}, stale-while-revalidate={}",
+            "private, max-age={}, stale-while-revalidate={}",
             ttl.as_secs(),
             ttl.as_secs().max(60)
         )) {
-            resp.headers_mut()
-                .insert(axum::http::header::CACHE_CONTROL, cc);
+            out_headers.insert(header::CACHE_CONTROL, cc);
         }
+        out_headers.insert(
+            header::VARY,
+            HeaderValue::from_static("Cookie, Accept-Language, HX-Request"),
+        );
         resp
     }
 }
@@ -288,6 +341,7 @@ mod tests {
             body: Bytes::from_static(b"<h1>Cached</h1>"),
             created_at: Instant::now(),
             revalidating: false,
+            headers: HeaderMap::new(),
         };
         cache.insert("/docs", entry);
         assert_eq!(cache.len(), 1);
@@ -308,6 +362,7 @@ mod tests {
             body: Bytes::from_static(b"ok"),
             created_at: Instant::now(),
             revalidating: false,
+            headers: HeaderMap::new(),
         };
 
         cache.insert_with_tags("/posts/1", mk_entry(), ["posts", "post:1"]);

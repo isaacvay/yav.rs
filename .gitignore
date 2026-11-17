@@ -36,6 +36,19 @@ prompt.md
 *.db-journal
 migrations/.yav_migrations.json
 
+# Secrets — never commit environment files
+.env
+.env.*
+!.env.example
+
+# Generated promotional film: source scripts are local-only, frames/audio/video
+# are large artifacts. Nothing here is part of the published framework.
+/promo-video/
+/assets/logos/
+
+# Local agent / workspace tooling data (not part of the published framework)
+/.workbuddy-ai/
+
 # Raw upstream icon downloads (catalog is generated into src/catalog/)
 crates/yav-icons/lucide/
 crates/yav-icons/mynaui-icons-main/

@@ -21,3 +21,15 @@ serde.workspace = true
 serde_json.workspace = true
 toml.workspace = true
 tracing.workspace = true
+
+scraper = { workspace = true, optional = true }
+pulldown-cmark = { workspace = true, optional = true }
+syntect = { workspace = true, optional = true }
+
+[dev-dependencies]
+insta.workspace = true
+
+[features]
+default = []
+a11y = ["dep:scraper"]
+markdown = ["dep:pulldown-cmark", "dep:syntect"]

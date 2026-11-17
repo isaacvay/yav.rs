@@ -1,0 +1,3 @@
+# Minimum supported Rust version. Clippy uses this to avoid suggesting APIs
+# that are newer than the MSRV declared in Cargo.toml.
+msrv = "1.88.0"

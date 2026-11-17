@@ -368,10 +368,24 @@ impl Metadata {
             ));
         }
 
-        // 6. JSON-LD scripts (sanitize </ to <\/ to prevent script breakout XSS)
+        // 6. JSON-LD scripts. `serde_json` deliberately leaves `<`, `>`, `&`
+        // and JS line separators untouched; a caller-supplied `</script>` would
+        // close the element and turn the remainder into active markup. Encode
+        // them as JSON unicode escapes (valid inside JSON strings) so no `<`
+        // ever reaches the HTML parser.
         for json in self.json_ld {
             let mut script = Element::new("script").attr("type", "application/ld+json");
-            let safe_json = json.replace("</", "<\\/");
+            let mut safe_json = String::with_capacity(json.len());
+            for ch in json.chars() {
+                match ch {
+                    '<' => safe_json.push_str("\\u003c"),
+                    '>' => safe_json.push_str("\\u003e"),
+                    '&' => safe_json.push_str("\\u0026"),
+                    '\u{2028}' => safe_json.push_str("\\u2028"),
+                    '\u{2029}' => safe_json.push_str("\\u2029"),
+                    _ => safe_json.push(ch),
+                }
+            }
             script = script.child(Node::raw(safe_json));
             nodes.push(Node::Element(script));
         }
@@ -482,6 +496,9 @@ mod tests {
         let node = meta.render();
         let html = render_to_string(&node);
         assert!(!html.contains("</script><script>"));
-        assert!(html.contains(r#"<script type="application/ld+json">{"title":"Malicious <\/script><script>alert(1)<\/script>"}</script>"#));
+        assert!(!html.contains("<script>alert(1)"));
+        // `<`, `>` and `&` are encoded as JSON unicode escapes, so the HTML
+        // parser never sees a tag opening sequence inside the data block.
+        assert!(html.contains(r#"{"title":"Malicious \u003c/script\u003e\u003cscript\u003ealert(1)\u003c/script\u003e"}"#));
     }
 }

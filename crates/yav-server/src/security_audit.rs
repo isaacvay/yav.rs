@@ -1,7 +1,18 @@
-//! Automated Security Auditor, OWASP Compliance Scorer & W3C CSP Violation Reporter.
+//! Automated Security Auditor, Header Heuristic Grader & W3C CSP Violation Reporter.
 //!
-//! Provides automated inspection of HTTP security headers (HSTS, CSP, X-Frame-Options, Referrer-Policy)
-//! and a collector endpoint (`POST /_yav/csp-report`) for browser CSP violation telemetry.
+//! Provides automated inspection of HTTP security headers (HSTS, CSP, X-Frame-Options,
+//! Referrer-Policy) and a collector endpoint (`POST /_yav/csp-report`) for browser CSP
+//! violation telemetry.
+//!
+//! # Important: this is NOT an OWASP certification
+//!
+//! The `A+`→`F` grade and `0..100` score produced by [`SecurityAuditor::audit`] are a
+//! **local, hardcoded heuristic** over the presence/shape of a handful of response
+//! headers (fixed `+25`/`+15`/`+20`/… weights). They are inspired by common guidance
+//! (Mozilla Observatory, OWASP Secure Headers) but are computed entirely offline from
+//! the supplied [`HeaderMap`]: there is **no external audit, no OWASP validation, no
+//! certification, and no guarantee of real-world security**. Use it as a quick
+//! developer hint only.
 
 use axum::{
     body::Body,
@@ -106,7 +117,10 @@ pub async fn csp_report_handler(req: Request<Body>) -> Response {
     StatusCode::NO_CONTENT.into_response()
 }
 
-/// Security compliance letter grade.
+/// **Heuristic** letter grade derived from [`SecurityAuditor::audit`].
+///
+/// Despite the `A+`/`A`/`B`/`C`/`F` styling, this is **not** an OWASP certification
+/// or a compliance grade: it is a label for a local header-check score.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SecurityGrade {
     APlus,
@@ -128,24 +142,44 @@ impl SecurityGrade {
     }
 }
 
-/// Security audit assessment report.
+/// Result of a **local header heuristic**, not a security certification.
+///
+/// The field names `score`/`grade` are kept for backwards compatibility. Prefer the
+/// explicit [`SecurityAuditReport::header_heuristic_score`] accessor when the
+/// heuristic nature matters. This report does **not** assert OWASP compliance.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SecurityAuditReport {
-    /// Overall score from 0 to 100.
+    /// Heuristic score from 0 to 100 (sum of fixed header-check weights).
     pub score: u32,
-    /// Computed letter grade.
+    /// Heuristic letter grade computed from `score`. Not an OWASP grade.
     pub grade: SecurityGrade,
-    /// List of successfully satisfied security checks.
+    /// List of satisfied local header checks.
     pub passed_checks: Vec<String>,
     /// Actionable hardening recommendations.
     pub recommendations: Vec<String>,
 }
 
-/// Automated HTTP response header security compliance auditor.
+impl SecurityAuditReport {
+    /// Unambiguously named accessor for the local header-heuristic score.
+    ///
+    /// Equivalent to [`SecurityAuditReport::score`]; exists so callers can avoid the
+    /// ambiguous `score` name while preserving full serialization compatibility.
+    #[must_use]
+    pub fn header_heuristic_score(&self) -> u32 {
+        self.score
+    }
+}
+
+/// Automated HTTP response **header heuristic** auditor (not a compliance certifier).
 pub struct SecurityAuditor;
 
 impl SecurityAuditor {
-    /// Audit an HTTP header map according to Mozilla Observatory & OWASP guidelines.
+    /// Score an HTTP header map with a **local, hardcoded heuristic**.
+    ///
+    /// Inspired by Mozilla Observatory / OWASP Secure Headers guidance, but computed
+    /// entirely offline from fixed weights (`+25` CSP, `+20` HSTS, `+15` each for
+    /// nosniff / X-Frame-Options / Referrer-Policy, `+10` Permissions-Policy).
+    /// This is **not** an OWASP certification, audit, or proof of real-world security.
     pub fn audit(headers: &HeaderMap) -> SecurityAuditReport {
         let mut score: u32 = 0;
         let mut passed = Vec::new();

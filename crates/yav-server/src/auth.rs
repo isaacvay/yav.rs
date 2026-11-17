@@ -104,7 +104,7 @@ fn hex_encode(bytes: &[u8]) -> String {
 }
 
 fn hex_decode(hex: &str) -> Result<Vec<u8>, String> {
-    if hex.len() % 2 != 0 {
+    if !hex.len().is_multiple_of(2) {
         return Err("Odd hex length".to_string());
     }
     let mut out = Vec::with_capacity(hex.len() / 2);
@@ -229,21 +229,48 @@ impl PasswordHasher {
         let computed = pbkdf2_hmac_sha256(password.as_bytes(), &salt, iterations);
         constant_time_eq(&computed, &expected_dk)
     }
+
+    /// Async wrapper for [`hash_password`](Self::hash_password) that offloads
+    /// the CPU-intensive PBKDF2 derivation to a blocking thread.
+    ///
+    /// Use this from Tokio handlers instead of calling `hash_password` directly,
+    /// which would stall the async runtime for ~100 000 HMAC iterations.
+    pub async fn hash_password_async(&self, password: String) -> String {
+        let hasher = self.clone();
+        tokio::task::spawn_blocking(move || hasher.hash_password(&password))
+            .await
+            .expect("PBKDF2 hash task panicked")
+    }
+
+    /// Async wrapper for [`verify_password`](Self::verify_password) that offloads
+    /// the CPU-intensive PBKDF2 derivation to a blocking thread.
+    pub async fn verify_password_async(password: String, encoded_hash: String) -> bool {
+        tokio::task::spawn_blocking(move || Self::verify_password(&password, &encoded_hash))
+            .await
+            .unwrap_or(false)
+    }
 }
 
 fn pbkdf2_hmac_sha256(password: &[u8], salt: &[u8], iterations: u32) -> [u8; 32] {
-    // PBKDF2 single block (32-byte SHA-256 output, block index = 1 BE)
+    // PBKDF2 single block (32-byte SHA-256 output, block index = 1 BE).
+    //
+    // The expensive part of HMAC is deriving the ipad/opad key schedule from
+    // the password. Derive it **once** and reuse the MAC instance for every
+    // round via `finalize_reset()` instead of rebuilding it 100,000 times on
+    // each login (which made `/login` a cheap CPU-exhaustion vector).
+    if iterations == 0 {
+        return [0u8; 32];
+    }
     let mut prf = HmacSha256::new_from_slice(password).expect("HMAC accepts any key size");
     prf.update(salt);
     prf.update(&1u32.to_be_bytes());
-    let mut u = prf.finalize().into_bytes();
+    let mut u = prf.finalize_reset().into_bytes();
     let mut out = [0u8; 32];
     out.copy_from_slice(&u);
 
     for _ in 1..iterations {
-        let mut mac = HmacSha256::new_from_slice(password).expect("HMAC accepts any key size");
-        mac.update(&u);
-        u = mac.finalize().into_bytes();
+        prf.update(&u);
+        u = prf.finalize_reset().into_bytes();
         for (o, &b) in out.iter_mut().zip(u.iter()) {
             *o ^= b;
         }
@@ -264,6 +291,16 @@ pub struct JwtClaims {
     pub exp: u64,
     /// Issued-at timestamp (Unix epoch seconds).
     pub iat: u64,
+    /// Not-before timestamp (Unix epoch seconds). Tokens must not be accepted
+    /// before this instant (RFC 7519 `nbf`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nbf: Option<u64>,
+    /// Issuer (RFC 7519 `iss`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub iss: Option<String>,
+    /// Intended audience (RFC 7519 `aud`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub aud: Option<String>,
     /// Assigned RBAC roles (e.g. `["admin", "editor"]`).
     #[serde(default)]
     pub roles: Vec<String>,
@@ -283,9 +320,33 @@ impl JwtClaims {
             sub: sub.into(),
             iat: now,
             exp: now.saturating_add(ttl_secs),
+            nbf: None,
+            iss: None,
+            aud: None,
             roles: Vec::new(),
             extra: BTreeMap::new(),
         }
+    }
+
+    /// Set the `nbf` (not-before) claim.
+    #[must_use]
+    pub fn with_not_before(mut self, unix_seconds: u64) -> Self {
+        self.nbf = Some(unix_seconds);
+        self
+    }
+
+    /// Set the `iss` (issuer) claim.
+    #[must_use]
+    pub fn with_issuer(mut self, issuer: impl Into<String>) -> Self {
+        self.iss = Some(issuer.into());
+        self
+    }
+
+    /// Set the `aud` (audience) claim.
+    #[must_use]
+    pub fn with_audience(mut self, audience: impl Into<String>) -> Self {
+        self.aud = Some(audience.into());
+        self
     }
 
     /// Attach a role to these claims.
@@ -309,6 +370,54 @@ impl JwtClaims {
             .map(|d| d.as_secs())
             .unwrap_or(0);
         now > self.exp
+    }
+}
+
+/// Claim validation policy applied by [`JwtManager::verify_with_config`].
+///
+/// By default only the signature, `alg` and `exp` are checked, which keeps
+/// [`JwtManager::verify`] backwards compatible. Production deployments should
+/// require an issuer and an audience so that tokens minted for one service
+/// cannot be replayed against another.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct JwtValidation {
+    /// Required `iss` value. `None` = do not check the issuer.
+    pub issuer: Option<String>,
+    /// Required `aud` value. `None` = do not check the audience.
+    pub audience: Option<String>,
+    /// Clock-skew tolerance (seconds) applied to `exp`, `nbf` and `iat`.
+    pub leeway_secs: u64,
+    /// Reject tokens whose `iat` lies in the future (beyond `leeway_secs`).
+    pub reject_future_iat: bool,
+}
+
+impl JwtValidation {
+    /// Require a specific issuer.
+    #[must_use]
+    pub fn require_issuer(mut self, issuer: impl Into<String>) -> Self {
+        self.issuer = Some(issuer.into());
+        self
+    }
+
+    /// Require a specific audience.
+    #[must_use]
+    pub fn require_audience(mut self, audience: impl Into<String>) -> Self {
+        self.audience = Some(audience.into());
+        self
+    }
+
+    /// Allow `secs` of clock skew when checking time-based claims.
+    #[must_use]
+    pub fn leeway(mut self, secs: u64) -> Self {
+        self.leeway_secs = secs;
+        self
+    }
+
+    /// Reject tokens issued in the future.
+    #[must_use]
+    pub fn reject_future_iat(mut self) -> Self {
+        self.reject_future_iat = true;
+        self
     }
 }
 
@@ -340,7 +449,43 @@ impl JwtManager {
     }
 
     /// Verify a compact JWT string's signature and expiration, returning the decoded [`JwtClaims`].
+    ///
+    /// This is the backwards-compatible entry point: it validates `alg`,
+    /// signature and `exp` (and always enforces `nbf` when the claim is
+    /// present). Use [`JwtManager::verify_with_config`] to additionally
+    /// require `iss`, `aud`, reject future `iat` and allow clock skew.
     pub fn verify(&self, token: &str) -> Result<JwtClaims, String> {
+        self.verify_at(
+            token,
+            &JwtValidation::default(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0),
+        )
+    }
+
+    /// Verify a token against an explicit [`JwtValidation`] policy.
+    pub fn verify_with_config(
+        &self,
+        token: &str,
+        config: &JwtValidation,
+    ) -> Result<JwtClaims, String> {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        self.verify_at(token, config, now)
+    }
+
+    /// Verify a token at an explicit instant (deterministic; useful for tests
+    /// and for replaying tokens in audit tooling).
+    pub fn verify_at(
+        &self,
+        token: &str,
+        config: &JwtValidation,
+        now: u64,
+    ) -> Result<JwtClaims, String> {
         let parts: Vec<&str> = token.split('.').collect();
         if parts.len() != 3 {
             return Err("Invalid JWT structure: expected 3 segments".to_string());
@@ -353,6 +498,7 @@ impl JwtManager {
         }
         let header: JwtHeader = serde_json::from_slice(&header_bytes)
             .map_err(|e| format!("Invalid JWT header: {e}"))?;
+        // Reject algorithm confusion before doing any other work.
         if header.alg != "HS256" {
             return Err(format!("Unsupported JWT algorithm: {}", header.alg));
         }
@@ -369,8 +515,29 @@ impl JwtManager {
         let claims: JwtClaims = serde_json::from_slice(&payload_bytes)
             .map_err(|e| format!("Invalid JWT claims: {e}"))?;
 
-        if claims.is_expired() {
+        let leeway = config.leeway_secs;
+        if now > claims.exp.saturating_add(leeway) {
             return Err("JWT has expired".to_string());
+        }
+        if let Some(nbf) = claims.nbf {
+            if now.saturating_add(leeway) < nbf {
+                return Err("JWT is not yet valid (nbf)".to_string());
+            }
+        }
+        if config.reject_future_iat && claims.iat > now.saturating_add(leeway) {
+            return Err("JWT issued in the future (iat)".to_string());
+        }
+        if let Some(expected_iss) = &config.issuer {
+            match &claims.iss {
+                Some(actual) if actual == expected_iss => {}
+                _ => return Err("JWT issuer mismatch".to_string()),
+            }
+        }
+        if let Some(expected_aud) = &config.audience {
+            match &claims.aud {
+                Some(actual) if actual == expected_aud => {}
+                _ => return Err("JWT audience mismatch".to_string()),
+            }
         }
         Ok(claims)
     }
@@ -718,6 +885,173 @@ mod tests {
             user.require_role("superadmin"),
             Err(axum::http::StatusCode::FORBIDDEN)
         );
+    }
+
+    /// Independent reference implementation (rebuilds the HMAC key each round)
+    /// used to prove the optimised `finalize_reset()` path is byte-identical.
+    fn reference_pbkdf2(password: &[u8], salt: &[u8], iterations: u32) -> [u8; 32] {
+        let mut prf = HmacSha256::new_from_slice(password).unwrap();
+        prf.update(salt);
+        prf.update(&1u32.to_be_bytes());
+        let mut u = prf.finalize().into_bytes();
+        let mut out = [0u8; 32];
+        out.copy_from_slice(&u);
+        for _ in 1..iterations {
+            let mut mac = HmacSha256::new_from_slice(password).unwrap();
+            mac.update(&u);
+            u = mac.finalize().into_bytes();
+            for (o, &b) in out.iter_mut().zip(u.iter()) {
+                *o ^= b;
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn test_pbkdf2_key_reuse_matches_reference() {
+        for (pw, salt, iters) in [
+            (&b"password"[..], &b"salt"[..], 37u32),
+            (&b""[..], &b""[..], 1u32),
+            (&b"a-much-longer-password-value"[..], &b"NaCl"[..], 101u32),
+        ] {
+            assert_eq!(
+                pbkdf2_hmac_sha256(pw, salt, iters),
+                reference_pbkdf2(pw, salt, iters),
+                "mismatch for {iters} iterations"
+            );
+        }
+    }
+
+    #[test]
+    fn test_jwt_nbf_is_enforced() {
+        let jwt = JwtManager::new("secret");
+        let now = 1_700_000_000u64;
+        let mut claims = JwtClaims {
+            sub: "user_42".into(),
+            iat: now,
+            exp: now + 3600,
+            nbf: None,
+            iss: None,
+            aud: None,
+            roles: Vec::new(),
+            extra: BTreeMap::new(),
+        }
+        .with_not_before(now + 100);
+        let token = jwt.sign(&claims).unwrap();
+
+        assert!(jwt
+            .verify_at(&token, &JwtValidation::default(), now)
+            .unwrap_err()
+            .contains("nbf"));
+        assert!(jwt
+            .verify_at(&token, &JwtValidation::default(), now + 101)
+            .is_ok());
+
+        // A token with no nbf remains valid (backwards compatible).
+        claims.nbf = None;
+        let plain = jwt.sign(&claims).unwrap();
+        assert!(jwt
+            .verify_at(&plain, &JwtValidation::default(), now)
+            .is_ok());
+    }
+
+    #[test]
+    fn test_jwt_issuer_and_audience_validation() {
+        let jwt = JwtManager::new("secret");
+        let now = 1_700_000_000u64;
+        let claims = JwtClaims {
+            sub: "user_42".into(),
+            iat: now,
+            exp: now + 3600,
+            nbf: None,
+            iss: Some("https://issuer.example".into()),
+            aud: Some("yav-web".into()),
+            roles: Vec::new(),
+            extra: BTreeMap::new(),
+        };
+        let token = jwt.sign(&claims).unwrap();
+
+        let strict = JwtValidation::default()
+            .require_issuer("https://issuer.example")
+            .require_audience("yav-web");
+        assert!(jwt.verify_at(&token, &strict, now).is_ok());
+
+        let wrong_iss = JwtValidation::default().require_issuer("https://evil.example");
+        assert_eq!(
+            jwt.verify_at(&token, &wrong_iss, now).unwrap_err(),
+            "JWT issuer mismatch"
+        );
+
+        let wrong_aud = JwtValidation::default().require_audience("other-service");
+        assert_eq!(
+            jwt.verify_at(&token, &wrong_aud, now).unwrap_err(),
+            "JWT audience mismatch"
+        );
+
+        // A token with no iss/aud must fail a policy that requires them.
+        let bare = JwtClaims {
+            sub: "user_42".into(),
+            iat: now,
+            exp: now + 3600,
+            nbf: None,
+            iss: None,
+            aud: None,
+            roles: Vec::new(),
+            extra: BTreeMap::new(),
+        };
+        let bare_token = jwt.sign(&bare).unwrap();
+        assert!(jwt.verify_at(&bare_token, &strict, now).is_err());
+        // ...but a freshly minted token with no iss/aud still passes the
+        // legacy `verify` path, which only enforces alg/signature/exp.
+        let fresh = JwtClaims::new("user_42", 3600);
+        let fresh_token = jwt.sign(&fresh).unwrap();
+        assert!(jwt.verify(&fresh_token).is_ok());
+    }
+
+    #[test]
+    fn test_jwt_leeway_and_future_iat() {
+        let jwt = JwtManager::new("secret");
+        let now = 1_700_000_000u64;
+        let claims = JwtClaims {
+            sub: "user_42".into(),
+            iat: now + 500,
+            exp: now - 5,
+            nbf: None,
+            iss: None,
+            aud: None,
+            roles: Vec::new(),
+            extra: BTreeMap::new(),
+        };
+        let token = jwt.sign(&claims).unwrap();
+
+        assert!(jwt
+            .verify_at(&token, &JwtValidation::default(), now)
+            .unwrap_err()
+            .contains("expired"));
+        assert!(jwt
+            .verify_at(&token, &JwtValidation::default().leeway(10), now)
+            .is_ok());
+        assert_eq!(
+            jwt.verify_at(
+                &token,
+                &JwtValidation::default().leeway(10).reject_future_iat(),
+                now
+            )
+            .unwrap_err(),
+            "JWT issued in the future (iat)"
+        );
+    }
+
+    #[test]
+    fn test_jwt_algorithm_confusion_rejected() {
+        let jwt = JwtManager::new("secret");
+        let header = base64url_encode(br#"{"alg":"none","typ":"JWT"}"#);
+        let payload = base64url_encode(br#"{"sub":"admin","exp":9999999999,"iat":0}"#);
+        let forged = format!("{header}.{payload}.");
+        assert!(jwt
+            .verify(&forged)
+            .unwrap_err()
+            .contains("Unsupported JWT algorithm"));
     }
 
     #[test]

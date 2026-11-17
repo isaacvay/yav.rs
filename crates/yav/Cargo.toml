@@ -22,10 +22,42 @@ yav-icons = { workspace = true, default-features = false }
 yav-build.workspace = true
 
 [features]
-default = ["classic-icons", "minimal-icons", "system-icons"]
+# Only the Classic (Lucide) family is compiled by default. This keeps builds
+# fast for the common case; `full-icons` restores the whole ~13,600-variant
+# catalog. Features are additive, so downstream crates can opt into any mix.
+default = ["classic-icons"]
 classic-icons = ["yav-icons/classic"]
 minimal-icons = ["yav-icons/minimal"]
 system-icons = ["yav-icons/system"]
+full-icons = ["classic-icons", "minimal-icons", "system-icons"]
+icon-minify = ["yav-icons/icon-minify"]
+
+# Opt-in roadmap integrations. All off by default: enabling one of these adds
+# its dependency, but never activates a service or changes default behaviour.
+# The `roadmap` module lives in yav-server; a11y/markdown live in yav-build and
+# i18n-advanced in yav-core, so they are forwarded to their owning crate.
+sqlite = ["yav-server/sqlite"]
+postgres = ["yav-server/postgres"]
+durable-jobs = ["yav-server/durable-jobs"]
+tagged-cache = ["yav-server/tagged-cache"]
+validation = ["yav-server/validation"]
+schema-codegen = ["yav-server/schema-codegen"]
+smtp = ["yav-server/smtp"]
+argon2 = ["yav-server/argon2"]
+oauth = ["yav-server/oauth"]
+otel-sdk = ["yav-server/otel-sdk"]
+object-storage = ["yav-server/object-storage"]
+http-llm = ["yav-server/http-llm"]
+a11y = ["yav-build/a11y"]
+markdown = ["yav-build/markdown"]
+i18n-advanced = ["yav-core/i18n-advanced"]
+all-integrations = [
+    "yav-server/all-integrations",
+    "a11y",
+    "markdown",
+    "i18n-advanced",
+    "icon-minify",
+]
 
 [package.metadata.docs.rs]
 all-features = true
@@ -34,3 +66,6 @@ rustdoc-args = ["--cfg", "docsrs"]
 [dev-dependencies]
 tokio.workspace = true
 serde_json.workspace = true
+p256.workspace = true
+base64.workspace = true
+rand_core.workspace = true

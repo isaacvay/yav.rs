@@ -6,12 +6,17 @@ The `yav` CLI is the developer toolbelt for creating, developing, scaffolding, a
 
 ## Commands Reference
 
-### 1. `yav new <name>`
+### 1. `yav new <name> [--check]`
 Scaffolds a new Yav web project with Tailwind CSS, file-based routes, and recommended configuration.
+
+Without `--check`, the command reports the project as created but **not compiled**. Pass `--check` to run `cargo check` inside the generated directory before reporting success; it exits non-zero if the project does not build. Verification is opt-in because a fresh scaffold resolves its `yav` dependency from the registry and may need network access.
 
 ```bash
 yav new mon-application
 cd mon-application
+
+# or verify the generated project immediately:
+yav new mon-application --check
 ```
 
 ---
@@ -156,7 +161,7 @@ yav icon info home
 
 ---
 
-### 8. `yav docker`
+### 9. `yav docker`
 Generates an ultra-optimized, multi-stage production Docker deployment:
 
 ```bash
@@ -171,7 +176,7 @@ yav docker --force
 
 ---
 
-### 9. `yav sitemap`
+### 10. `yav sitemap`
 Scans your `src/routes/` directory to generate standard `public/sitemap.xml` and `public/robots.txt` files:
 
 ```bash
@@ -179,7 +184,7 @@ Scans your `src/routes/` directory to generate standard `public/sitemap.xml` and
 yav sitemap --base-url https://example.com
 ```
 
-### 10. `yav db`
+### 11. `yav db`
 Manages database initialization, schema versioning, and migration execution for SQLite and PostgreSQL:
 
 ```bash
@@ -208,7 +213,7 @@ yav db seed
 
 ---
 
-### 11. `yav codegen`
+### 12. `yav codegen`
 Generates client-side TypeScript interfaces from Rust models/DTOs or exports OpenAPI 3.1 specifications:
 
 ```bash
@@ -226,7 +231,7 @@ yav codegen --openapi --output docs/api.json
 
 ---
 
-### 12. `yav analyze`
+### 13. `yav analyze`
 Audits your Yav application performance, bundle sizes, static assets, and readiness scorecard:
 
 ```bash
@@ -238,7 +243,7 @@ yav analyze
 
 ---
 
-### 13. `yav pwa`
+### 14. `yav pwa`
 Scaffolds a complete Progressive Web App (PWA) setup with installable app manifests, offline caching, and fallback pages:
 
 ```bash
@@ -253,16 +258,33 @@ yav pwa --force
 
 ---
 
-### 14. `yav test`
-Runs the workspace test suite across all modules.
+### 15. `yav test`
+Runs the test suite across the workspace or a specific package, with full argument passthrough to `cargo test`:
 
 ```bash
+# Run all tests in the workspace
 yav test
+
+# Run tests matching a specific name filter
+yav test my_test_name
+
+# Target a specific crate / package
+yav test -p yav-core
+yav test -p yav-server
+
+# Pass flags directly to the test binary (e.g. show stdout output, run ignored tests)
+yav test -- --nocapture
+yav test -- --ignored
+
+# Combine filters and test binary flags
+yav test -p yav-core my_test -- --nocapture
 ```
+* **Seamless Argument Forwarding**: All trailing arguments and options are forwarded directly to `cargo test`, supporting package selectors (`-p`), test name filters, lib/bin/test targets (`--lib`, `--test <name>`), and runtime flags (`-- --nocapture`).
+* **Visual Status Banner**: Prints formatted summary headers and clear success/failure indicators.
 
 ---
 
-### 15. `yav run <script>`
+### 16. `yav run <script>`
 Executes a custom script defined in the `[scripts]` section of `package.yavml` (similar to `npm run <script>`):
 
 ```bash
@@ -272,7 +294,7 @@ yav run lint
 
 ---
 
-### 16. `yav deploy <target>`
+### 17. `yav deploy <target>`
 Scaffolds production deployment configurations for cloud platforms and Linux servers:
 
 ```bash
@@ -284,7 +306,7 @@ yav deploy systemd  # Generates hardened <app>.service unit for Linux Systemd
 
 ---
 
-### 17. `yav ext`
+### 18. `yav ext`
 Installs or checks the status of the official Yav syntax highlighting and snippets extension across VS Code, Cursor, VS Code Insiders, and VSCodium:
 
 ```bash
@@ -294,7 +316,7 @@ yav ext status
 
 ---
 
-### 18. `yav doctor`
+### 19. `yav doctor`
 Diagnoses your local environment, Rust toolchains, project health, and runtime dependencies:
 - **Rust Toolchain**: Verifies `rustc` and `cargo` versions in `PATH`.
 - **Manifest Health**: Validates `package.yavml` structure, package name, version, and server bindings.
@@ -309,7 +331,7 @@ yav doctor
 
 ---
 
-### 19. `yav routes`
+### 20. `yav routes`
 Inspects all file-based routes discovered under `src/routes/` and displays a formatted table in the terminal:
 - **HTTP Methods**: Automatically detects `GET`, `POST`, `PUT`, `DELETE` handlers defined in each route file.
 - **URL Pattern**: Displays the final URL route pattern, including dynamic segments (`/users/:id`, `/docs/*slug`).
@@ -322,7 +344,7 @@ yav routes
 
 ---
 
-### 20. `yav export`
+### 21. `yav export`
 Performs **Static Site Generation (SSG)**, crawling and rendering all static routes into standalone `.html` files in `dist/` (or a custom directory):
 - **Pre-renders and minifies all static pages**: Generates directory-structured `index.html` files (e.g. `dist/about/index.html` for `/about`) with automated whitespace and comment minification via `yav_build::minify_html`.
 - **Asset Bundling & Minification**: Copies and minifies all CSS and HTML static assets from `public/` into `dist/`.

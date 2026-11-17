@@ -97,7 +97,7 @@ rsx! {
 ```
 
 #### E. Native `if` and `for` Control Flow (No Closure Hack Required)
-In Yav v0.1.4, you write standard Rust control flow directly inside `rsx!` without needing curly braces or `.iter().map(...)` closures:
+In Yav v0.1.5, you write standard Rust control flow directly inside `rsx!` without needing curly braces or `.iter().map(...)` closures:
 
 ```rust
 let is_logged_in = true;
@@ -1302,7 +1302,7 @@ use yav::ui::terminal::{Terminal, AnsiSpan};
 let terminal = Terminal::new("main-shell")
     .title("zsh — production-cluster-01")
     .prompt("root@yav-node-01:~$ ")
-    .line("Initializing Yav kernel v0.1.4...")
+    .line("Initializing Yav kernel v0.1.5...")
     .line("\x1b[32m[OK]\x1b[0m Axum HTTP runtime bound to 0.0.0.0:3000")
     .line("\x1b[33m[WARN]\x1b[0m Storage cache sync pending")
     .height("450px");
@@ -1435,7 +1435,7 @@ rsx! {
 
 ## 40. Interactive Org Chart & Family Tree (`<OrgChart />`)
 
-The [`OrgChart`](file:///d:/deep/yav.rs/crates/yav-ui/src/org_chart.rs) component renders interactive organization charts and family trees with orthogonal SVG connectors, department pills, and avatars:
+The [`OrgChart`](../crates/yav-ui/src/org_chart.rs) component renders interactive organization charts and family trees with orthogonal SVG connectors, department pills, and avatars:
 
 ```rust
 use yav::prelude::*;
@@ -1458,7 +1458,7 @@ rsx! {
 
 ## 41. Interactive Audio Waveform Visualizer (`<AudioWaveform />`)
 
-The [`AudioWaveform`](file:///d:/deep/yav.rs/crates/yav-ui/src/audio_waveform.rs) component displays audio amplitude peaks with dual-tone progress clipping, playhead scrubbing, and timecode stamps:
+The [`AudioWaveform`](../crates/yav-ui/src/audio_waveform.rs) component displays audio amplitude peaks with dual-tone progress clipping, playhead scrubbing, and timecode stamps:
 
 ```rust
 use yav::prelude::*;
@@ -1482,7 +1482,7 @@ rsx! {
 
 ## 42. Native OpenTelemetry Logtail Inspector (`<LogViewer />`)
 
-The [`LogViewer`](file:///d:/deep/yav.rs/crates/yav-ui/src/log_viewer.rs) component provides a terminal-grade real-time log inspector with level filtering (`INFO`, `WARN`, `ERROR`), search queries, and distributed trace ID deep-links:
+The [`LogViewer`](../crates/yav-ui/src/log_viewer.rs) component provides a terminal-grade real-time log inspector with level filtering (`INFO`, `WARN`, `ERROR`), search queries, and distributed trace ID deep-links:
 
 ```rust
 use yav::prelude::*;
@@ -1506,7 +1506,7 @@ rsx! {
 
 ## 43. Collaborative Whiteboard & Drawing Canvas (`<Whiteboard />`)
 
-The [`Whiteboard`](file:///d:/deep/yav.rs/crates/yav-ui/src/whiteboard.rs) component provides a vector drawing canvas with Chaikin line smoothing, shapes, sticky notes, and multiplayer presence support:
+The [`Whiteboard`](../crates/yav-ui/src/whiteboard.rs) component provides a vector drawing canvas with Chaikin line smoothing, shapes, sticky notes, and multiplayer presence support:
 
 ```rust
 use yav::prelude::*;
@@ -1529,7 +1529,7 @@ rsx! {
 
 ## 44. Natural Language AI Filter Bar (`<AiFilterBar />`)
 
-The [`AiFilterBar`](file:///d:/deep/yav.rs/crates/yav-ui/src/ai_filter_bar.rs) component translates natural language text into structured criteria chips and dispatches filters to a target `<DataGrid />` or `<Table />`:
+The [`AiFilterBar`](../crates/yav-ui/src/ai_filter_bar.rs) component translates natural language text into structured criteria chips and dispatches filters to a target `<DataGrid />` or `<Table />`:
 
 ```rust
 use yav::prelude::*;
@@ -1552,7 +1552,7 @@ rsx! {
 
 ## 45. Zero-Overhead WebAssembly Client Islands (`<WasmIsland />`)
 
-The [`WasmIsland`](file:///d:/deep/yav.rs/crates/yav-core/src/wasm.rs) component loads and hydrates compiled WebAssembly bytecode modules directly into DOM containers with zero JS bundler dependencies:
+The [`WasmIsland`](../crates/yav-core/src/wasm.rs) component loads and hydrates compiled WebAssembly bytecode modules directly into DOM containers with zero JS bundler dependencies:
 
 ```rust
 use yav::prelude::*;
@@ -1572,7 +1572,7 @@ rsx! {
 
 ## 46. Slippy Tile Vector Map & Geospatial Data Visualizer (`<VectorMap />`)
 
-The [`VectorMap`](file:///d:/deep/yav.rs/crates/yav-ui/src/vector_map.rs) component renders interactive Web Mercator projection maps with GPS pin clusters, choropleth country/state polygon boundaries, and hover popups without external JS tile libraries:
+The [`VectorMap`](../crates/yav-ui/src/vector_map.rs) component renders interactive Web Mercator projection maps with GPS pin clusters, choropleth country/state polygon boundaries, and hover popups without external JS tile libraries:
 
 ```rust
 use yav::prelude::*;
@@ -1598,7 +1598,7 @@ rsx! {
 
 ## 47. Interactive Gantt Chart & Project Roadmap (`<GanttChart />`)
 
-The [`GanttChart`](file:///d:/deep/yav.rs/crates/yav-ui/src/gantt_chart.rs) component visualizes schedules, dependencies, milestone diamonds, and completion percentages in pure SVG and Tailwind CSS:
+The [`GanttChart`](../crates/yav-ui/src/gantt_chart.rs) component visualizes schedules, dependencies, milestone diamonds, and completion percentages in pure SVG and Tailwind CSS:
 
 ```rust
 use yav::prelude::*;
@@ -1621,7 +1621,7 @@ rsx! {
 
 ## 48. Vector PDF Document Reader & Annotator (`<PdfViewer />`)
 
-The [`PdfViewer`](file:///d:/deep/yav.rs/crates/yav-ui/src/pdf_viewer.rs) component embeds PDF documents with zero external JavaScript dependencies, offering page navigation, zoom toolbars, and SVG annotation highlights/sticky notes:
+The [`PdfViewer`](../crates/yav-ui/src/pdf_viewer.rs) component embeds PDF documents with zero external JavaScript dependencies, offering page navigation, zoom toolbars, and SVG annotation highlights/sticky notes:
 
 ```rust
 use yav::prelude::*;
@@ -1645,7 +1645,7 @@ rsx! {
 
 ## 49. Spotlight Guided Tour & Onboarding Walkthrough (`<SpotlightTour />`)
 
-The [`SpotlightTour`](file:///d:/deep/yav.rs/crates/yav-ui/src/spotlight_tour.rs) component provides step-by-step product walkthroughs with dynamic dark cutout overlays, element spotlighting, keyboard shortcuts (`Esc`, arrows), and local storage persistence:
+The [`SpotlightTour`](../crates/yav-ui/src/spotlight_tour.rs) component provides step-by-step product walkthroughs with dynamic dark cutout overlays, element spotlighting, keyboard shortcuts (`Esc`, arrows), and local storage persistence:
 
 ```rust
 use yav::prelude::*;
@@ -1683,7 +1683,7 @@ rsx! {
 
 ## 50. Voice Memo & Live Audio Recorder (`<MediaRecorder />`)
 
-The [`MediaRecorder`](file:///d:/deep/yav.rs/crates/yav-ui/src/media_recorder.rs) component provides modern browser audio recording with animated frequency waveforms, timer indicators, playback preview, and direct upload API bindings:
+The [`MediaRecorder`](../crates/yav-ui/src/media_recorder.rs) component provides modern browser audio recording with animated frequency waveforms, timer indicators, playback preview, and direct upload API bindings:
 
 ```rust
 use yav::prelude::*;
@@ -1705,7 +1705,7 @@ rsx! {
 
 ## 51. Pure-Rust 3D Wireframe & Mesh Visualizer (`<ModelViewer3D />`)
 
-The [`ModelViewer3D`](file:///d:/deep/yav.rs/crates/yav-ui/src/model_viewer_3d.rs) component provides pure-Rust 3D linear algebra (Euler rotations, perspective projections) rendered directly into interactive SVG wireframes and shaded polygon meshes with mouse-drag orbit:
+The [`ModelViewer3D`](../crates/yav-ui/src/model_viewer_3d.rs) component provides pure-Rust 3D linear algebra (Euler rotations, perspective projections) rendered directly into interactive SVG wireframes and shaded polygon meshes with mouse-drag orbit:
 
 ```rust
 use yav::prelude::*;
@@ -1730,7 +1730,7 @@ rsx! {
 
 ## 52. Interactive Code Sandbox & REPL (`<CodePlayground />`)
 
-The [`CodePlayground`](file:///d:/deep/yav.rs/crates/yav-ui/src/code_playground.rs) component offers a split-pane live code editor with synchronized line numbers, tab indentation, copy button, Ctrl+Enter hotkey runner, and console output/remote API sandbox integration:
+The [`CodePlayground`](../crates/yav-ui/src/code_playground.rs) component offers a split-pane live code editor with synchronized line numbers, tab indentation, copy button, Ctrl+Enter hotkey runner, and console output/remote API sandbox integration:
 
 ```rust
 use yav::prelude::*;
@@ -1753,7 +1753,7 @@ rsx! {
 
 ## 53. JSON / YAML Tree Explorer & Collapsible Viewer (`<JsonTreeViewer />`)
 
-The [`JsonTreeViewer`](file:///d:/deep/yav.rs/crates/yav-ui/src/json_tree.rs) component displays hierarchical, syntax-highlighted JSON data with collapsible nodes, copy-to-clipboard for values and JSONPaths, and item count badges:
+The [`JsonTreeViewer`](../crates/yav-ui/src/json_tree.rs) component displays hierarchical, syntax-highlighted JSON data with collapsible nodes, copy-to-clipboard for values and JSONPaths, and item count badges:
 
 ```rust
 use yav::prelude::*;
@@ -1787,7 +1787,7 @@ rsx! {
 
 ## 54. Hexagonal Grid & Isometric Spatial Mapping (`<HexGrid />`)
 
-The [`HexGrid`](file:///d:/deep/yav.rs/crates/yav-ui/src/hex_grid.rs) component provides pure-SVG pointy-topped hexagonal grids with axial coordinates, Manhattan distance calculation, custom terrain fill colors, and interactive cell click handlers:
+The [`HexGrid`](../crates/yav-ui/src/hex_grid.rs) component provides pure-SVG pointy-topped hexagonal grids with axial coordinates, Manhattan distance calculation, custom terrain fill colors, and interactive cell click handlers:
 
 ```rust
 use yav::prelude::*;
@@ -1822,7 +1822,7 @@ rsx! {
 
 ## 55. Vector Touch & Mouse Handwritten Signature Pad (`<SignaturePad />`)
 
-The [`SignaturePad`](file:///d:/deep/yav.rs/crates/yav-ui/src/signature_pad.rs) component renders a zero-JS canvas touch/mouse signature pad with configurable stroke color/width, interactive clear button, and base64 PNG data-url synchronization for seamless form integration:
+The [`SignaturePad`](../crates/yav-ui/src/signature_pad.rs) component renders a zero-JS canvas touch/mouse signature pad with configurable stroke color/width, interactive clear button, and base64 PNG data-url synchronization for seamless form integration:
 
 ```rust
 use yav::prelude::*;
@@ -1848,7 +1848,7 @@ rsx! {
 
 ## 56. Interactive Timeline & Audit Trail (`<Timeline />`)
 
-The [`Timeline`](file:///d:/deep/yav.rs/crates/yav-ui/src/timeline.rs) component renders vertical chronological event histories with status icons (`Success`, `Warning`, `Error`, `Info`, `Pending`), connecting vertical lines, tags, and actor badges:
+The [`Timeline`](../crates/yav-ui/src/timeline.rs) component renders vertical chronological event histories with status icons (`Success`, `Warning`, `Error`, `Info`, `Pending`), connecting vertical lines, tags, and actor badges:
 
 ```rust
 use yav::prelude::*;
@@ -1881,7 +1881,7 @@ rsx! {
 
 ## 57. Before / After Image Comparison Slider (`<ImageCompareSlider />`)
 
-The [`ImageCompareSlider`](file:///d:/deep/yav.rs/crates/yav-ui/src/image_compare.rs) component provides interactive before-and-after image overlays with horizontal split, draggable divider handle, and custom labels:
+The [`ImageCompareSlider`](../crates/yav-ui/src/image_compare.rs) component provides interactive before-and-after image overlays with horizontal split, draggable divider handle, and custom labels:
 
 ```rust
 use yav::prelude::*;
@@ -1907,7 +1907,7 @@ rsx! {
 
 ## 58. GDPR & ePrivacy Cookie Consent Preference Center (`<CookieConsent />`)
 
-The [`CookieConsent`](file:///d:/deep/yav.rs/crates/yav-ui/src/cookie_consent.rs) component renders an accessible GDPR-compliant banner with granular category preferences (`necessary`, `analytics`, `marketing`), `localStorage` persistence, and instant DOM dispatch events:
+The [`CookieConsent`](../crates/yav-ui/src/cookie_consent.rs) component renders an accessible GDPR-compliant banner with granular category preferences (`necessary`, `analytics`, `marketing`), `localStorage` persistence, and instant DOM dispatch events:
 
 ```rust
 use yav::prelude::*;

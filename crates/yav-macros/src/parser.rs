@@ -889,3 +889,79 @@ fn format_token_trees(tokens: &[TokenTree], out: &mut String, brace_depth: usize
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use quote::quote;
+
+    /// Expansion-level equivalents of compile-fail tests: `rsx!` turns these
+    /// `syn::Error`s into `compile_error!` invocations, so asserting the error
+    /// here covers the same contract without a `trybuild` dependency.
+    fn error_message(tokens: TokenStream) -> String {
+        parse_rsx(tokens)
+            .expect_err("expected rsx! input to be rejected")
+            .to_string()
+    }
+
+    #[test]
+    fn parses_element_with_string_expr_and_boolean_attributes() {
+        let node = parse_rsx(quote! {
+            <div class="panel" id={page_id} disabled>"Hello"</div>
+        })
+        .expect("valid rsx! markup should parse");
+        let RsxNode::Element(el) = node else {
+            panic!("expected an element node");
+        };
+        assert_eq!(el.tag, "div");
+        assert_eq!(el.attributes.len(), 3);
+        assert_eq!(el.attributes[0].name, "class");
+        assert_eq!(el.attributes[1].name, "id");
+        assert_eq!(el.attributes[2].name, "disabled");
+        assert!(!el.self_closing);
+        assert_eq!(el.children.len(), 1);
+    }
+
+    #[test]
+    fn self_closing_element_has_no_children() {
+        let node = parse_rsx(quote! { <img src="logo.svg" /> })
+            .expect("self-closing element should parse");
+        let RsxNode::Element(el) = node else {
+            panic!("expected an element node");
+        };
+        assert!(el.self_closing);
+        assert!(el.children.is_empty());
+    }
+
+    #[test]
+    fn mismatched_closing_tag_is_rejected() {
+        let msg = error_message(quote! { <div><span></div> });
+        assert!(msg.contains("mismatched closing tag"), "{msg}");
+        assert!(msg.contains("</span>"), "{msg}");
+    }
+
+    #[test]
+    fn unclosed_element_is_rejected() {
+        let msg = error_message(quote! { <div>"text" });
+        assert!(msg.contains("unclosed element"), "{msg}");
+        assert!(msg.contains("</div>"), "{msg}");
+    }
+
+    #[test]
+    fn empty_input_produces_an_empty_fragment() {
+        let node = parse_rsx(TokenStream::new()).expect("empty rsx! should parse");
+        assert!(matches!(node, RsxNode::Fragment(nodes) if nodes.is_empty()));
+    }
+
+    #[test]
+    fn expression_and_text_siblings_become_a_fragment() {
+        let node = parse_rsx(quote! { {name} " · " {count} }).expect("sibling nodes should parse");
+        let RsxNode::Fragment(nodes) = node else {
+            panic!("expected a fragment of sibling nodes");
+        };
+        assert_eq!(nodes.len(), 3);
+        assert!(matches!(nodes[0], RsxNode::Expr(_, _)));
+        assert!(matches!(nodes[1], RsxNode::Text(_, _)));
+        assert!(matches!(nodes[2], RsxNode::Expr(_, _)));
+    }
+}

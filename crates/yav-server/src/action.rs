@@ -74,17 +74,15 @@ impl RouteContext {
             .get::<yav_core::ContextMap>()
             .cloned()
             .unwrap_or_default();
+        // SECURITY: a CSP nonce must never be read from a client-controlled header.
+        // Doing so would let an attacker choose the nonce of the inline scripts we
+        // emit, completely defeating `script-src 'nonce-…'`. Only the server-side
+        // extension installed by our own CSP middleware is trusted; when it is
+        // absent we mint a fresh server-side nonce instead of accepting one.
         let nonce = req
-            .headers()
-            .get("x-nonce")
-            .or_else(|| req.headers().get("csp-nonce"))
-            .and_then(|v| v.to_str().ok())
-            .map(|s| s.to_string())
-            .or_else(|| {
-                req.extensions()
-                    .get::<crate::middleware::CspNonce>()
-                    .map(|n| n.0.clone())
-            })
+            .extensions()
+            .get::<crate::middleware::CspNonce>()
+            .map(|n| n.0.clone())
             .unwrap_or_else(|| crate::middleware::CspNonce::generate().0);
 
         Self {
@@ -158,20 +156,14 @@ impl RouteContext {
 
     /// Retrieve or generate a cryptographic CSP nonce for securing inline scripts.
     /// Returns a stable nonce across all calls within the same request.
+    ///
+    /// SECURITY: the nonce is *always* minted server-side. Client-supplied
+    /// `x-nonce` / `csp-nonce` headers are deliberately ignored: accepting them
+    /// would let an attacker pick the nonce carried by our own inline scripts and
+    /// therefore bypass `script-src 'nonce-…'`.
     pub fn csp_nonce(&self) -> String {
         if !self.nonce.is_empty() {
             return self.nonce.clone();
-        }
-        if let Some(val) = self
-            .headers
-            .get("x-nonce")
-            .or_else(|| self.headers.get("csp-nonce"))
-        {
-            if let Ok(s) = val.to_str() {
-                if !s.is_empty() {
-                    return s.to_string();
-                }
-            }
         }
         crate::middleware::CspNonce::generate().0
     }
@@ -291,18 +283,13 @@ where
             .get::<yav_core::ContextMap>()
             .cloned()
             .unwrap_or_default();
+        // SECURITY: never trust a client-controlled `x-nonce` / `csp-nonce`
+        // header. Only the extension inserted by our own security middleware is
+        // authoritative; when it is missing we mint a fresh server-side nonce.
         let nonce = parts
-            .headers
-            .get("x-nonce")
-            .or_else(|| parts.headers.get("csp-nonce"))
-            .and_then(|v| v.to_str().ok())
-            .map(|s| s.to_string())
-            .or_else(|| {
-                parts
-                    .extensions
-                    .get::<crate::middleware::CspNonce>()
-                    .map(|n| n.0.clone())
-            })
+            .extensions
+            .get::<crate::middleware::CspNonce>()
+            .map(|n| n.0.clone())
             .unwrap_or_else(|| crate::middleware::CspNonce::generate().0);
 
         Ok(Self {

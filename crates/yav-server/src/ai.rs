@@ -1,13 +1,21 @@
-//! Generative AI, Streaming UI (`streamUI`), Tool Calling & Hybrid RAG Vector Search (`yav::ai` — Vercel AI SDK equivalent).
+//! Generative AI infrastructure, Streaming UI (`streamUI`), Tool Calling & Hybrid RAG Vector Search.
 //!
-//! Provides first-class AI engineering primitives for Rust web applications:
-//! - [`Conversation`] & [`ChatMessage`]: Structured multi-turn prompt management (`System`, `User`, `Assistant`, `Tool`).
-//! - [`ToolRegistry`] & [`AiTool`]: Typed tool/function definitions with JSON Schema generation and dispatch.
-//! - [`stream_ui_fragment`] & [`stream_text_sse`]: Server-Sent Events streaming of both LLM text tokens and live RSX [`Node`] UI components (`streamUI`).
-//! - [`VectorIndex`] & [`reciprocal_rank_fusion`]: Dense cosine-similarity vector store and hybrid BM25 + Vector RAG fusion.
+//! Provides AI engineering primitives for Rust web applications:
+//! - [`Conversation`] & [`ChatMessage`]: Structured multi-turn prompt management.
+//! - [`ToolRegistry`] & [`AiTool`]: Typed tool/function definitions with JSON Schema and dispatch.
+//! - [`stream_ui_fragment`] & [`stream_text_sse`]: SSE streaming of LLM tokens and RSX UI components.
+//! - [`VectorIndex`] & [`reciprocal_rank_fusion`]: In-memory cosine-similarity vector store and RRF fusion.
+//!
+//! ## Design
+//! This module provides the **infrastructure** for AI-powered applications — it does
+//! **not** include a built-in LLM client. Connect your own LLM provider (OpenAI, Anthropic,
+//! Ollama, etc.) by feeding responses into [`Conversation`] and streaming tokens via
+//! [`stream_text_sse`]. The [`VectorIndex`] is a simple in-memory store suitable for
+//! development and small datasets; for production-scale RAG, use a dedicated vector database.
 
 use crate::sse::{sse_channel, sse_response, SseMsg};
 use axum::response::Response;
+use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -222,6 +230,47 @@ pub fn stream_text_sse(chunks: Vec<String>) -> Response {
     sse_response(stream)
 }
 
+/// Stream text tokens from an asynchronous MPSC channel as Server-Sent Events (`event: yav:token`)
+/// terminated by `event: done`. This enables real-time token streaming directly from LLM streaming clients.
+pub fn stream_text_channel(mut receiver: tokio::sync::mpsc::Receiver<String>) -> Response {
+    let (tx, stream) = sse_channel(64);
+    tokio::spawn(async move {
+        while let Some(chunk) = receiver.recv().await {
+            if tx
+                .send(SseMsg::new(chunk).event("yav:token"))
+                .await
+                .is_err()
+            {
+                break;
+            }
+        }
+        let _ = tx.send(SseMsg::new("[DONE]").event("done")).await;
+    });
+    sse_response(stream)
+}
+
+/// Stream text tokens from an asynchronous stream as Server-Sent Events (`event: yav:token`)
+/// terminated by `event: done`.
+pub fn stream_text_stream<S>(mut stream: S) -> Response
+where
+    S: futures_util::Stream<Item = String> + Send + Unpin + 'static,
+{
+    let (tx, sse_stream) = sse_channel(64);
+    tokio::spawn(async move {
+        while let Some(chunk) = stream.next().await {
+            if tx
+                .send(SseMsg::new(chunk).event("yav:token"))
+                .await
+                .is_err()
+            {
+                break;
+            }
+        }
+        let _ = tx.send(SseMsg::new("[DONE]").event("done")).await;
+    });
+    sse_response(sse_stream)
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // 4. Dense Vector Index & Hybrid RAG (Reciprocal Rank Fusion)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -238,11 +287,30 @@ pub struct VectorRecord {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct VectorIndex {
     records: Vec<VectorRecord>,
+    pub max_capacity: Option<usize>,
 }
 
 impl VectorIndex {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Create an index bounded by a maximum capacity to prevent unbounded memory usage.
+    pub fn with_capacity(max_capacity: usize) -> Self {
+        Self {
+            records: Vec::with_capacity(max_capacity.min(4096)),
+            max_capacity: Some(max_capacity),
+        }
+    }
+
+    /// Number of vectors stored in the index.
+    pub fn len(&self) -> usize {
+        self.records.len()
+    }
+
+    /// Returns `true` if the index contains no vectors.
+    pub fn is_empty(&self) -> bool {
+        self.records.is_empty()
     }
 
     /// Insert a document embedding vector.
@@ -252,6 +320,11 @@ impl VectorIndex {
         embedding: Vec<f32>,
         metadata: HashMap<String, String>,
     ) {
+        if let Some(cap) = self.max_capacity {
+            if cap > 0 && self.records.len() >= cap {
+                self.records.remove(0);
+            }
+        }
         self.records.push(VectorRecord {
             id: id.into(),
             embedding,
@@ -260,7 +333,13 @@ impl VectorIndex {
     }
 
     /// Search the top-`k` most semantically similar records by cosine similarity.
+    ///
+    /// Uses $O(N + K \log K)$ partial selection instead of a full $O(N \log N)$ sort.
     pub fn search(&self, query_embedding: &[f32], top_k: usize) -> Vec<(String, f32)> {
+        if self.records.is_empty() || top_k == 0 {
+            return Vec::new();
+        }
+
         let mut scored: Vec<(String, f32)> = self
             .records
             .iter()
@@ -270,8 +349,14 @@ impl VectorIndex {
             })
             .collect();
 
+        let k = top_k.min(scored.len());
+        if k < scored.len() {
+            scored.select_nth_unstable_by(k - 1, |a, b| {
+                b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
+            });
+            scored.truncate(k);
+        }
         scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-        scored.truncate(top_k.max(1));
         scored
     }
 }
@@ -356,5 +441,34 @@ mod tests {
         );
         // doc_b appears in both lists so it ranks #1
         assert_eq!(fused[0].0, "doc_b");
+    }
+
+    #[test]
+    fn test_vector_index_bounded_capacity() {
+        let mut idx = VectorIndex::with_capacity(2);
+        idx.insert("doc_1", vec![1.0, 0.0], HashMap::new());
+        idx.insert("doc_2", vec![0.0, 1.0], HashMap::new());
+        assert_eq!(idx.len(), 2);
+
+        // Third insert evicts the oldest entry ("doc_1")
+        idx.insert("doc_3", vec![0.5, 0.5], HashMap::new());
+        assert_eq!(idx.len(), 2);
+
+        let res = idx.search(&[1.0, 0.0], 10);
+        assert_eq!(res.len(), 2);
+        // doc_1 should no longer be present
+        assert!(res.iter().all(|(id, _)| id != "doc_1"));
+    }
+
+    #[tokio::test]
+    async fn test_stream_text_channel() {
+        let (tx, rx) = tokio::sync::mpsc::channel(10);
+        tokio::spawn(async move {
+            tx.send("Bonjour ".to_string()).await.unwrap();
+            tx.send("le monde!".to_string()).await.unwrap();
+        });
+
+        let resp = stream_text_channel(rx);
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
     }
 }

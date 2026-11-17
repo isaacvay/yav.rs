@@ -7,9 +7,47 @@ use std::{
     collections::{HashMap, HashSet},
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc, Mutex, RwLock,
+        Arc, Mutex, OnceLock, RwLock,
     },
 };
+
+/// Process-wide ephemeral secret used when no `SESSION_SECRET` is configured.
+/// Generated once from the OS CSPRNG; sessions therefore do not survive a restart,
+/// which is far safer than panicking on every request (release uses `panic = "abort"`).
+static EPHEMERAL_SECRET: OnceLock<Vec<u8>> = OnceLock::new();
+
+/// Single source of truth for the session secret used by middleware, extractors and
+/// CSRF helpers. Never returns the well-known development constant in production.
+pub fn fallback_secret_bytes() -> Vec<u8> {
+    if let Ok(s) = std::env::var("SESSION_SECRET").or_else(|_| std::env::var("YAV_SECRET")) {
+        if !s.is_empty() {
+            return s.into_bytes();
+        }
+    }
+    if !is_production_mode() {
+        return DEFAULT_DEV_SESSION_SECRET.to_vec();
+    }
+    EPHEMERAL_SECRET
+        .get_or_init(|| {
+            let mut bytes = [0u8; 32];
+            if getrandom::getrandom(&mut bytes).is_err() {
+                // Extremely rare: no OS entropy. Mix in process-unique values instead
+                // of reusing a publicly known constant.
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_nanos();
+                bytes[..16].copy_from_slice(&now.to_le_bytes());
+                bytes[16..24].copy_from_slice(&std::process::id().to_le_bytes());
+            }
+            tracing::warn!(
+                "SESSION_SECRET is not set in production: generated an ephemeral secret. \
+                 Sessions are invalidated on restart. Set SESSION_SECRET (>= 32 bytes) to persist them."
+            );
+            bytes.to_vec()
+        })
+        .clone()
+}
 
 use axum::{
     extract::FromRequestParts,
@@ -166,19 +204,28 @@ impl Session {
             String::new()
         };
 
+        // A stable, unguessable session id makes configured revocation lists actually work.
+        if !map.contains_key("session_id") {
+            let id = random_bytes::<16>()
+                .map(|b| hex_encode(&b))
+                .unwrap_or_default();
+            if !id.is_empty() {
+                map.insert("session_id".to_string(), id);
+            }
+        }
+
         let json = serde_json::to_string(&map).ok()?;
-        let encoded_payload = hex_encode(json.as_bytes());
-        if encoded_payload.len() > MAX_COOKIE_VALUE_LEN {
+        let sealed = seal_session_payload(&json, secret)?;
+        if sealed.len() > MAX_COOKIE_VALUE_LEN {
             tracing::warn!(
                 "Session cookie payload ({} bytes) exceeds {} bytes limit; refusing to emit oversized cookie",
-                encoded_payload.len(),
+                sealed.len(),
                 MAX_COOKIE_VALUE_LEN
             );
             return None;
         }
-        let signature = compute_hmac_sha256(encoded_payload.as_bytes(), secret);
         let cookie_val = format!(
-            "{cookie_name}={encoded_payload}.{signature}{path_attr}{http_only}{samesite_attr}{secure_flag}{domain_attr}{max_age_attr}",
+            "{cookie_name}={sealed}{path_attr}{http_only}{samesite_attr}{secure_flag}{domain_attr}{max_age_attr}",
         );
         HeaderValue::from_str(&cookie_val).ok()
     }
@@ -223,7 +270,7 @@ fn hex_encode(bytes: &[u8]) -> String {
 }
 
 fn hex_decode(s: &str) -> Option<Vec<u8>> {
-    if s.len() % 2 != 0 {
+    if !s.len().is_multiple_of(2) {
         return None;
     }
     let mut bytes = Vec::with_capacity(s.len() / 2);
@@ -232,6 +279,78 @@ fn hex_decode(s: &str) -> Option<Vec<u8>> {
         bytes.push(byte);
     }
     Some(bytes)
+}
+
+// --- Authenticated encryption of cookie payloads ---------------------------------
+//
+// Legacy cookies were hex-encoded JSON + an HMAC: tamper-proof but fully readable by
+// the client. New cookies are AES-256-GCM sealed and still HMAC-signed (defence in
+// depth). The `v2.` prefix lets us keep reading old cookies after an upgrade.
+
+const SEALED_COOKIE_PREFIX: &str = "v2.";
+
+fn derive_aead_key(secret: &[u8]) -> [u8; 32] {
+    use sha2::Digest;
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(b"yav/session-cookie/aes256gcm/v2");
+    hasher.update(secret);
+    let digest = hasher.finalize();
+    let mut key = [0u8; 32];
+    key.copy_from_slice(&digest);
+    key
+}
+
+fn random_bytes<const N: usize>() -> Option<[u8; N]> {
+    let mut bytes = [0u8; N];
+    getrandom::getrandom(&mut bytes).ok()?;
+    Some(bytes)
+}
+
+/// Seal a JSON session payload into an opaque, authenticated-encryption cookie value
+/// (`v2.<base64url(nonce||ciphertext)>.<hmac>`). Returns `None` if the CSPRNG fails.
+fn seal_session_payload(json: &str, secret: &[u8]) -> Option<String> {
+    use aes_gcm::aead::{Aead, KeyInit};
+    use base64::Engine;
+
+    let nonce_bytes = random_bytes::<12>()?;
+    let key = derive_aead_key(secret);
+    let cipher = aes_gcm::Aes256Gcm::new_from_slice(&key).ok()?;
+    let sealed = cipher
+        .encrypt(aes_gcm::Nonce::from_slice(&nonce_bytes), json.as_bytes())
+        .ok()?;
+
+    let mut blob = Vec::with_capacity(12 + sealed.len());
+    blob.extend_from_slice(&nonce_bytes);
+    blob.extend_from_slice(&sealed);
+    let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&blob);
+    let signed_part = format!("{SEALED_COOKIE_PREFIX}{encoded}");
+    let signature = compute_hmac_sha256(signed_part.as_bytes(), secret);
+    Some(format!("{signed_part}.{signature}"))
+}
+
+/// Verify and decrypt a `v2.` cookie value. Returns the plaintext JSON on success.
+fn open_session_payload(payload: &str, sig: &str, secret: &[u8]) -> Option<String> {
+    use aes_gcm::aead::{Aead, KeyInit};
+    use base64::Engine;
+
+    let signed_part = format!("{SEALED_COOKIE_PREFIX}{payload}");
+    let expected = compute_hmac_sha256(signed_part.as_bytes(), secret);
+    if !constant_time_eq(sig.as_bytes(), expected.as_bytes()) {
+        tracing::warn!("Rejected sealed session cookie with invalid HMAC-SHA256 signature");
+        return None;
+    }
+    let blob = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(payload.as_bytes())
+        .ok()?;
+    if blob.len() < 12 + 16 {
+        return None;
+    }
+    let key = derive_aead_key(secret);
+    let cipher = aes_gcm::Aes256Gcm::new_from_slice(&key).ok()?;
+    let plaintext = cipher
+        .decrypt(aes_gcm::Nonce::from_slice(&blob[..12]), &blob[12..])
+        .ok()?;
+    String::from_utf8(plaintext).ok()
 }
 
 /// Cryptographic signing secret key for session verification.
@@ -490,65 +609,76 @@ pub fn extract_session_from_cookie(
                 let mut parts_iter = pair.trim().splitn(2, '=');
                 if let (Some(name), Some(val)) = (parts_iter.next(), parts_iter.next()) {
                     if name == config.cookie_name {
-                        // Extract payload.signature
-                        if let Some((payload, sig)) = val.split_once('.') {
+                        // `v2.<b64(nonce||ciphertext)>.<hmac>` or legacy `<hex>.<hmac>`.
+                        // `rsplit_once` is required because sealed values contain a dot.
+                        if let Some((payload, sig)) = val.rsplit_once('.') {
                             if payload.len() > MAX_COOKIE_VALUE_LEN {
                                 tracing::warn!("Rejected oversized session cookie payload");
                                 continue;
                             }
-                            let expected_sig = compute_hmac_sha256(payload.as_bytes(), secret);
-                            if constant_time_eq(sig.as_bytes(), expected_sig.as_bytes()) {
-                                if let Some(bytes) = hex_decode(payload) {
-                                    if let Ok(map) =
-                                        serde_json::from_slice::<HashMap<String, String>>(&bytes)
-                                    {
-                                        let expired = if let Some(exp_str) = map.get("_expires_at")
-                                        {
-                                            if let Ok(exp) = exp_str.parse::<u64>() {
-                                                if let Ok(now) = std::time::SystemTime::now()
-                                                    .duration_since(std::time::UNIX_EPOCH)
-                                                {
-                                                    now.as_secs() > exp
-                                                } else {
-                                                    false
-                                                }
+                            let decoded_json = if let Some(encoded) =
+                                payload.strip_prefix(SEALED_COOKIE_PREFIX)
+                            {
+                                open_session_payload(encoded, sig, secret)
+                            } else {
+                                // Backwards compatibility: still accept signed-only cookies
+                                // issued by older versions of the framework.
+                                let expected_sig = compute_hmac_sha256(payload.as_bytes(), secret);
+                                if constant_time_eq(sig.as_bytes(), expected_sig.as_bytes()) {
+                                    hex_decode(payload).and_then(|b| String::from_utf8(b).ok())
+                                } else {
+                                    tracing::warn!(
+                                            "Rejected session cookie with invalid HMAC-SHA256 signature"
+                                        );
+                                    None
+                                }
+                            };
+
+                            if let Some(json) = decoded_json {
+                                if let Ok(map) =
+                                    serde_json::from_str::<HashMap<String, String>>(&json)
+                                {
+                                    let expired = if let Some(exp_str) = map.get("_expires_at") {
+                                        if let Ok(exp) = exp_str.parse::<u64>() {
+                                            if let Ok(now) = std::time::SystemTime::now()
+                                                .duration_since(std::time::UNIX_EPOCH)
+                                            {
+                                                now.as_secs() > exp
                                             } else {
                                                 false
                                             }
                                         } else {
                                             false
+                                        }
+                                    } else {
+                                        false
+                                    };
+
+                                    let is_revoked =
+                                        if let Some(ref rev_list) = config.revocation_list {
+                                            let id_revoked = map
+                                                .get("session_id")
+                                                .or_else(|| map.get("id"))
+                                                .or_else(|| map.get("_id"))
+                                                .map(|id| rev_list.is_revoked(id))
+                                                .unwrap_or(false);
+                                            id_revoked || rev_list.is_revoked(payload)
+                                        } else {
+                                            false
                                         };
 
-                                        let is_revoked =
-                                            if let Some(ref rev_list) = config.revocation_list {
-                                                let id_revoked = map
-                                                    .get("session_id")
-                                                    .or_else(|| map.get("id"))
-                                                    .or_else(|| map.get("_id"))
-                                                    .map(|id| rev_list.is_revoked(id))
-                                                    .unwrap_or(false);
-                                                id_revoked || rev_list.is_revoked(payload)
-                                            } else {
-                                                false
-                                            };
-
-                                        if is_revoked {
-                                            tracing::info!(
-                                                "Session is revoked; starting with empty session"
-                                            );
-                                        } else if !expired {
-                                            session_map = map;
-                                        } else {
-                                            tracing::debug!(
-                                                "Session expired; starting with empty session"
-                                            );
-                                        }
+                                    if is_revoked {
+                                        tracing::info!(
+                                            "Session is revoked; starting with empty session"
+                                        );
+                                    } else if !expired {
+                                        session_map = map;
+                                    } else {
+                                        tracing::debug!(
+                                            "Session expired; starting with empty session"
+                                        );
                                     }
                                 }
-                            } else {
-                                tracing::warn!(
-                                    "Rejected session cookie with invalid HMAC-SHA256 signature"
-                                );
                             }
                         }
                     }
@@ -579,12 +709,7 @@ pub async fn session_middleware(
                 .ok()
                 .map(|s| SessionSecret::new(s.into_bytes()))
         })
-        .unwrap_or_else(|| {
-            if is_production_mode() {
-                panic!("FATAL: SESSION_SECRET must be explicitly set when running in production mode! Refusing to use default dev secret.");
-            }
-            SessionSecret::new(DEFAULT_DEV_SESSION_SECRET)
-        });
+        .unwrap_or_else(|| SessionSecret::new(fallback_secret_bytes()));
 
     let config = req
         .extensions()
@@ -649,12 +774,7 @@ where
                     .ok()
                     .map(|s| s.into_bytes())
             })
-            .unwrap_or_else(|| {
-                if is_production_mode() {
-                    panic!("FATAL: SESSION_SECRET must be explicitly set when running in production mode! Refusing to use default dev secret.");
-                }
-                DEFAULT_DEV_SESSION_SECRET.to_vec()
-            });
+            .unwrap_or_else(fallback_secret_bytes);
 
         let config = parts
             .extensions
@@ -933,5 +1053,58 @@ mod tests {
         assert!(revocation_list.unrevoke("sess_abc123"));
         let extracted3 = extract_session_from_cookie(Some(&header), secret, &config);
         assert_eq!(extracted3.get("user").as_deref(), Some("alice"));
+    }
+
+    #[test]
+    fn test_cookie_payload_is_encrypted_and_authenticated() {
+        let secret = b"encryption_test_secret_at_least_32_bytes";
+        let session = Session::new();
+        session.set("user", "alice");
+        session.set("token", "super-secret-value");
+
+        let header = session.cookie_header(secret).expect("cookie header");
+        let raw = header.to_str().unwrap();
+        // The client must not be able to read session values from the cookie.
+        assert!(!raw.contains("alice"));
+        assert!(!raw.contains("super-secret-value"));
+        assert!(raw.contains("v2."));
+        // A stable session id is emitted so revocation lists are usable.
+        let extracted =
+            extract_session_from_cookie(Some(&header), secret, &SessionConfig::default());
+        assert_eq!(extracted.get("user").as_deref(), Some("alice"));
+        assert!(extracted.get("session_id").is_some());
+
+        // Wrong key must not decrypt (and must not panic).
+        let wrong = extract_session_from_cookie(
+            Some(&header),
+            b"a-completely-different-secret-value",
+            &SessionConfig::default(),
+        );
+        assert_eq!(wrong.get("user"), None);
+
+        // Tampering with the sealed payload must be rejected.
+        let tampered = HeaderValue::from_str(&raw.replace("v2.", "v2.A")).unwrap();
+        let rejected =
+            extract_session_from_cookie(Some(&tampered), secret, &SessionConfig::default());
+        assert_eq!(rejected.get("user"), None);
+    }
+
+    #[test]
+    fn test_legacy_signed_cookie_is_still_accepted() {
+        let secret = b"legacy_upgrade_secret_32_bytes_______";
+        let json = r#"{"user":"bob"}"#;
+        let payload = hex_encode(json.as_bytes());
+        let sig = compute_hmac_sha256(payload.as_bytes(), secret);
+        let legacy =
+            HeaderValue::from_str(&format!("_yav_session={payload}.{sig}; Path=/; HttpOnly"))
+                .unwrap();
+        let extracted =
+            extract_session_from_cookie(Some(&legacy), secret, &SessionConfig::default());
+        assert_eq!(extracted.get("user").as_deref(), Some("bob"));
+    }
+
+    #[test]
+    fn test_fallback_secret_is_never_empty() {
+        assert!(!fallback_secret_bytes().is_empty());
     }
 }

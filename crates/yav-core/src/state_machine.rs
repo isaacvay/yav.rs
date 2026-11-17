@@ -112,7 +112,7 @@ where
         self.rules.iter().any(|r| {
             r.from == self.current
                 && &r.event == event
-                && r.guard.as_ref().map_or(true, |g| g(&self.context, event))
+                && r.guard.as_ref().is_none_or(|g| g(&self.context, event))
         })
     }
 

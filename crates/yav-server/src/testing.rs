@@ -489,6 +489,7 @@ mod tests {
     #[tokio::test]
     async fn test_e2e_client_cookie_persistence_and_dom_assertions() {
         let app = YavApp::new()
+            .csrf_protection(crate::middleware::CsrfConfig::disabled())
             .get("/login", |_req| async {
                 html_response(
                     StatusCode::OK,

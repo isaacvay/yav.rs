@@ -341,13 +341,6 @@ impl Component for MediaPlayer {
                         .attr("type", "button")
                         .attr("data-seek-seconds", ch.seconds.to_string())
                         .attr(
-                            "onclick",
-                            format!(
-                                "var v=this.closest('.yav-media-player').querySelector('video');if(v){{v.currentTime={};v.play();}}",
-                                ch.seconds
-                            ),
-                        )
-                        .attr(
                             "class",
                             "rounded-md bg-slate-800 hover:bg-indigo-600 px-2.5 py-1 text-xs font-mono text-slate-200 transition",
                         )

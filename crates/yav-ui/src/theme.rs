@@ -765,8 +765,6 @@ impl ThemeToggle {
         let base_class = "inline-flex items-center justify-center p-2 rounded-lg text-gray-500 hover:text-gray-900 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-white dark:hover:bg-gray-700 transition-colors focus:outline-none focus:ring-2 focus:ring-gray-200 dark:focus:ring-gray-700";
         let full_class = crate::utils::merge_classes(&[base_class, &self.class]);
 
-        let onclick_js = "var d=document.documentElement.classList.toggle('dark');localStorage.setItem('theme',d?'dark':'light');";
-
         let sun_icon = yav_icons::render_icon(
             "sun",
             yav_icons::IconSize::Md,
@@ -784,7 +782,7 @@ impl ThemeToggle {
             .attr("type", "button")
             .attr("class", full_class)
             .attr("aria-label", "Toggle dark mode")
-            .attr("onclick", onclick_js)
+            .attr("data-theme-toggle", "")
             .child(sun_icon)
             .child(moon_icon);
 

@@ -373,3 +373,35 @@ pub fn derive_from_form_data_impl(input: DeriveInput) -> Result<TokenStream> {
         }
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn derive(tokens: TokenStream) -> Result<TokenStream> {
+        let input: DeriveInput = syn::parse2(tokens).expect("fixture must parse as an item");
+        derive_from_form_data_impl(input)
+    }
+
+    #[test]
+    fn named_field_struct_derives_successfully() {
+        let expanded = derive(quote! {
+            struct Login { email: String, password: String }
+        })
+        .expect("named-field struct should derive");
+        assert!(expanded.to_string().contains("from_form"));
+    }
+
+    #[test]
+    fn enum_is_rejected() {
+        let err = derive(quote! { enum Bad { A, B } }).expect_err("enums must be rejected");
+        assert!(err.to_string().contains("only be derived for structs"));
+    }
+
+    #[test]
+    fn tuple_struct_is_rejected() {
+        let err =
+            derive(quote! { struct Bad(String); }).expect_err("tuple structs must be rejected");
+        assert!(err.to_string().contains("named fields"));
+    }
+}

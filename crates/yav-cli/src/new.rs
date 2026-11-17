@@ -254,7 +254,7 @@ pub async fn index(_req: Request) -> yav::server::HtmlPage {
                     <div class="brand">
                         <img src="/public/favicon.svg" class="w-7 h-7" alt="Yav logo" />
                         <span class="text-lg tracking-tight">"yav.rs"</span>
-                        <span class="tag">"v0.1.4"</span>
+                        <span class="tag">"__YAV_FRAMEWORK_VERSION__"</span>
                     </div>
                     <span class="chip">
                         <span class="dot dot-ok"></span>
@@ -314,6 +314,12 @@ pub async fn index(_req: Request) -> yav::server::HtmlPage {
         .favicon("/public/favicon.svg")
 }
 "##;
+    // Keep the generated starter page on the framework's real version instead
+    // of a hardcoded string that goes stale on every release.
+    let index_rs = index_rs.replace(
+        "__YAV_FRAMEWORK_VERSION__",
+        &format!("v{}", env!("CARGO_PKG_VERSION")),
+    );
     std::fs::write(target_dir.join("src/routes/index.rs"), index_rs)?;
 
     // 8. Generate src/routes/about.rs (Minimal Architecture overview)
@@ -1110,8 +1116,42 @@ dist/
     Ok(())
 }
 
+/// Compile-check a freshly scaffolded project in its own directory.
+///
+/// Separated from [`run`] so the behaviour can be tested without invoking the
+/// interactive editor/Tailwind prompts. `cargo_target_dir`, when set, isolates
+/// the build artefacts from the parent build (avoids contending on the shared
+/// `target/` lock). Compiler diagnostics are never suppressed.
+async fn verify_project_compiles(
+    target_dir: &Path,
+    cargo_target_dir: Option<&Path>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    println!("\n\x1b[34mRunning cargo check on the generated project...\x1b[0m\n");
+    let mut command = tokio::process::Command::new("cargo");
+    command.arg("check").current_dir(target_dir);
+    if let Some(dir) = cargo_target_dir {
+        command.env("CARGO_TARGET_DIR", dir);
+    }
+    let status = command.status().await?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "generated project failed `cargo check` (exit code {}). Fix the errors above \
+             or run `yav check` inside '{}'.",
+            status.code().unwrap_or(-1),
+            target_dir.display()
+        )
+        .into())
+    }
+}
+
 /// CLI entry point for the `yav new` command.
-pub async fn run(name: &str) -> Result<(), Box<dyn std::error::Error>> {
+///
+/// `verify` runs `cargo check` inside the generated project before reporting
+/// success. It is opt-in because a fresh scaffold resolves its `yav`
+/// dependency from the registry, which may require network access.
+pub async fn run(name: &str, verify: bool) -> Result<(), Box<dyn std::error::Error>> {
     validate_project_name(name).map_err(|msg| format!("Invalid project name '{name}': {msg}"))?;
 
     let target_dir = Path::new(name);
@@ -1137,7 +1177,13 @@ pub async fn run(name: &str) -> Result<(), Box<dyn std::error::Error>> {
     println!("\x1b[34mCreating new Yav project:\x1b[0m \x1b[1m{name}\x1b[0m");
     scaffold_project(target_dir, name)?;
 
-    println!("\n\x1b[1;32m[OK] Successfully created project '{name}'\x1b[0m");
+    if verify {
+        verify_project_compiles(target_dir, None).await?;
+        println!("\n\x1b[1;32m[OK] Created and verified project '{name}'\x1b[0m");
+    } else {
+        // Do not claim the project compiles: it has not been built yet.
+        println!("\n\x1b[1;32m[OK] Created project '{name}' (not compiled)\x1b[0m");
+    }
 
     // Check and offer/install Yav editor extension
     crate::ext::prompt_and_install_if_needed();
@@ -1147,6 +1193,9 @@ pub async fn run(name: &str) -> Result<(), Box<dyn std::error::Error>> {
 
     println!("  Next steps:");
     println!("    cd {name}");
+    if !verify {
+        println!("    yav check   # verify the generated project compiles");
+    }
     println!("    yav dev\n");
 
     Ok(())
@@ -1166,6 +1215,47 @@ mod tests {
         assert!(validate_project_name("123app").is_err());
         assert!(validate_project_name("my app").is_err());
         assert!(validate_project_name("foo/bar").is_err());
+    }
+
+    /// Build a dependency-free crate so `cargo check` needs no registry access.
+    fn write_tiny_crate(dir: &Path, main_rs: &str) {
+        std::fs::create_dir_all(dir.join("src")).expect("create src dir");
+        std::fs::write(
+            dir.join("Cargo.toml"),
+            "[package]\nname = \"yav-verify-probe\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .expect("write Cargo.toml");
+        std::fs::write(dir.join("src/main.rs"), main_rs).expect("write main.rs");
+    }
+
+    #[tokio::test]
+    async fn test_verify_project_compiles_reports_success_and_failure() {
+        let root = std::env::temp_dir().join(format!("yav_verify_probe_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+
+        let good = root.join("good");
+        let bad = root.join("bad");
+        write_tiny_crate(&good, "fn main() { println!(\"ok\"); }\n");
+        write_tiny_crate(&bad, "fn main() { this is not rust }\n");
+
+        let ok_target = root.join("target_ok");
+        let bad_target = root.join("target_bad");
+
+        assert!(
+            verify_project_compiles(&good, Some(&ok_target))
+                .await
+                .is_ok(),
+            "a valid generated crate must pass cargo check"
+        );
+        let err = verify_project_compiles(&bad, Some(&bad_target))
+            .await
+            .expect_err("an invalid generated crate must fail cargo check");
+        assert!(
+            err.to_string().contains("cargo check"),
+            "the error must name the failing command, got: {err}"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

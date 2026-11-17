@@ -7,14 +7,15 @@ Security is designed into Yav at the architecture level, preventing entire class
 All dynamic text expressions and attribute values inside `rsx!` are escaped automatically by `yav-core`:
 
 - **HTML Body Context**: Characters `&`, `<`, `>`, `"`, `'` are translated to their corresponding HTML entities (`&amp;`, `&lt;`, etc.).
-- **URL Attributes (`href`, `src`, `action`)**: Dynamic URLs are checked against malicious pseudo-protocols like `javascript:`, `vbscript:`, or `data:text/html`. Dangerous URLs are automatically sanitized.
+- **URL Attributes (`href`, `src`, `action`, `srcset`, …)**: Dynamic URLs are checked against malicious pseudo-protocols like `javascript:`, `vbscript:`, or `data:text/html` and dropped when unsafe. `srcdoc` is double-HTML-escaped, `srcset` is validated URL-by-URL, and `style` values are filtered against `expression(`, `javascript:` and `@import`.
 - **Raw HTML**: Only content explicitly wrapped in `Node::raw(...)` bypasses escaping. Use with extreme caution.
 
-## 2. Cryptographic Sessions & Signed Flash Cookies (HMAC-SHA256)
+## 2. Encrypted Sessions & Signed Flash Cookies
 
 Yav implements tamper-proof stateless cookies for both user sessions (`Session`) and one-time flash notifications (`Flash`):
-- Sessions and flash cookies are signed with HMAC-SHA256 using `SESSION_SECRET` (or `YAV_SECRET`).
-- In production mode (`APP_ENV=production`, `YAV_ENV=production`, `NODE_ENV=production`, or release build without debug assertions), `SESSION_SECRET` is strictly enforced; the server refuses to start with a development fallback secret.
+- Session payloads are **AES-256-GCM encrypted** and authenticated; flash cookies are HMAC-SHA256 signed. Both derive their key from `SESSION_SECRET` (or `YAV_SECRET`).
+- If no secret is configured, the process generates a single ephemeral CSPRNG secret, logs a warning and starts. Sessions and flash cookies are then invalidated on restart and are not shared between instances. Generated systemd/Docker units require the variable explicitly.
+- Legacy flash payloads without an `expires_at` are rejected, so a captured signed cookie cannot be replayed forever.
 - Signatures are verified using **constant-time comparisons** (`yav_server::session::constant_time_eq`) to eliminate timing side-channels.
 - Cookie attributes (`cookie_name`, `path`, `domain`) are sanitized against header/attribute injection (`;`, `\r`, `\n`, `\0`), and payloads exceeding 4 KB (`MAX_COOKIE_VALUE_LEN = 4096`) are rejected before HMAC computation or emission.
 - Signed `Flash` cookies embed a 5-minute expiration timestamp (`DEFAULT_FLASH_TTL_SECS = 300`) to prevent replay attacks and are automatically committed or cleared by `session_middleware`.
@@ -22,25 +23,25 @@ Yav implements tamper-proof stateless cookies for both user sessions (`Session`)
 
 ## 3. Sliding-Window Rate Limiting
 
-Protect sensitive endpoints from brute-force and DDoS attacks using `RateLimitConfig`:
+Rate limiting is **optional** and is not enabled by `YavApp::new()`. Configure
+and mount it explicitly:
 
 ```rust
 use yav::server::{YavApp, RateLimitConfig};
 use std::time::Duration;
 
-let app = YavApp::new()
-    .rate_limit(
-        RateLimitConfig::new()
-            .limit_per_window(100)
-            .window_duration(Duration::from_secs(60))
-            .trust_proxy_headers(false) // Set to true only behind a trusted reverse proxy
-    );
+let cfg = RateLimitConfig::new()
+    .limit_per_window(100)
+    .window_duration(Duration::from_secs(60))
+    .trust_proxy(false); // or .trusted_proxies(["10.0.0.1"]) behind a proxy
+let app = YavApp::new().rate_limit(cfg);
 ```
 
-Headers emitted:
-- `X-RateLimit-Limit`
-- `X-RateLimit-Remaining`
-- `Retry-After` (upon HTTP 429)
+Headers emitted (lowercase names):
+- `ratelimit-limit`
+- `ratelimit-remaining`
+- `ratelimit-reset`
+- `retry-after` (upon HTTP 429)
 
 ## 4. CSRF Protection for Forms with CSPRNG Salt
 
@@ -149,7 +150,7 @@ assert!(safe_json.contains(r#"<\/script>"#));
 
 ## 7. Path Traversal & Static Asset Hardening
 
-Static asset serving ([`crates/yav-server/src/static_files.rs`](file:///d:/deep/yav.rs/crates/yav-server/src/static_files.rs)) verifies that all resolved paths remain strictly bounded within the configured `public` directory:
+Static asset serving ([`crates/yav-server/src/static_files.rs`](../crates/yav-server/src/static_files.rs)) verifies that all resolved paths remain strictly bounded within the configured `public` directory:
 - Null bytes (`\0`) and absolute/prefix components are blocked.
 - Parent directory traversal sequences (`..`, `/../`, `..\`) are rejected with `400 Bad Request`.
 - Both the target file and any pre-compressed `.br` / `.gz` variants undergo strict `canonicalize()` verification against the canonical base directory, preventing symlink escape attacks.
@@ -201,14 +202,14 @@ assert!(!hasher.verify_password("WrongPassword", &hash));
 ### B. JWT Tokens & Role-Based Access Control (`JwtManager`, `AuthUser`)
 Cryptographically signed HS256 JWT tokens with subject, role arrays, and expiration checks:
 ```rust
-use yav_server::auth::{JwtManager, JwtClaims, AuthUser};
-use std::time::Duration;
+use yav_server::auth::{JwtManager, JwtClaims, JwtValidation};
 
 let jwt = JwtManager::new("your-secure-jwt-signing-key-32-chars");
-let token = jwt.sign_user(&AuthUser::new("u1", "alice@example.com").with_role("admin"), Duration::from_secs(3600))?;
+let claims = JwtClaims::new("u1", 3600).with_role("admin");
+let token = jwt.sign(&claims)?;
 
-let claims = jwt.verify_token(&token)?;
-assert!(claims.has_role("admin"));
+let verified = jwt.verify_with_config(&token, &JwtValidation::default())?;
+assert!(verified.has_role("admin"));
 ```
 
 ### C. OAuth2 with PKCE (`OAuthConfig`, `OAuthProvider`)
@@ -218,10 +219,13 @@ RFC 7636 Proof Key for Code Exchange (PKCE) with SHA-256 code challenge generati
 RFC 6238 TOTP engine with base32 secret generation, 6-digit TOTP code calculation, and tolerance window verification (+/- 1 time step) to compensate for clock drift:
 ```rust
 use yav_server::auth::Totp;
+use std::time::{SystemTime, UNIX_EPOCH};
 
-let totp = Totp::generate_secret();
-let current_code = totp.generate_code()?;
-assert!(totp.verify_code(&current_code));
+let secret = [0u8; 20]; // generate and store a real random secret in production
+let totp = Totp::new(secret);
+let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+let code = totp.generate_at(now);
+assert!(totp.verify_at(&code, now));
 ```
 
 ---
@@ -230,14 +234,17 @@ assert!(totp.verify_code(&current_code));
 
 Track compliance and security-sensitive user actions with a cryptographically verified audit log where each event's hash is chained to the previous event (`prev_hash`):
 ```rust
-use yav_server::flags::{AuditTrail, AuditEvent};
+use yav_server::flags::AuditTrail;
+use std::collections::BTreeMap;
 
-let mut audit = AuditTrail::new();
-audit.record(AuditEvent::new("user_login", "user-123").detail("ip", "192.168.1.1"));
-audit.record(AuditEvent::new("password_change", "user-123"));
+let audit = AuditTrail::new();
+let mut meta = BTreeMap::new();
+meta.insert("ip".to_string(), "192.168.1.1".to_string());
+audit.record("user-123", "tenant-a", "user_login", "session", meta);
+audit.record("user-123", "tenant-a", "password_change", "account", BTreeMap::new());
 
-// Verifies integrity of the entire chain from genesis to tail:
-assert!(audit.verify_chain_integrity());
+// Verifies the hash chain from genesis to tail:
+assert!(audit.verify_integrity());
 ```
 *Any external tampering with past events invalidates subsequent hashes and is immediately detected.*
 
@@ -275,12 +282,12 @@ Unvalidated redirects expose users to phishing attacks. Yav provides strict redi
 Verify inbound webhooks from Stripe, Svix, GitHub, or Slack with HMAC-SHA256 and configurable replay tolerance:
 ```rust
 use yav_server::billing::WebhookVerifier;
-use std::time::Duration;
+use std::time::{SystemTime, UNIX_EPOCH};
 
-let verifier = WebhookVerifier::new("whsec_test_secret_123")
-    .tolerance(Duration::from_secs(300)); // 5 minute anti-replay window
+let verifier = WebhookVerifier::new(b"whsec_test_secret_123".to_vec(), 300);
+let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
 
-let is_valid = verifier.verify_stripe_signature(payload_bytes, signature_header);
+assert!(verifier.verify_at(signature_header, payload_bytes, now).is_ok());
 ```
 
 ---
@@ -304,7 +311,7 @@ Buffering partial multipart chunks in server RAM poses a severe out-of-memory (O
 
 ## 16. Relationship-Based Access Control (ReBAC) & Graph Security
 
-Yav implements Google Zanzibar-style relationship-based access control ([`yav_server::rebac::RebacGraph`](file:///d:/deep/yav.rs/crates/yav-server/src/rebac.rs)) to secure multi-tenant SaaS environments:
+Yav implements Google Zanzibar-style relationship-based access control ([`yav_server::rebac::RebacGraph`](../crates/yav-server/src/rebac.rs)) to secure multi-tenant SaaS environments:
 
 - **Cycle Detection**: Traversal routines track visited nodes to prevent stack overflow attacks caused by circular relationship graphs (e.g. `team:A` member of `team:B` and `team:B` member of `team:A`).
 - **Transitive Permission Resolution**: Evaluates complex authorization paths (e.g. `user` in `team` that owns `organization` that owns `project` that contains `document`) in sub-millisecond memory-bounded traversals.

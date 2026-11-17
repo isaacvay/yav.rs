@@ -13,5 +13,13 @@ keywords = ["web", "framework", "ssr", "vdom", "html"]
 categories = ["web-programming", "template-engine"]
 
 [dependencies]
+serde_json.workspace = true
+fluent-bundle = { workspace = true, optional = true }
+unic-langid = { workspace = true, optional = true }
 
 [dev-dependencies]
+insta.workspace = true
+
+[features]
+default = []
+i18n-advanced = ["dep:fluent-bundle", "dep:unic-langid"]

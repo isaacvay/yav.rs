@@ -1,231 +1,466 @@
 <p align="center">
-  <img src="assets/svg/yav-monogram-gradient.svg" alt="Yav.rs Logo" width="140" height="140" />
+  <img src="assets/svg/yav-monogram-gradient.svg" alt="Yav.rs" width="120" height="120" />
 </p>
 
 <h1 align="center">Yav.rs</h1>
 
 <p align="center">
-  <strong>A Rust-first Web Framework with a modern developer experience</strong><br>
-  <em>Write Rust. Keep HTML and CSS. Build modern interfaces without unnecessary tooling friction.</em>
+  Write pages in Rust. Ship HTML. Skip the Node toolchain.
 </p>
 
 <p align="center">
   <a href="https://crates.io/crates/yav"><img src="https://img.shields.io/crates/v/yav.svg?style=flat-square" alt="Crates.io"></a>
   <a href="https://docs.rs/yav"><img src="https://img.shields.io/docsrs/yav?style=flat-square" alt="docs.rs"></a>
   <a href="LICENSE-MIT"><img src="https://img.shields.io/badge/license-MIT%20%2F%20Apache--2.0-blue?style=flat-square" alt="License"></a>
-  <a href="https://github.com/isaacvay/yav.rs"><img src="https://img.shields.io/badge/rust-2021%20edition-black?style=flat-square&logo=rust" alt="Rust Edition"></a>
+</p>
+
+<p align="center">
+  <img src="assets/dashboard-preview.png" alt="The example Yav dashboard: KPI cards, charts and a component gallery, rendered server-side" width="880" />
+</p>
+
+<p align="center">
+  <em>The included example dashboard. Pages are written in Rust and delivered as
+  HTML — no JavaScript framework to install. <a href="examples/dashboard/">Run it</a>.</em>
 </p>
 
 ---
 
-Yav.rs is a complete web framework that brings the developer experience of Next.js and the integrated UI philosophy of Flutter to Rust. Server-side rendering, file-based routing, a JSX-like component syntax, built-in UI components, and Tailwind CSS integration — all without requiring Node.js.
+Yav is a small web framework for server-rendered HTML. Components are Rust
+functions; `rsx!` gives them a JSX-like syntax and expands them into a `Node`
+tree at compile time. At request time the renderer walks that tree and escapes
+each value according to where it lands: text, attributes, URLs, `style`,
+`srcdoc`, and JSON-LD blocks all have different rules. Routes come from the
+directory layout. The CLI handles project scaffolding, a standalone Tailwind
+binary, asset hashing, and static export.
 
-## Quick Start
+The HTTP layer is [Axum](https://github.com/tokio-rs/axum). There is no
+JavaScript bundler, no hydration runtime to install, and nothing that needs
+Node.js.
+
+## The short version
+
+Rust has excellent HTTP libraries. What it has not had, unless you assembled
+it yourself, is a way to *write a page*: a component syntax, a renderer,
+conventions for where files go, and a dev command that just works. That
+assembly is what Yav is.
+
+> One language, one build, one framework crate. The browser receives HTML.
+
+If you already like Axum, Yav is the view layer you were going to write
+anyway. If you are coming from Next.js or Remix, the routing and component
+model will look familiar, but `node_modules` will not appear in your project.
+
+The difference is easier to see side by side. This is a rough map, not a
+benchmark, and the JS ecosystem is far more mature than a 0.1.x Rust project:
+
+| | Bare Axum | Typical JS full-stack | Yav |
+|---|---|---|---|
+| Views | pick a template crate | JSX / TSX components | `rsx!` in Rust |
+| Build | `cargo` | `npm` + bundler + Node | `cargo` + one `yav` binary |
+| CSRF, CSP, sessions | wire them up yourself | framework-dependent | on by default |
+| Browser JavaScript | whatever you add | hydration | optional data attributes |
+
+Three concrete consequences:
+
+- **Escaping is contextual.** A value in `href` is not escaped like a value in
+  a text node; `srcdoc`, `srcset`, `style` and JSON-LD get their own rules. A
+  single `escape()` applied everywhere cannot cover those contexts.
+- **Security defaults are on.** CSRF validation, signed session cookies and a
+  per-response CSP nonce are active without configuring a thing.
+- **Interactivity is opt-in.** The HTML works on its own. Motion, live updates
+  and form enhancements are added with data attributes, not a hydration step.
+
+## The mental model, in five steps
+
+1. You put components and route handlers in `.rs` files, and styles in a CSS
+   file.
+2. The `yav` CLI runs Tailwind, hashes assets and can export a static build.
+3. `cargo build` expands `rsx!` into ordinary Rust. There is no template
+   interpreter waiting at request time.
+4. The server matches the URL to a file-based route, runs the middleware stack,
+   and calls your handler.
+5. Your handler returns a `Node`; the renderer escapes and serializes it. The
+   browser gets HTML.
+
+```mermaid
+flowchart LR
+    write["You write<br/>Rust + CSS"] --> cli["yav CLI<br/>Tailwind, assets, export"]
+    cli --> compile["cargo build<br/>rsx! expands to Rust"]
+    compile --> serve["Yav server<br/>routes, handlers, renderer"]
+    serve --> browser["Browser<br/>HTML + opt-in enhancements"]
+```
+
+Everything else in this README is detail on one of those five boxes.
+
+## Before you start
+
+This is **0.1.x**. Some parts are finished, some are library modules you mount
+yourself, and some are single-process prototypes whose names oversell them.
+We try to say which is which; [`docs/limitations.md`](docs/limitations.md) is
+the authoritative list, and it is worth reading before you build on anything
+advertised here.
+
+One practical wrinkle: the `0.1.5` archive on crates.io declares
+`rust-version = 1.75`, enables all three icon families and does not expose the
+`full-icons` feature described below. Version `0.1.6` needs **Rust 1.88** and
+enables only the Classic family by default; use `full-icons` to restore the
+whole catalog.
+
+### Where things stand
+
+```mermaid
+flowchart TB
+    subgraph a["Ready: mounted by YavApp"]
+        a1["rsx! and #[component]"]
+        a2["SSR, file routing, layouts, forms"]
+        a3["sessions, CSRF, CSP nonces, ETag"]
+    end
+    subgraph b["Ready: you register them"]
+        b1["GraphQL, Web Push, OTLP, MCP"]
+        b2["federation, CSP reporter, metrics dashboard"]
+    end
+    subgraph c["Local only: in-memory maps and locks"]
+        c1["distributed cache / lock / outbox"]
+        c2["jobs, email, replica pool, event store"]
+    end
+    subgraph d["Experimental"]
+        d1["AI/RAG, pdf_signer, pdf_viewer"]
+    end
+    a --> b --> c --> d
+```
+
+Read the arrows as "fewer guarantees, more assembly required". Out of the box
+`YavApp` mounts only `/health`, `/healthz`, `/readyz`, `/metrics`,
+`/_yav/image`, `/_yav/og` and `/_yav/vitals`. CSRF protection is on by default,
+so a state-changing form needs `_csrf`, or an AJAX request needs the
+`x-csrf-token` header. Nothing named "distributed" survives a second process.
+
+That makes the intended reader fairly specific. Yav fits you if you are
+building an SSR application, an internal tool or a dashboard in Rust and want
+to move fast without adopting a JavaScript toolchain. It does not fit you yet
+if you need a spec-complete GraphQL server (use `async-graphql`), cluster-wide
+state, or a framework with years of production deployments behind it. Saying
+so up front saves everyone time.
+
+## Getting started
 
 ```bash
-# Install the CLI
 cargo install yav-cli
-
-# Create a new project
 yav new my-app
 cd my-app
-
-# Start the development server
 yav dev
 ```
 
-## Features
-
-- 🦀 **Rust-first & Zero-Allocation VDOM** — Write your entire application in Rust with full type-safety and `Cow<'static, str>` zero-copy rendering
-- 🎨 **JSX-like syntax with Native Control Flow** — Declarative UI with `rsx!`, native `if`/`else` and `for` loops, short boolean attributes, class directives (`class:active={is_active}`), and compile-time static subtree folding (`Node::Static`)
-- 🎬 **Zero-JS Motion & Spring Physics** — Damped harmonic oscillator solver (`solveSpring`), gestures, scroll reveals, scroll-spy, count-up numbers, animated gauges, and syntax-preserving typewriter code blocks (<2KB WAAPI runtime, SSR tree-shaken)
-- 🎯 **Cursor Tracking & Reactive 3D Effects** — Native mouse coordinate CSS variables (`--yav-mouse-x/y`), cursor spotlight, 3D tilt plates, magnetic hover attraction, and smooth cursor followers
-- 🎭 **8 Built-in Design Themes** — Seamless switching between Editorial Blueprint, Obsidian Minimal, Nordic Paper, Cyber Terminal, Solarized Lab, Glass Aurora, Neo Brutalism, and Sunset Velvet (`ThemeSelector`, theme cookies, zero-FOUC)
-- 🖥️ **Server-Side Rendering & Streaming** — HTML-first with instant initial render, async chunk streaming, automatic locale injection, and zero-clone `<head>` hoisting (`<Head>`)
-- 📁 **File-based & Reverse Routing** — Next.js-inspired file routing with Route Groups `(auth)`, Parallel Routes `@slot`, Intercepting Routes `(.)`/`(..)`/`(...)`, Optional Catch-All `[[...slug]]`, hierarchical layouts, type-safe reverse routing (`url_for!`), native **View Transitions API**, and predictive prefetching
-- 🧩 **60+ Enterprise UI Components & Charts** — Drawers, Command Palette (⌘K), Carousels, Popovers, Tooltips, Sliders, Steppers, KPI StatCards, SVG Charts (`LineChart`, `BarChart`, `DonutChart`, `Sparkline`), `DataGrid`, `KanbanBoard`, `FlowCanvas` (with live Bézier edge rerouting), `VirtualList`, `RichTextEditor`, `AiChat`, `<Image />` (with CLS prevention, on-the-fly `/_yav/image` optimization, and SVG LQIP blur placeholders), `DatePicker`, `Combobox`, `InputOtp`, `FileDropzone`, `Sheet`, `ResizablePanels`, `Kbd`, and Interactive Themes
-- 🤝 **Real-Time Collaboration, CRDTs & Statecharts** — Conflict-free replicated registers/maps (`LwwRegister`, `LwwMap`), multiplayer cursor/selection `PresenceRoom`, `LexoRank` $O(1)$ fractional ordering, `StateMachine` (XState equivalent), and `SagaWorkflow` compensating transactions
-- 🤖 **Native AI SDK, Streaming UI & Hybrid RAG** — Multi-turn `Conversation`, JSON-Schema `ToolRegistry`, `stream_ui_fragment` / `stream_text_sse`, dense cosine `VectorIndex`, and Reciprocal Rank Fusion (`reciprocal_rank_fusion`) with BM25 `SearchIndex`
-- 🧠 **Model Context Protocol (MCP) Server** — Expose live tools, resources, and prompt templates to AI agents (Claude Desktop, Cursor, Copilot) via JSON-RPC 2.0 (`McpServer`)
-- 🌓 **Partial Prerendering (PPR) & Component Cache** — Next.js 15-style hybrid static shell with dynamic streaming slots (`PprPage`, `PprSlot`) and microsecond-level component fragment cache (`ComponentCache`)
-- 🔑 **WebAuthn / Passkeys Biometric Auth** — Native passwordless FIDO2 authentication (Touch ID, Face ID, Windows Hello, YubiKey) with challenge verification and client scripts (`PasskeyManager`)
-- 🔭 **OpenTelemetry (OTLP) & Distributed Tracing** — W3C `traceparent` context propagation, span hierarchy, OTLP JSON telemetry, and Prometheus metrics exporter (`OtelTracer`)
-- 🧪 **Full-Stack E2E TestClient & DOM Assertions** — Fast in-memory integration testing with automatic cookie jar persistence, session management, and CSS-like DOM assertions (`TestClient`, `DomAssert`)
-- 📄 **Vector PDF 1.4 & RFC 4180 CSV Exporter** — Server-side vector PDF document generation and OWASP formula-injection-safe CSV export (`PdfDocument`, `CsvBuilder`)
-- 🛠️ **In-App DevTools & Live Telemetry** — Interactive floating HUD displaying active routes, registered routes, SSR microsecond latency, cache status, and live Core Web Vitals telemetry (`<DevTools />`)
-- 📅 **Calendar & Appointment Scheduler** — Server-rendered monthly calendar grid and time-slot booking UI with timezone support (`<Calendar />`, `<Scheduler />`)
-- 📊 **Reactive Spreadsheet & Formula Engine** — Excel-like data grid with live formula evaluation (`=SUM()`, `=AVG()`, `=MIN()`, `=MAX()`), cell formatting, and CSV export (`<Spreadsheet />`)
-- 🔍 **Git Code Diff Viewer & Custom Media Player** — LCS-powered side-by-side / unified code diffs (`<DiffViewer />`) and accessible HTML5 media player with chapters and subtitles (`<MediaPlayer />`)
-- ⚡ **Optimistic UI Mutations & Automatic Rollbacks** — 0ms perceived latency (`yav:optimistic-toggle`, `yav:optimistic-inc`, `yav:optimistic-set`, `yav:rollback-toast`) with automatic client snapshot restoration and toast alerts on server failure
-- 📡 **Reactive Live Queries & CDC Server-Push** — Change Data Capture event broadcasting over SSE (`LiveQueryManager`, `LiveEvent`, `live_query_sse_handler`) with targeted DOM morphing
-- 🛡️ **Native PoW Anti-Bot Shield & Honeypots** — High-security CAPTCHA-less bot mitigation using client Web Worker Proof-of-Work hashing (`PowShield`, `pow_client_script`) and invisible spam traps (`Honeypot`)
-- 🌐 **Zero-Dependency GraphQL Engine & GraphiQL Explorer** — Fully typed GraphQL schema, query executor, and embedded GraphiQL 3.x playground (`GraphQlSchema`, `graphql_handler`, `graphiql_html`)
-- 💶 **Geolocation, Multi-Currency & EU VAT Engine** — Automatic edge proxy geo headers resolution (`extract_geo_context`), exact integer multi-currency billing, and penny-accurate European Union VAT across all 27 member states (`VatRule`)
-- 🏛️ **Micro-Frontends & Module Federation Gateway** — Orchestrate distributed services with declarative reverse proxying, path rewriting, authentication forwarding, and parallel slot stitching (`FederationGateway`)
-- 🏷️ **Pure Rust Vector Barcode 128 & QR Code Engine** — Server-rendered crisp vector SVGs for ISO/IEC 18004 QR codes and Code 128 barcodes (`Barcode128`, `QrCode`) with zero C libraries
-- 🔒 **Automated Security Auditor & W3C CSP Reporter** — Real-time OWASP compliance scoring (A+ to F) for HTTP headers and ring-buffered W3C CSP violation reporting (`SecurityAuditor`, `CspReporter`, `csp_report_handler`)
-- 💻 **Web ANSI Terminal & Dynamic Form Builder** — In-browser terminal emulator with 16-color ANSI SGR formatting and live streaming (`<Terminal />`), plus instant form generation from JSON Schema (`<DynamicForm />`)
-- ✍️ **Dual-Pane Live Markdown Editor** — Split-view Markdown authoring with live preview, word counts, and formatting toolbar (`<MarkdownEditor />`)
-- 📈 **Advanced SVG Charts: Heatmap, Sankey & Radar** — Zero-JS vector activity calendar heatmaps (`<Heatmap />`), Sankey flow diagrams (`<SankeyChart />`), and multi-axis spider radar charts (`<RadarChart />`)
-- 📱 **Local-First & Offline Sync Protocol** — Seamless offline mutation queuing in IndexedDB with background synchronization, logical clocks, and optimistic UI updates (`OfflineMutation`, `SyncBatch`, `SyncResponse`)
-- 🏝️ **Zero-Overhead WebAssembly Client Islands** — Load and hydrate compiled WebAssembly modules directly into DOM containers without JS bundlers (`<WasmIsland />`)
-- ⚡ **Circuit Breaker, Bulkhead & Concurrency Limiting** — Proactive resilience engine protecting downstream APIs and connection pools from cascading failures (`CircuitBreaker`, `AdaptiveConcurrencyLimiter`, `Bulkhead`)
-- 📮 **Transactional Outbox Pattern & Event Bus** — Guarantee zero data loss and dual-write consistency between DB transactions and distributed brokers (`TransactionalOutbox`)
-- 🌍 **Multi-Region Database Replica Pool & Router** — Geo-distributed read replica load-balancing with automatic Read-Your-Own-Writes session stickiness (`DbReplicaPool`)
-- 🖼️ **Pure-Rust WebP / AVIF & Image Pipeline** — Zero-dependency format sniffing, metadata extraction, bilinear downsampling, and WebP container packing (`ImagePipeline`, `WebPEncoder`)
-- 🌳 **Interactive Org Chart & Family Tree SVG Graph** — Hierarchical organization charts with orthogonal SVG connectors, department pills, and avatars (`<OrgChart />`)
-- 🎵 **Interactive Audio Synthesizer & Waveform Visualizer** — Peak amplitude bars, dual-tone progress clipping, scrubbing playhead, and timecodes (`<AudioWaveform />`)
-- 🔏 **Zero-Dependency Vector PDF Signer & Watermarking** — Tamper-evident HMAC-SHA256 digital signature stamping and diagonal vector watermarking (`PdfSigner`, `PdfWatermark`)
-- 📜 **Native OpenTelemetry Logtail Live Inspector** — Terminal-grade real-time log inspector with level filtering (`INFO`, `WARN`, `ERROR`) and distributed trace links (`<LogViewer />`)
-- 🎨 **Collaborative Whiteboard & Drawing Canvas** — Chaikin line-smoothed pen strokes, vector shapes, sticky notes, and multiplayer presence (`<Whiteboard />`)
-- 🔍 **Natural Language AI Filter Bar** — Conversational prompt to structured criteria chip converter with instant DataGrid/Table binding (`<AiFilterBar />`)
-- ⚡ **Multi-Tier Distributed Cache & XFetch** — Probabilistic early cache recomputation algorithm avoiding cache stampedes and dogpiling under massive concurrent load (`DistributedCache`, `MemoryL1Store`)
-- 🔒 **Distributed Lock & Leader Election Protocol** — Cluster-wide atomic lease coordination and dynamic leader election for resilient singleton background workers (`DistributedLock`, `LeaderElector`, `LockCoordinator`)
-- 🛡️ **ReBAC / Relationship-Based Access Control** — Fine-grained Zanzibar-style hierarchical graph authorization with direct assignments and transitive role implications (`RebacGraph`)
-- 📊 **Prometheus Metrics & Grafana-Ready Dashboard** — Built-in server telemetry dashboard with live SVG gauges, throughput charts, and percentile histograms (`/metrics/dashboard`)
-- 🔍 **Phonetic & Typo-Tolerant Fuzzy Search** — Damerau-Levenshtein edit distance, American Soundex phonetic encoding, and intelligent "Did you mean?" query suggestions (`FuzzySearchIndex`, `damerau_levenshtein`, `soundex`)
-- 🗺️ **Slippy Tile Vector Map & Geospatial Data Visualizer** — Pure SVG Web Mercator vector map with GPS pin clusters, choropleth country/state polygons, and hover tooltips (`<VectorMap />`)
-- 📅 **Interactive Gantt Chart & Project Roadmap** — SVG project timeline with dependency arrows, milestone markers, and live progress bars (`<GanttChart />`)
-- 📑 **Vector PDF Document Reader & Annotator** — Zero-dependency vector PDF reader with page navigation controls, zoom toolbar, and SVG annotation highlights (`<PdfViewer />`)
-- 🚀 **Spotlight Guided Tour & Onboarding Walkthrough** — Interactive step-by-step onboarding walkthrough with cutout dark masks, element spotlighting, and local storage state persistence (`<SpotlightTour />`)
-- 🎙️ **Voice Memo & Live Audio Recorder** — Microphone capture component with animated frequency waveforms, timer indicators, playback preview, and direct upload bindings (`<MediaRecorder />`)
-- 🧊 **Pure-Rust 3D Wireframe & Mesh Visualizer** — Pure-Rust 3D linear algebra (Euler rotations, perspective projections) rendered directly into SVG wireframes and shaded polygon meshes with mouse-drag orbit (`<ModelViewer3D />`)
-- 💻 **Interactive Code Sandbox & REPL** — Split-pane live code editor with line numbers gutter, tab indentation, copy button, Ctrl+Enter hotkey runner, and remote API sandbox integration (`<CodePlayground />`)
-- ⚡ **TurboStream Multi-Zone DOM Mutations** — Stream targeted HTML fragments over SSE/HTTP to append, prepend, replace, or remove DOM containers without page reload (`TurboStream`, `TurboMessage`, `TurboAction`)
-- 🏛️ **Event Sourcing & CQRS Aggregate Engine** — Immutable event streams with strict optimistic version concurrency, aggregate state rehydration, and read-model projections (`EventStore`, `DomainEvent`, `Projection`)
-- 📁 **Resumable Chunked Uploads (Tus Protocol v1.0.0)** — Network interruption recovery, partial binary chunk concatenation, and checksum validation (`ChunkedUploader`, `UploadSession`)
-- 🔔 **RFC 8291/8292 Web Push & VAPID Authorization** — Zero-dependency Web Push notification dispatching with VAPID JWT generation (`WebPushNotification`, `VapidSigner`, `PushSubscription`)
-- 🎭 **Mock API Server & Realistic Data Faker** — Route matching, latency simulation, and deterministic fake data generator for isolated frontend testing (`MockServer`, `MockEndpoint`, `MockFaker`)
-- 🌐 **Static i18n Key Extractor & Translation Linter** — Static analysis scanning templates for `t!("key")` invocations, detecting missing and orphaned translation keys (`scan_source_code`, `lint_catalog`)
-- 🌳 **Interactive JSON / YAML Tree Explorer** — Collapsible syntax-highlighted tree viewer with depth limits, item counts, and JSONPath copy buttons (`<JsonTreeViewer />`)
-- ⬡ **Hexagonal Grid & Isometric Spatial Mapping** — Pure-SVG pointy-topped hex grid with axial coordinates, Manhattan distance calculation, and interactive click handlers (`<HexGrid />`)
-- ✍️ **Vector Handwritten Signature Pad** — Zero-JS canvas touch and mouse signature capture with clear button and base64 hidden form synchronization (`<SignaturePad />`)
-- ⏳ **Chronological Timeline & Audit Trail** — Vertical status timeline with connecting lines, timestamp tags, actor pills, and rich descriptions (`<Timeline />`)
-- 🔀 **Before / After Image Comparison Slider** — Interactive dual-image split-view slider with draggable divider handle and custom labels (`<ImageCompareSlider />`)
-- 🍪 **GDPR & ePrivacy Cookie Consent Preference Center** — Accessible cookie banner with category preference toggles, localStorage persistence, and DOM dispatch events (`<CookieConsent />`)
-- 🏢 **Enterprise Auth, Multi-Tenancy, ABAC & Billing** — JWT HS256, OAuth2 PKCE, PBKDF2-SHA256, TOTP 2FA, `FeatureFlag` rollout engine, `TenantContext`, ABAC `PolicyEngine`, SHA-256 hash-chained `AuditTrail`, exact integer `Money` with penny-allocation, Stripe/Svix `WebhookVerifier`, `IdempotencyStore`, S3/R2 `PresignedUrlSigner`, Geospatial `GeoPolygon`/`SpatialIndex`, and pluggable `ServiceAdapters`
-- 🎯 **Built-in icons** — 13,000+ icons embedded directly in the binary across three design systems: **Lucide** (Classic), **MynaUI** (Minimal), and **Phosphor** (System)
-- 🌊 **Tailwind CSS** — Standalone CLI, zero Node.js / npm dependencies required
-- 🗜️ **Asset Pre-Compression, Minifier & SSG** — Automatic transparent Brotli (`.br`) & Gzip (`.gz`) serving, built-in HTML/CSS minifier, GFM Markdown + syntax highlighting, and full Static Site Generation with minified pages via `yav export`
-- 📥 **Compile-Time Macros (`#[derive(FromFormData, ApiSchema)]`, `#[server]`, `auto_routes!`)** — Zero-boilerplate form validation, multi-format body ingestion (JSON, Multipart, URL-encoded), OpenAPI 3.1 + TypeScript interface generation, RPC Server Actions with auto-wiring, and `typed_routes!` reverse routing
-- 🌐 **Async Context, i18n & Fine-Grained Reactive Signals** — Scoped request state (`AppState` / `use_state`), XSS-safe translation catalogs (`t!`), `Signal<T>` / `Computed<T>` reactive primitives, non-destructive DOM morphing (`window.__yavMorph`), and automated CSP nonce injection into `<script nonce="...">` tags
-- ⚡ **Hot reload, Error Overlay & WebSocket Live Swap** — Live browser reload, compiler error overlay, and real-time DOM pushing with `WsBroadcast`
-- 📦 **Single-file manifest** — `package.yavml` configures metadata, server, Tailwind, scripts & deps
-- 🚀 **Automatic HTTP & SSR Caching** — In-memory SSR route caching (`get_cached`), Blake3/SHA-256 ETags with 304 Not Modified conditional responses
-- 🛡️ **Production-Ready Security** — HMAC-SHA256 session cookies, CSPRNG CSRF token salting, sliding-window rate limiting, and security headers
-- 🩺 **Developer Diagnostics & Route Inspection** — `yav doctor` for full system auditing and `yav routes` for tabular inspection of routes and handlers
-- ♿ **Accessible** — Semantic HTML, keyboard micro-actions (`yav:hotkey`), and full ARIA compliance
-
-## Writing Components & Motion
+A whole application also fits in one file. This one compiles as-is:
 
 ```rust
 use yav::prelude::*;
-use yav::ui::{Motion, MotionState, Transition, Button};
+
+#[tokio::main]
+async fn main() -> std::io::Result<()> {
+    let app = YavApp::new().port(3000).get("/", |_req| async {
+        html_response(
+            StatusCode::OK,
+            render_to_string(&rsx! {
+                <main class="p-8">
+                    <h1>"Hello from Rust"</h1>
+                    <p>"No Node toolchain, no JS bundler."</p>
+                </main>
+            }),
+        )
+    });
+    app.serve().await
+}
+```
+
+Read that file against the five steps above: `rsx!` (step 3) builds the page,
+`.get("/", …)` registers the file-based route (step 4), `render_to_string`
+escapes and serializes it (step 5), and `serve()` starts the Axum listener.
+There is no hidden build step between the Rust source and the response.
+
+`yav new` lays out a project like this:
+
+```text
+my-app/
+├── package.yavml            server, Tailwind, scripts, dependencies
+├── src/
+│   ├── main.rs
+│   ├── routes/
+│   │   ├── mod.rs
+│   │   ├── index.rs          /
+│   │   ├── about.rs          /about
+│   │   └── users/
+│   │       └── _id_.rs       /users/:id
+│   └── layouts/
+│       └── app_layout.rs     shared shell
+└── public/
+    └── styles.css
+```
+
+`auto_routes!` scans that tree at compile time. Dynamic segments are written
+`_id_` rather than `[id]` so the file is also a valid Rust module name. Route
+groups, parallel slots and intercepting routes are covered in
+[`docs/routing.md`](docs/routing.md).
+
+## How a request is served
+
+The middleware stack is ordinary Tower layers. From the outside in:
+
+```mermaid
+flowchart TD
+    req["HTTP request"] --> outer["compression, request log,<br/>security headers, 2 MiB body limit"]
+    outer --> etag["ETag / 304 layer"]
+    etag --> session["Session layer<br/>signed cookie, CSP nonce"]
+    session --> method{"Unsafe method?<br/>POST, PUT, PATCH, DELETE"}
+    method -->|yes| csrf["CSRF token check"]
+    method -->|no| handler["Route handler"]
+    csrf -->|valid| handler
+    csrf -->|missing or wrong| forbidden["403 Forbidden"]
+    handler --> node["rsx! builds a Node tree"]
+    node --> render["renderer escapes by context<br/>and hoists head templates"]
+    render --> resp["HTML response<br/>security headers, nonce, ETag"]
+```
+
+Sessions use an ephemeral CSPRNG secret when `SESSION_SECRET` is not set, so
+cookies are not signed with a publicly known constant. They also do not survive
+a restart in that case; set the variable in production. Rate limiting is
+optional and off unless you add it.
+
+## From `rsx!` to HTML
+
+Most of the work happens before the server starts. The macro parses the markup,
+rejects mismatched tags at compile time, and folds literal subtrees into
+`Node::Static` so they cost nothing to render again.
+
+```mermaid
+flowchart LR
+    subgraph ct["Compile time"]
+        src["rsx! { ... }"] --> parse["parser checks tags,<br/>attributes and control flow"]
+        parse --> gen["generated Rust:<br/>Node tree, static folds"]
+    end
+    subgraph rt["Request time"]
+        gen --> tree["Node tree + request context"]
+        tree --> walk["render_to_string"]
+        walk --> esc["escape_html / escape_attribute / escape_url<br/>plus srcdoc, srcset, style"]
+        esc --> html["HTML string"]
+    end
+```
+
+Here is the whole idea in one example. Given a value you do not control:
+
+```rust
+let name = "<script>alert(1)</script>";
+let html = render_to_string(&rsx! { <h1 class="title">{name}</h1> });
+```
+
+`html` is exactly:
+
+```html
+<h1 class="title">&lt;script&gt;alert(1)&lt;/script&gt;</h1>
+```
+
+There is no `escape()` call in your code and nothing to remember. The renderer
+knows `{name}` is a text node and applies the right rules. Put the same value
+in an `href` and URL rules apply instead; `escape_url` rejects unsafe schemes.
+That is the part a single generic escape helper cannot cover.
+
+Components are plain functions. `Motion` below is a builder that emits CSS
+custom properties and a small Web Animations script, so the animation still
+works with a strict CSP:
+
+```rust
+use yav::prelude::*;
+use yav::ui::{Button, Motion, MotionState, Transition};
 
 #[component]
 pub fn Hero() -> Node {
-    let title_motion = Motion::new(rsx! {
-        <h1 class="text-5xl font-black text-white">"Vitesse & Élégance"</h1>
-    })
-    .initial(MotionState::new().opacity(0.0).y(20.0).scale(0.95))
-    .animate(MotionState::new().opacity(1.0).y(0.0).scale(1.0))
-    .transition(Transition::spring().stiffness(180.0).damping(16.0));
+    let title = Motion::new()
+        .child(rsx! {
+            <h1 class="text-5xl font-black">"Vitesse & Élégance"</h1>
+        })
+        .initial(MotionState::new().opacity(0.0).y(20.0).scale(0.95))
+        .animate(MotionState::new().opacity(1.0).y(0.0).scale(1.0))
+        .transition(Transition::spring().stiffness(180.0).damping(16.0));
 
     rsx! {
-        <main class="min-h-screen bg-gray-950 p-12 flex flex-col items-center justify-center">
-            {title_motion}
-            <p class="mt-4 text-gray-400 text-lg">
-                "Framework web full-stack ultra-performant propulsé par Rust."
-            </p>
-            <div class="mt-8 flex gap-4">
-                <Button variant="primary">"Explorer le catalogue"</Button>
-            </div>
+        <main class="min-h-screen p-12">
+            {title}
+            <Button variant="primary">"Explorer le catalogue"</Button>
         </main>
     }
 }
 ```
 
-## CLI Commands
+The `#[component]` macro generates a `HeroProps` type even when the function
+takes no arguments; in RSX you write `<Hero />`. Raw markup is available
+through the `Node::Raw` variant, but it bypasses escaping. Only use it for
+static, trusted strings.
 
-| Command | Description |
-|---------|-------------|
-| `yav new <name>` | Create a new project with Tailwind & file routing |
-| `yav dev` | Start development server with live reload and error overlay |
-| `yav doctor` | Run diagnostic audit on toolchains, tailwind, git, and project health |
-| `yav routes` | Inspect file-based route table, HTTP handlers, dynamic parameters, and layouts |
-| `yav export` | Static site generation (SSG) - export HTML pages to `dist/` |
-| `yav update` | Update the `yav` CLI binary and current project dependencies (`aliases: up, upgrade`) |
-| `yav add <component>` | Add UI templates (`drawer`, `command-menu`, `theme-selector`, `motion`, `cursor-spotlight`, etc.) |
-| `yav run <script>` | Run a custom script defined in `package.yavml` |
-| `yav codegen --ts` | Generate TypeScript definitions from Rust structs |
-| `yav codegen --openapi`| Export OpenAPI 3.1 specifications |
-| `yav build` | Build optimized release binary and purged CSS |
-| `yav analyze` | Audit bundle sizes, routes, assets, and performance scorecard |
-| `yav pwa` | Scaffold PWA manifest, service worker, and offline page |
-| `yav check` | Validate project manifest and code syntax |
-| `yav test` | Run workspace test suite |
-| `yav ext install` | Install/update Yav extension in VS Code, Cursor, Insiders, and VSCodium |
-| `yav ext status` | Check installation status of Yav extension across detected editors |
-| `yav deploy <target>`| Generate deployment configs for Fly.io, Shuttle.rs, Railway, and Systemd |
-| `yav docker` | Scaffold multi-stage production Docker deployment |
-| `yav db` | Database migrations and connection management |
+## Workspace layout
 
-## Architecture
+Nine crates. `yav` is the facade most applications import; everything below it
+can also be used on its own.
 
+```mermaid
+flowchart TB
+    app["your application"] --> facade["yav"]
+    facade --> core["yav-core<br/>Node, renderer, escaping, context, i18n"]
+    facade --> macros["yav-macros<br/>rsx!, #[component], route macros"]
+    facade --> router["yav-router<br/>route table, url_for()"]
+    facade --> server["yav-server<br/>Axum, SSR, middleware, modules"]
+    facade --> ui["yav-ui<br/>components, themes, motion"]
+    facade --> icons["yav-icons<br/>Lucide, MynaUI, Phosphor"]
+    facade --> build["yav-build<br/>manifest, Tailwind, assets"]
+    server --> core
+    server --> router
+    server --> build
+    ui --> core
+    ui --> icons
+    router --> core
+    icons --> core
+    cli["yav-cli"] --> server
+    cli --> build
 ```
-crates/
-├── yav/          # Umbrella crate (re-exports)
-├── yav-core/     # Node types, rendering, escaping
-├── yav-macros/   # rsx! and #[component] proc macros
-├── yav-router/   # File-based routing
-├── yav-server/   # Axum HTTP server + SSR
-├── yav-ui/       # UI component library
-├── yav-icons/    # Built-in icon system
-├── yav-build/    # package.yavml manifest + Tailwind CSS + asset pipeline
-└── yav-cli/      # CLI tool
-```
+
+`yav-cli` is a separate binary that embeds its own copy of the VS Code
+extension, so `yav ext install` works offline. The icon catalog is generated
+Rust source; `yav` enables the Classic family by default (~1,900 variants) and
+`features = ["full-icons"]` links all three (~13,600). See
+[`docs/icons.md`](docs/icons.md).
+
+## What else is in the box
+
+Yav is not a thin wrapper. It ships **82 UI components** across **56 modules**,
+bundled with **8 themes**, a **~1,900-icon** classic set (and **~13,600** more
+behind the `full-icons` feature), and **57 server modules** for sessions, CSRF,
+auth, jobs, graphs and streaming. A short index first; the component names below
+it are real, taken from `yav-ui`. The full component catalogue lives in
+[`docs/components.md`](docs/components.md).
+
+| Area | Entry points | State |
+|---|---|---|
+| Rendering | `rsx!`, `#[component]`, `Node`, `Head`, `PageMeta` | ready |
+| UI | `yav-ui`: drawers, charts, grids, editors, 8 themes, motion | ready |
+| Routing | `auto_routes!`, `typed_routes!`, `url_for()` | ready |
+| Server | `YavApp`, sessions, `CsrfConfig`, `SecurityHeadersConfig` | ready |
+| Forms and data | `FromFormData`, `#[server]`, `CsvBuilder`, `PdfDocument` | library |
+| Auth | `JwtManager`, `Totp`, `PasskeyManager`, `RebacGraph`, `PolicyEngine` | library |
+| Observability | `YavApp::otel(true)`, `OtelTracer`, `SecurityAuditor`, `CspReporter` | opt-in automatic HTTP spans; DB/AI spans still manual |
+| Integrations | `GraphQlSchema`, `WebPushNotification`, `FederationGateway`, `McpServer` | library, not mounted |
+| Images | `ImagePipeline`, `WebPEncoder` | WebP output only; no AVIF encoder |
+| Build | `package.yavml`, Tailwind CLI, `yav export` | ready |
+| Local primitives | `DistributedCache`, `DistributedLock`, `TransactionalOutbox`, `DbReplicaPool` | in-memory, single process |
+| Experimental | `ai`, `pdf_signer`, `pdf_viewer` | see `docs/limitations.md` |
+
+The integrations added from the [competitive roadmap](docs/competitive-roadmap.md)
+are real adapters, but they are compiled only when their Cargo feature is
+enabled: SQL drivers, executable migrations, tagged cache, durable jobs, SMTP,
+object storage, an HTTP LLM client, Garde validation, schema helpers, OAuth2,
+Argon2id, an OTLP exporter, a11y linting, advanced Markdown and Fluent i18n.
+See [Opt-in integrations](docs/opt-in-integrations.md) for the feature names,
+entry points and the boundaries that still apply.
+
+A few things that are easy to misread. The GraphQL executor is a small
+top-level field resolver (no fragments, variables or directives) with a
+hand-written playground page, not GraphiQL 3.x. `pdf_signer` produces an HMAC
+integrity tag, not a PAdES/X.509 signature. `SecurityAuditor` computes a local
+header heuristic, not an OWASP certification. With no Cargo feature enabled,
+the service adapters are explicitly named test mocks and return errors; the
+opt-in features above replace them with real drivers.
+The metrics dashboard reads real `OtelTracer` counters and shows `0` for
+anything that is not instrumented.
+
+### The component library
+
+`yav-ui` exposes 82 components. They are grouped below by what they are for; the
+names are the actual exported functions.
+
+**Layout & structure** — `Container`, `Grid`, `Stack`, `Card` (+ `CardHeader`,
+`CardTitle`, `CardDescription`, `CardContent`, `CardFooter`), `Separator`,
+`ResizablePanels`, `Skeleton`
+
+**Navigation** — `Navbar`, `Sidebar` (+ `SidebarItem`), `Breadcrumbs`, `Tabs`,
+`Stepper`, `Pagination`, `Accordion` (+ `AccordionItem`), `Dropdown`,
+`CommandMenu` (+ `CommandGroup`, `CommandItem`), `Link`, `Kbd`, `Button`
+
+**Forms & inputs** — `Form` (+ `FormField`, `FormGroup`), `Input`, `Textarea`,
+`Checkbox`, `Switch`, `Radio`, `Select`, `Combobox`, `DatePicker`, `InputOtp`,
+`RangeSlider`, `Slider`, `FileDropzone`, `ProgressBar`, `ScrollProgressBar`
+
+**Data display** — `Table`, `DataGrid`, `StatCard`
+
+**Charts** — `LineChart`, `BarChart`, `DonutChart`, `Sparkline`, `AnimatedBar`
+
+**Feedback & overlay** — `Alert`, `Toast` (+ `ToastContainer`), `EmptyState`,
+`Loading`, `Tooltip`, `Dialog`, `Drawer`, `Sheet`, `Popover`
+
+**Media & content** — `Image`, `CodeBlock`, `Avatar`, `Carousel`, `Badge`
+
+**Motion & interaction** — `Motion` (+ `MotionGroup`), `CursorFollower`,
+`CursorSpotlight`, `Magnetic`, `TiltPlate`, `TypewriterCode`, `CountUp`,
+`Counter`, `Island`
+
+**Theming & meta** — `MetaTags`, `ThemeSelector`, `ThemeToggle`, `Label`
+
+The complete list, with props and usage, is in
+[`docs/components.md`](docs/components.md).
+
+## CLI
+
+| Command | What it does |
+|---|---|
+| `yav new <name> [--check]` | Scaffold a project; `--check` verifies it with `cargo check` |
+| `yav dev` | Dev server with live reload and error overlay |
+| `yav build` | Release binary and purged CSS |
+| `yav export` | Static site generation into `dist/` |
+| `yav routes` | Print the resolved route table |
+| `yav doctor` | Check toolchains and project health (exits non-zero on failures) |
+| `yav check` | Validate manifest and syntax |
+| `yav test` | Run the test suite |
+| `yav add <component>` | Add UI templates to the project |
+| `yav codegen --ts --openapi` | Emit TypeScript interfaces and an OpenAPI 3.1 spec |
+| `yav icon search` | Query the compiled icon catalog (`list` and `info` too) |
+| `yav db` | Migrations (needs `DATABASE_URL` and a DB client) |
+| `yav deploy <target>` | Generate Fly.io, Railway, Shuttle or systemd config |
+| `yav ext install` | Install the editor extension (`status` inspects it) |
+
+The complete command list is in [`docs/cli.md`](docs/cli.md). `yav codegen --ts`
+emits framework and route types; it does not parse arbitrary Rust structs.
 
 ## Documentation
 
-Comprehensive guides are available in the [`docs/`](docs/) directory:
-
-- [Architecture & Design Principles](docs/architecture.md)
-- [Getting Started](docs/getting-started.md)
-- [Zero-JS Declarative Interactivity & Motion Engine](docs/zero-js-interactions-and-motion.md)
-- [Multi-Theme System (8 Design Themes)](docs/themes.md)
-- [Routing, Layouts & Static Site Generation](docs/routing.md)
-- [Components Guide (58 primitives & RSX Control Flow)](docs/components.md)
-- [Icons System (Lucide, MynaUI & Phosphor)](docs/icons.md)
-- [Styling & Tailwind CSS Engine](docs/styling.md)
-- [Interactivity, HTMX & WebSocket Live Swap](docs/interactivity-and-htmx.md)
-- [SEO, Open Graph & Structured Data](docs/seo-and-metadata.md)
-- [Development Server & HMR](docs/development-server.md)
-- [Production Optimization & Deployment](docs/production.md)
-- [Security & Threat Mitigation](docs/security.md)
-- [CLI Reference](docs/cli.md)
-- [Configuration Reference](docs/configuration.md)
+| Topic | Guides |
+|---|---|
+| Start | [Getting started](docs/getting-started.md) · [Configuration](docs/configuration.md) · [CLI reference](docs/cli.md) |
+| Building UI | [Components](docs/components.md) · [Styling](docs/styling.md) · [Icons](docs/icons.md) · [Themes](docs/themes.md) · [Zero-JS motion](docs/zero-js-interactions-and-motion.md) |
+| Server | [Architecture](docs/architecture.md) · [Routing](docs/routing.md) · [Dev server](docs/development-server.md) · [Production](docs/production.md) · [Security](docs/security.md) |
+| Details | [Opt-in integrations](docs/opt-in-integrations.md) · [SEO and metadata](docs/seo-and-metadata.md) · [Interactivity and HTMX](docs/interactivity-and-htmx.md) · [Known limitations](docs/limitations.md) · [Competitive roadmap](docs/competitive-roadmap.md) |
+| Project | [Audit](AUDIT-2026-11-13.md) · [Implementation report](IMPLEMENTATION-2026-11-15.md) · [Changelog](CHANGELOG.md) · [Contributing](CONTRIBUTING.md) · [Security policy](SECURITY.md) |
 
 ## Examples
 
-- **[Enterprise SaaS Dashboard (`examples/dashboard`)](examples/dashboard/)**: Full-featured enterprise application showcasing KPI stat cards, dynamic route parameter resolution (`/projects/:id`), interactive component showroom, searchable icon explorer (Lucide, MynaUI, Phosphor), and CSRF-protected settings form.
+[`examples/dashboard`](examples/dashboard/) is a full application: KPI cards,
+dynamic routes, a component gallery, an icon explorer and a CSRF-protected
+settings form. It is excluded from the workspace, so check it separately:
+
+```bash
+cargo test --manifest-path examples/dashboard/Cargo.toml --locked
+```
+
+[`test-app`](test-app/) is a second, smaller demo project.
+
+If the five-step model above matches how you want to work, start with
+`yav new my-app`. Everything else here is reference material.
 
 ## License
 
-Licensed under either of:
+Dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at
+your option.
 
-- MIT License ([LICENSE-MIT](LICENSE-MIT))
-- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
-
-at your option.
-
-## Acknowledgments
-
-- [Lucide Icons](https://lucide.dev/) — ISC License
-- [MynaUI Icons](https://mynaui.com/) — MIT License
-- [Phosphor Icons](https://phosphoricons.com/) — MIT License
-- [Tailwind CSS](https://tailwindcss.com/) — MIT License
-- [Axum](https://github.com/tokio-rs/axum) — MIT License
+Icon catalogs keep their own licenses: Lucide (ISC), MynaUI (MIT), Phosphor
+(MIT). The texts ship with the `yav-icons` crate; see
+[`assets/ATTRIBUTION.md`](assets/ATTRIBUTION.md).
 
 ## Author
 
-Crafted by **[Isaac Yav](https://github.com/isaacvay)**.
+[Isaac Yav](https://github.com/isaacvay).

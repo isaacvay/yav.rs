@@ -212,9 +212,20 @@ impl PageMeta {
             ));
         }
 
-        // JSON-LD (sanitize </ to <\/ to prevent script breakout XSS)
+        // JSON-LD: encode `<`, `>`, `&` and JS line separators as JSON unicode
+        // escapes so a caller-supplied `</script>` cannot close the element.
         if let Some(ref ld) = self.json_ld {
-            let safe_ld = ld.replace("</", "<\\/");
+            let mut safe_ld = String::with_capacity(ld.len());
+            for ch in ld.chars() {
+                match ch {
+                    '<' => safe_ld.push_str("\\u003c"),
+                    '>' => safe_ld.push_str("\\u003e"),
+                    '&' => safe_ld.push_str("\\u0026"),
+                    '\u{2028}' => safe_ld.push_str("\\u2028"),
+                    '\u{2029}' => safe_ld.push_str("\\u2029"),
+                    _ => safe_ld.push(ch),
+                }
+            }
             out.push_str(&format!(
                 r#"<script type="application/ld+json">{}</script>"#,
                 safe_ld

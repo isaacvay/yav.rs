@@ -1,4 +1,4 @@
-//! # YAV Core (v0.1.4)
+//! # YAV Core
 //!
 //! Foundation types and rendering engine for the Yav web framework.
 //!
@@ -23,6 +23,11 @@ mod render;
 pub mod signals;
 pub mod state_machine;
 pub mod wasm;
+
+#[cfg(feature = "i18n-advanced")]
+pub mod i18n_advanced;
+#[cfg(feature = "i18n-advanced")]
+pub use i18n_advanced::{choose_plural, FluentArgs, FluentCatalog, FluentResource};
 
 pub use collab::*;
 pub use component::*;

@@ -1,14 +1,21 @@
 //! Production Metrics Dashboard & Grafana-Ready Visualizer.
 //!
-//! Exposes a zero-dependency server-rendered monitoring dashboard (`/metrics/dashboard`)
-//! featuring SVG gauges, latency percentiles, throughput charts, and cache hit ratios.
+//! Exposes a zero-dependency server-rendered monitoring dashboard (`/metrics/dashboard`).
+//! The built-in handler is backed by **real** OpenTelemetry data from
+//! [`crate::otel::global_tracer()`]; values that are not instrumented are shown as `0`
+//! and are never fabricated.
 
 use axum::http::StatusCode;
 use axum::response::Response;
 
 use crate::handler::html_response;
+use crate::otel::global_tracer;
 
-/// Render the complete self-contained HTML metrics dashboard.
+/// Render the complete self-contained HTML metrics dashboard from caller-supplied values.
+///
+/// This is a pure renderer: it invents nothing and is kept for callers that already own
+/// their metrics. The built-in [`metrics_dashboard_handler`] does **not** use hardcoded
+/// demo values — see [`render_live_metrics_dashboard_html`].
 #[must_use]
 #[allow(clippy::too_many_arguments)]
 pub fn render_metrics_dashboard_html(
@@ -21,6 +28,33 @@ pub fn render_metrics_dashboard_html(
     p99_ms: f64,
     cache_hit_pct: f64,
     memory_mb: f64,
+) -> String {
+    render_dashboard_html(
+        app_name,
+        uptime_secs,
+        total_requests,
+        requests_per_sec,
+        p50_ms,
+        p90_ms,
+        p99_ms,
+        cache_hit_pct,
+        memory_mb,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_dashboard_html(
+    app_name: &str,
+    uptime_secs: u64,
+    total_requests: u64,
+    requests_per_sec: f64,
+    p50_ms: f64,
+    p90_ms: f64,
+    p99_ms: f64,
+    cache_hit_pct: f64,
+    memory_mb: f64,
+    live: Option<LiveMetrics>,
 ) -> String {
     let safe_app_name = yav_core::escape_html(app_name);
     let days = uptime_secs / 86400;
@@ -47,6 +81,34 @@ pub fn render_metrics_dashboard_html(
     let p50_bar = (clean_p50 * 3.0).clamp(4.0, 100.0);
     let p90_bar = (clean_p90 * 3.0).clamp(8.0, 100.0);
     let p99_bar = (clean_p99 * 3.0).clamp(12.0, 100.0);
+
+    let is_live = live.is_some();
+    let source_note = if is_live {
+        " • Source: live OpenTelemetry spans (unmeasured values = 0)"
+    } else {
+        ""
+    };
+    let live_cards = match live {
+        Some(m) => format!(
+            r#"        <div class="card">
+            <div class="card-title">Mean Latency (over recorded spans)</div>
+            <div class="card-value">{avg:.2} <span style="font-size: 1rem; font-weight: 500; color: var(--muted);">ms</span></div>
+            <div class="card-sub">{spans} spans • {dur_us} µs cumulative • percentiles not instrumented</div>
+        </div>
+        <div class="card">
+            <div class="card-title">Error Rate (ERROR spans)</div>
+            <div class="card-value">{err:.2}%</div>
+            <div class="card-sub">{errors} errors / {spans} spans</div>
+        </div>
+"#,
+            avg = m.avg_latency_ms,
+            spans = m.total_spans,
+            dur_us = m.total_duration_us,
+            err = m.error_rate_pct,
+            errors = m.total_errors,
+        ),
+        None => String::new(),
+    };
 
     format!(
         r#"<!DOCTYPE html>
@@ -80,7 +142,7 @@ pub fn render_metrics_dashboard_html(
     <div class="header">
         <div>
             <h1 style="font-size: 1.5rem; font-weight: 800;">{safe_app_name} Server Telemetry</h1>
-            <p style="color: var(--muted); font-size: 0.875rem; margin-top: 0.25rem;">Uptime: {uptime_str} • Auto-refresh: 5s</p>
+            <p style="color: var(--muted); font-size: 0.875rem; margin-top: 0.25rem;">Uptime: {uptime_str} • Auto-refresh: 5s{source_note}</p>
         </div>
         <div class="badge-live">
             <span class="badge-dot"></span>
@@ -104,6 +166,7 @@ pub fn render_metrics_dashboard_html(
             <div class="card-value">{memory_mb:.1} <span style="font-size: 1rem; font-weight: 500; color: var(--muted);">MB</span></div>
             <div class="card-sub">Zero memory leaks (jemalloc / rust)</div>
         </div>
+        {live_cards}
     </div>
 
     <div class="grid" style="grid-template-columns: 2fr 1fr;">
@@ -137,24 +200,98 @@ pub fn render_metrics_dashboard_html(
     )
 }
 
+/// Real, non-fabricated telemetry derived from [`global_tracer()`].
+///
+/// Every field is read from the live OpenTelemetry tracer. Metrics that are not
+/// instrumented (percentiles, cache hit ratio, RSS memory) are deliberately reported
+/// as `0` by [`render_live_metrics_dashboard_html`] and are never invented.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct LiveMetrics {
+    /// Seconds since the global tracer was initialized.
+    pub uptime_secs: u64,
+    /// Total recorded spans (one `SERVER` span per traced HTTP request).
+    pub total_spans: u64,
+    /// Spans with status `"ERROR"`.
+    pub total_errors: u64,
+    /// Cumulative span duration in microseconds.
+    pub total_duration_us: u64,
+    /// `total_spans / uptime_secs`, or `0` when uptime is zero.
+    pub requests_per_sec: f64,
+    /// `total_duration_us / total_spans` converted to milliseconds, or `0`.
+    pub avg_latency_ms: f64,
+    /// `total_errors / total_spans` expressed as a percentage, or `0`.
+    pub error_rate_pct: f64,
+}
+
+/// Read real telemetry from [`global_tracer()`]; unknown/absent values stay `0`.
+#[must_use]
+pub fn live_metrics() -> LiveMetrics {
+    let tracer = global_tracer();
+    let total_spans = tracer.total_spans();
+    let total_errors = tracer.total_errors();
+    let total_duration_us = tracer.total_duration_us();
+    let uptime_secs = tracer.uptime_secs();
+
+    let requests_per_sec = if uptime_secs == 0 {
+        0.0
+    } else {
+        total_spans as f64 / uptime_secs as f64
+    };
+    let avg_latency_ms = if total_spans == 0 {
+        0.0
+    } else {
+        (total_duration_us as f64 / total_spans as f64) / 1000.0
+    };
+    let error_rate_pct = if total_spans == 0 {
+        0.0
+    } else {
+        (total_errors as f64 / total_spans as f64) * 100.0
+    };
+
+    LiveMetrics {
+        uptime_secs,
+        total_spans,
+        total_errors,
+        total_duration_us,
+        requests_per_sec,
+        avg_latency_ms,
+        error_rate_pct,
+    }
+}
+
+/// Build the dashboard HTML from real tracer data, with no sample/demo constants.
+///
+/// Percentiles, cache hit ratio and RSS memory are not instrumented by the tracer,
+/// so they are rendered as `0` rather than guessed.
+#[must_use]
+pub fn render_live_metrics_dashboard_html(app_name: &str) -> String {
+    let m = live_metrics();
+    render_dashboard_html(
+        app_name,
+        m.uptime_secs,
+        m.total_spans,
+        m.requests_per_sec,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        Some(m),
+    )
+}
+
 /// Axum handler serving the interactive metrics dashboard on `GET /metrics/dashboard`.
 ///
-/// Returns a pre-configured metrics overview with sample telemetry data.
-/// To visualize dynamic live metrics from your application, call [`render_metrics_dashboard_html`]
-/// with your Prometheus/OpenTelemetry counters and percentiles.
+/// All numbers come from [`global_tracer()`] via [`live_metrics`]; this handler uses
+/// **no sample/demo telemetry**. Requests = recorded spans, mean latency =
+/// `total_duration_us / total_spans`, error rate = `errors / spans`, and uptime =
+/// time since tracer initialization. Non-instrumented values are `0`, never invented.
+/// To render your own numbers, call [`render_metrics_dashboard_html`] directly.
 pub async fn metrics_dashboard_handler() -> Response {
-    let html = render_metrics_dashboard_html(
-        "Yav.rs Production",
-        86400 * 3 + 3600 * 4,
-        1_420_850,
-        342.5,
-        1.2,
-        4.8,
-        12.4,
-        96.8,
-        38.4,
-    );
-    html_response(StatusCode::OK, html)
+    html_response(
+        StatusCode::OK,
+        render_live_metrics_dashboard_html("Yav.rs Production"),
+    )
 }
 
 #[cfg(test)]
@@ -163,7 +300,7 @@ mod tests {
 
     #[test]
     fn test_render_metrics_nan_safety() {
-        // Must not panic when encountering NaN or negative values
+        // Must not panic when encountering NaN or negative values.
         let html = render_metrics_dashboard_html(
             "Faulty Telemetry",
             0,
@@ -179,7 +316,8 @@ mod tests {
     }
 
     #[test]
-    fn test_render_metrics_dashboard() {
+    fn test_render_metrics_dashboard_pure_renderer() {
+        // Pure renderer: values are supplied by the caller, not demo constants.
         let html = render_metrics_dashboard_html(
             "Acme Service",
             3600,
@@ -195,6 +333,47 @@ mod tests {
         assert!(html.contains("LIVE METRICS"));
         assert!(html.contains("120.0"));
         assert!(html.contains("p50 (Median)"));
+        assert!(html.contains("10000 total lifetime requests"));
         assert!(html.contains("/metrics (Prometheus)"));
+    }
+
+    #[test]
+    fn test_live_metrics_are_derived_from_tracer() {
+        let m = live_metrics();
+        assert!(m.avg_latency_ms >= 0.0);
+        assert!(m.error_rate_pct >= 0.0 && m.error_rate_pct <= 100.0);
+        assert!(m.requests_per_sec >= 0.0);
+        if m.total_spans == 0 {
+            assert_eq!(m.avg_latency_ms, 0.0, "unknown latency must be 0");
+            assert_eq!(m.error_rate_pct, 0.0, "unknown error rate must be 0");
+        } else {
+            let expected_latency = (m.total_duration_us as f64 / m.total_spans as f64) / 1000.0;
+            let expected_rate = (m.total_errors as f64 / m.total_spans as f64) * 100.0;
+            assert!((m.avg_latency_ms - expected_latency).abs() < 1e-9);
+            assert!((m.error_rate_pct - expected_rate).abs() < 1e-9);
+        }
+
+        let html = render_live_metrics_dashboard_html("Real Service");
+        assert!(html.contains("Real Service Server Telemetry"));
+        assert!(html.contains("Source: live OpenTelemetry spans"));
+        assert!(html.contains("Mean Latency (over recorded spans)"));
+        assert!(html.contains("Error Rate (ERROR spans)"));
+        // The old hardcoded demo literals must never be served.
+        assert!(!html.contains("1_420_850"));
+        assert!(!html.contains("3d 4h 0m"));
+    }
+
+    #[tokio::test]
+    async fn test_metrics_dashboard_handler_serves_real_data() {
+        let resp = metrics_dashboard_handler().await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let html = String::from_utf8(body.to_vec()).unwrap();
+        assert!(html.contains("Yav.rs Production Server Telemetry"));
+        assert!(html.contains("Source: live OpenTelemetry spans"));
+        assert!(!html.contains("1_420_850"));
+        assert!(!html.contains("3d 4h 0m"));
     }
 }

@@ -1,4 +1,4 @@
-//! # Yav — Modern Full-Stack Web Framework for Rust (v0.1.4)
+//! # Yav — Modern Full-Stack Web Framework for Rust
 //!
 //! **Yav** is a batteries-included, server-side rendered (SSR) web framework combining the developer
 //! ergonomics of **Next.js** with the integrated UI philosophy of **Flutter**, powered by **Axum**,
@@ -18,7 +18,7 @@
 //! 6. [HTTP Server, File Routing & Reverse Routing](#http-server-file-routing--reverse-routing)
 //! 7. [State, Sessions & Typed Form Validation](#state-sessions--typed-form-validation)
 //! 8. [Real-Time WebSockets Live Swap](#real-time-websockets-live-swap)
-//! 9. [45+ UI Components & 13,000+ Icons](#45-ui-components--13000-icons)
+//! 9. [45+ UI Components & Icons](#45-ui-components--icons)
 //! 10. [SEO, Sitemaps & Static Site Generation](#seo-sitemaps--static-site-generation)
 //! 11. [Interactive API Documentation (OpenAPI / Scalar)](#interactive-api-documentation-openapi--scalar)
 //! 12. [Modules and Prelude](#modules-and-prelude)
@@ -31,13 +31,13 @@
 //!
 //! ```toml
 //! [dependencies]
-//! yav = "0.1.4"
+//! yav = "0.1.6"
 //! tokio = { version = "1", features = ["full"] }
 //! ```
 //!
 //! Create your first application in `src/main.rs`:
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use yav::prelude::*;
 //!
 //! #[tokio::main]
@@ -73,9 +73,9 @@
 //! The [`rsx!`] procedural macro provides an intuitive JSX-like authoring syntax compiled directly
 //! into a zero-allocation, immutable Virtual DOM tree ([`core::Node`]).
 //!
-//! In v0.1.4, you write standard Rust control flow directly in markup without closures:
+//! Since v0.1.4 you write standard Rust control flow directly in markup without closures:
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use yav::prelude::*;
 //!
 //! let user_name = "Alice";
@@ -127,7 +127,7 @@
 //! Yav provides rich client interactivity without hand-written JavaScript. Physical animations are calculated
 //! with an exact harmonic oscillator solver (`solveSpring`) and executed on the browser's compositor thread:
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use yav::prelude::*;
 //! use yav::ui::{CountUp, AnimatedBar, TypewriterCode, CursorSpotlight, TiltPlate, Magnetic};
 //!
@@ -135,7 +135,7 @@
 //!     <div class="space-y-6">
 //!         // Cursor tracking, 3D tilt & magnetic attraction
 //!         <CursorSpotlight radius_px={450}>
-//!             <TiltPlate max_deg={10.0} glare=true class="p-6 rounded-xl border">
+//!             <TiltPlate max_deg={10.0} spotlight=true class="p-6 rounded-xl border">
 //!                 <Magnetic strength={0.4}>
 //!                     <button class="btn btn-primary">"Magnetic Button"</button>
 //!                 </Magnetic>
@@ -161,7 +161,7 @@
 //! Yav includes 8 pre-built design themes (`editorial-blueprint`, `obsidian-minimal`, `nordic-paper`,
 //! `cyber-terminal`, `solarized-lab`, `glass-aurora`, `light`, `dark`):
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use yav::prelude::*;
 //! use yav::ui::{Theme, ThemeSelector};
 //!
@@ -181,7 +181,7 @@
 //!
 //! Yav provides the [`#[component]`](component) attribute macro to define reusable, strongly-typed components:
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use yav::prelude::*;
 //!
 //! struct UserCardProps {
@@ -258,7 +258,7 @@
 //!
 //! Yav provides cryptographically signed session cookies (HMAC-SHA256) and typed form parsing via [`server::FromFormData`]:
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use yav::prelude::*;
 //! use yav::server::{FromFormData, FormErrors, FormData};
 //!
@@ -287,7 +287,7 @@
 //!
 //! Push server-rendered HTML fragments to connected clients over WebSockets via [`server::WsBroadcast`]:
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use yav::prelude::*;
 //! use yav::server::WsBroadcast;
 //!
@@ -298,7 +298,7 @@
 //!
 //! ---
 //!
-//! ## 45+ UI Components & 13,000+ Icons
+//! ## 45+ UI Components & Icons
 //!
 //! Yav embeds a complete UI design system crafted with Tailwind CSS utility classes and full WAI-ARIA
 //! accessibility support:
@@ -313,9 +313,12 @@
 //!
 //! All components are re-exported through [`ui`] and the [`prelude`].
 //!
-//! ### The 13,000+ SVG Icon Engine
+//! ### The SVG Icon Engine
 //!
-//! Yav features an integrated zero-runtime-dependency icon catalog ([`icons`]) searchable in $O(\log N)$ time:
+//! Yav features an integrated zero-runtime-dependency icon catalog ([`icons`]) searchable in $O(\log N)$ time.
+//! Only the **Classic** (Lucide) family (~1,900 variants) is compiled by default; enable the
+//! `full-icons` feature (or `minimal-icons` / `system-icons`) to compile all ~13,600 variants.
+//! The example below uses all three families and therefore assumes `full-icons`:
 //!
 //! ```rust
 //! use yav::prelude::*;
@@ -341,7 +344,7 @@
 //! Configure complete HTML `<head>` metadata, OpenGraph tags, Twitter cards, and Schema.org JSON-LD structured data
 //! via [`core::PageMeta`]:
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use yav::prelude::*;
 //!
 //! let meta = PageMeta::new()
@@ -352,11 +355,22 @@
 //!     .twitter_card("summary_large_image");
 //! ```
 //!
-//! In v0.1.4, pre-render your entire application to static HTML files for CDN deployment:
+//! Since v0.1.4 you can pre-render your entire application to static HTML files for CDN deployment:
 //!
-//! ```rust,ignore
-//! let app = YavApp::new().get("/", index_handler).get("/docs", docs_handler);
+//! ```rust,no_run
+//! use yav::prelude::*;
+//! use std::path::Path;
+//!
+//! # #[tokio::main]
+//! # async fn main() -> std::io::Result<()> {
+//! let app = YavApp::new()
+//!     .get("/", |_req| async { html_response(StatusCode::OK, "<h1>Home</h1>") })
+//!     .get("/docs", |_req| async { html_response(StatusCode::OK, "<h1>Docs</h1>") });
+//!
 //! let exported_count = app.export_static(Path::new("dist"), "https://yav.rs").await?;
+//! println!("exported {exported_count} pages");
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! Or use the CLI: `yav export --output dist --base-url https://yav.rs`.
@@ -367,7 +381,7 @@
 //!
 //! Expose OpenAPI 3.1 specifications and modern interactive documentation with a single builder method:
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use yav::prelude::*;
 //!
 //! let spec = OpenApiSpec::new("Yav Storefront API", "1.0.0")
@@ -395,7 +409,7 @@
 //! | [`router`] | `yav-router` | File-based routing, `@slot` parallel routes, `(.)` intercepting routes, `[[...slug]]`, and table resolution |
 //! | [`server`] | `yav-server` | Axum HTTP server, [`auth`], [`db`], [`email`], [`jobs`], [`image_opt`], [`flags`], [`ai`], [`billing`], [`storage`], [`geo`], [`adapters`] |
 //! | [`ui`] | `yav-ui` | 60+ accessible UI components, [`charts`], [`datagrid`], [`kanban`], [`virtual_list`], [`flow_canvas`], [`rich_editor`] |
-//! | [`icons`] | `yav-icons` | 13,000+ vector SVG icons across Lucide, MynaUI, and Phosphor |
+//! | [`icons`] | `yav-icons` | ~1,900 Classic icons by default, ~13,600 with `full-icons` (Lucide, MynaUI, Phosphor) |
 //! | [`build`] | `yav-build` | Asset hashing, GFM Markdown + syntax highlighting, [`search`] (BM25), [`minifier`], and Tailwind compiler |
 //!
 //! For standard application development, simply import the [`prelude`]:
@@ -406,6 +420,15 @@
 
 /// Core types: Virtual DOM ([`core::Node`]), HTML escaping, context propagation, and i18n.
 pub use yav_core as core;
+
+/// Request-scoped application state container (compatibility alias).
+///
+/// Yav has no dedicated `AppState` struct: request-scoped state actually lives in a
+/// `yav_core::context::ContextMap`, injected via `provide_context` (or `YavApp::state`)
+/// and read back with `use_state::<T>()` / `use_context::<T>()`. This alias points the
+/// documented `AppState` name at that real container so it is not a phantom type; it
+/// does not introduce a second, separate global state store.
+pub type AppState = yav_core::context::ContextMap;
 
 /// Hidden re-export for proc macro hygiene — allows `rsx!` to reference
 /// `::yav::yav_core::Node` in downstream crates that don't directly depend on `yav-core`.
@@ -443,6 +466,11 @@ pub use yav_router as router;
 
 /// HTTP server engine, Axum SSR integration, sessions, cookies, forms, and middleware.
 pub use yav_server as server;
+
+/// Feature-gated integrations from the competitive roadmap. The module is
+/// always present but only contains submodules for enabled Cargo features.
+/// See `docs/opt-in-integrations.md` for the list and their boundaries.
+pub use yav_server::roadmap;
 
 /// Integrated authentication, JWT, OAuth2/PKCE, PBKDF2 password hashing, and TOTP 2FA.
 pub use yav_server::auth;
@@ -531,8 +559,16 @@ pub use yav_server::outbox;
 /// Multi-region read/write database replica pool and router (`DbReplicaPool`).
 pub use yav_server::replica_pool;
 
-/// Pure-Rust WebP / AVIF container packing and image downsampling (`ImagePipeline`, `WebPEncoder`).
+/// Pure-Rust WebP container packing and image downsampling (`ImagePipeline`, `WebPEncoder`).
+///
+/// AVIF encoding is not supported: `image_pipeline` sniffs/parses AVIF input but only
+/// produces WebP containers. See the module docs for the exact pipeline stages.
 pub use yav_server::image_pipeline;
+
+/// High-level image-processing facade (format sniffing → metadata → downsampling →
+/// WebP container framing). Re-exported so `yav::ImagePipeline` resolves.
+/// AVIF output is not supported.
+pub use yav_server::image_pipeline::ImagePipeline;
 
 /// Zero-dependency vector PDF signer and digital watermarking (`PdfSigner`, `PdfWatermark`).
 pub use yav_server::pdf_signer;
@@ -624,7 +660,9 @@ pub use yav_ui::whiteboard;
 /// Natural language AI filter bar converting conversational text to structured queries (`AiFilterBar`).
 pub use yav_ui::ai_filter_bar;
 
-/// Built-in icon system with 13,000+ SVG icons (Lucide, MynaUI, Phosphor).
+/// Built-in icon system. Classic (Lucide) ~1,900 icons are compiled by
+/// default; enable `full-icons` for the ~13,600-variant Lucide/MynaUI/Phosphor
+/// catalog. See [`icons::ICON_COUNT`] for the compiled count.
 pub use yav_icons as icons;
 
 /// Build pipeline, asset fingerprinting, full-text search index, minifier, and Tailwind CSS integration.
@@ -716,6 +754,7 @@ pub mod prelude {
     pub use yav_router::prelude::*;
 
     // Server, Auth, DB, Email, Jobs, Image Optimizer, OG Generator, Telemetry, Flags, AI, Billing, Storage, Geo, PPR, Passkeys, OTel, Testing, MCP, Export Docs, Forms, Flash, SEO, Streaming, Session, Cache, WebSockets
+    #[allow(deprecated)] // legacy adapter aliases keep the public API compatible
     pub use yav_server::{
         classify_rating,
         cosine_similarity,
@@ -725,7 +764,9 @@ pub mod prelude {
         // Resilience, Outbox, Replicas, Images, PDF Signer
         detect_image_format,
         extract_geo_context,
+        generate_blur_placeholder_from_bytes,
         generate_blur_svg_data_uri,
+        generate_blur_svg_document_from_bytes,
         generate_og_svg,
         global_component_cache,
         global_csp_reporter,
@@ -736,6 +777,7 @@ pub mod prelude {
         graphql_handler,
         html_response,
         image_optimizer_handler,
+        is_allowlisted_redirect,
         json_response,
         // Server additions: Live Queries, PoW Shield, GraphQL, GeoIP/VAT, Federation, Barcode/QR, Security Audit
         live_query_sse_handler,
@@ -743,6 +785,7 @@ pub mod prelude {
         not_found,
         og_image_handler,
         og_image_url,
+        optimize_image_bytes,
         optimized_image_url,
         otel_tracing_middleware,
         parse_image_metadata,
@@ -752,6 +795,7 @@ pub mod prelude {
         ppr_placeholder,
         reciprocal_rank_fusion,
         redirect,
+        redirect_allowlisted,
         render_metrics_dashboard_html,
         safe_redirect,
         scalar_ui_handler,
@@ -796,6 +840,7 @@ pub mod prelude {
         CspNonce,
         CspReporter,
         CspViolation,
+        CsrfConfig,
         CsrfToken,
         CsvBuilder,
         Currency,
@@ -814,6 +859,7 @@ pub mod prelude {
         FeatureFlag,
         FederationGateway,
         FederationRoute,
+        FederationSlot,
         FlagEngine,
         Flash,
         FlashLevel,
@@ -849,6 +895,7 @@ pub mod prelude {
         JsonRpcResponse,
         JwtClaims,
         JwtManager,
+        JwtValidation,
         LeaderElector,
         LiveEvent,
         LiveQueryManager,
@@ -1454,6 +1501,7 @@ mod fullstack_ecosystem_tests {
 
     #[test]
     fn test_frontier_twelve_wave_two_capabilities_fullstack() {
+        use base64::Engine;
         // 1. Streaming TurboStream Multi-Zone DOM Mutations
         let stream = TurboStream::new()
             .append("feed", "<div>New update</div>")
@@ -1484,11 +1532,21 @@ mod fullstack_ecosystem_tests {
         assert_eq!(uploader.append_chunk("upload-xyz", 0, b"12345").unwrap(), 5);
         assert_eq!(uploader.get_offset("upload-xyz"), Some(5));
 
-        // 4. WebPush & VAPID Authorization Headers
+        // 4. WebPush & VAPID Authorization Headers (real ES256 signing)
         let notif = WebPushNotification::new("Package Dispatched", "Delivery today").ttl(3600);
         assert!(notif.to_json().contains("Package Dispatched"));
-        let signer = VapidSigner::new("mailto:ops@yav.rs", "public_vapid_key", "secret_key");
-        let header = signer.create_authorization_header("https://push.services.mozilla.com", 3600);
+        // Generate a real P-256 keypair for the test
+        let signing_key = p256::ecdsa::SigningKey::random(&mut rand_core::OsRng);
+        let verifying_key = p256::ecdsa::VerifyingKey::from(&signing_key);
+        let pub_bytes = p256::EncodedPoint::from(&verifying_key).to_bytes();
+        let priv_bytes = signing_key.to_bytes();
+        let pub_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&*pub_bytes);
+        let priv_b64 =
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(priv_bytes.as_slice());
+        let signer = VapidSigner::new("mailto:ops@yav.rs", &pub_b64, &priv_b64);
+        let header = signer
+            .create_authorization_header("https://push.services.mozilla.com", 3600)
+            .expect("ES256 signing with valid P-256 key must succeed");
         assert!(header.starts_with("vapid t="));
 
         // 5. Mock Server & Deterministic Data Faker

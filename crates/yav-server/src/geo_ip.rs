@@ -2,6 +2,11 @@
 //!
 //! Automatically infers client country, currency, timezone, and tax rules
 //! from edge proxy headers (`CF-IPCountry`, `X-Country-Code`, `Accept-Language`).
+//!
+//! VAT rates are stored as integers (hundredths of a percent) for all 27 EU member
+//! states, and [`VatRule::calculate_tax`] uses exact `i128` arithmetic — no `f64`
+//! rounding drift. [`VatRule::is_supported`] distinguishes a configured (possibly
+//! zero) rate from an unknown country.
 
 use crate::billing::Money;
 use axum::http::HeaderMap;
@@ -41,7 +46,7 @@ impl Default for GeoIpContext {
 pub struct TaxBreakdown {
     /// Net amount before taxes.
     pub net: Money,
-    /// Applied tax percentage.
+    /// Applied tax percentage (display only; the computation itself is exact integer math).
     pub tax_rate_percent: f64,
     /// Computed tax portion in minor units (cents).
     pub tax_amount: Money,
@@ -53,31 +58,69 @@ pub struct TaxBreakdown {
 pub struct VatRule;
 
 impl VatRule {
+    /// Standard VAT rate in hundredths of a percent (e.g. `25.5 %` → `2550`),
+    /// or `None` when no rule is configured for the country.
+    ///
+    /// An integer basis avoids floating-point drift in tax computation and lets
+    /// [`VatRule::is_supported`] distinguish "no rule" from a genuine zero rate.
+    fn rate_hundredths(country: &str) -> Option<u32> {
+        Some(match country.to_uppercase().as_str() {
+            // ── 27 EU member states ──────────────────────────────────────────
+            "AT" => 2000,
+            "BE" => 2100,
+            "BG" => 2000,
+            "HR" => 2500,
+            "CY" => 1900,
+            "CZ" => 2100,
+            "DK" => 2500,
+            "EE" => 2200,
+            "FI" => 2550,
+            "FR" => 2000,
+            "DE" => 1900,
+            "GR" => 2400,
+            "HU" => 2700,
+            "IE" => 2300,
+            "IT" => 2200,
+            "LV" => 2100,
+            "LT" => 2100,
+            "LU" => 1700,
+            "MT" => 1800,
+            "NL" => 2100,
+            "PL" => 2300,
+            "PT" => 2300,
+            "RO" => 2100,
+            "SK" => 2300,
+            "SI" => 2200,
+            "ES" => 2100,
+            "SE" => 2500,
+            // ── Supported non-EU countries ──────────────────────────────────
+            "GB" => 2000,
+            "CH" => 810,
+            "NO" => 2500,
+            "JP" => 1000,
+            "CA" => 500, // Federal GST
+            "AU" => 1000,
+            "NZ" => 1500,
+            _ => return None,
+        })
+    }
+
     /// Get standard VAT/tax percentage for an ISO country code.
+    ///
+    /// Returns `0.0` for an unsupported country. Use [`VatRule::is_supported`] to
+    /// distinguish "no rule configured" from a real zero rate.
     pub fn rate_for(country: &str) -> f64 {
-        match country.to_uppercase().as_str() {
-            "FR" => 20.0,
-            "DE" => 19.0,
-            "ES" => 21.0,
-            "IT" => 22.0,
-            "NL" => 21.0,
-            "BE" => 21.0,
-            "IE" => 23.0,
-            "PT" => 23.0,
-            "AT" => 20.0,
-            "PL" => 23.0,
-            "SE" => 25.0,
-            "DK" => 25.0,
-            "FI" => 25.5,
-            "GB" => 20.0,
-            "CH" => 8.1,
-            "NO" => 25.0,
-            "JP" => 10.0,
-            "CA" => 5.0, // Federal GST
-            "AU" => 10.0,
-            "NZ" => 15.0,
-            _ => 0.0,
-        }
+        Self::rate_hundredths(country)
+            .map(|h| h as f64 / 100.0)
+            .unwrap_or(0.0)
+    }
+
+    /// Whether a VAT rule is configured for `country`.
+    ///
+    /// [`VatRule::rate_for`] returns `0.0` both for a genuine 0 % rate and for an
+    /// unknown country; this predicate makes the distinction unambiguous.
+    pub fn is_supported(country: &str) -> bool {
+        Self::rate_hundredths(country).is_some()
     }
 
     /// Check if country belongs to the European Union (EU VAT area).
@@ -127,12 +170,24 @@ impl VatRule {
         }
     }
 
-    /// Compute exact penny-rounded tax breakdown from a net [`Money`] amount.
+    /// Compute an exact, penny-rounded tax breakdown from a net [`Money`] amount.
+    ///
+    /// Only integer arithmetic (`i128`) is used for the money computation: the rate
+    /// is expressed in hundredths of a percent, so
+    /// `tax = round(net_minor * rate_hundredths / 10_000)`, rounded half away from
+    /// zero to the nearest cent. No `f64` is involved, so there is no rounding drift.
+    /// Unsupported countries produce a `0` tax (see [`VatRule::is_supported`]).
     pub fn calculate_tax(net: Money, country: &str) -> TaxBreakdown {
-        let rate = Self::rate_for(country);
+        let rate_hundredths = Self::rate_hundredths(country).unwrap_or(0) as i128;
         let curr = net.currency.clone();
-        // Tax = round(net * (rate / 100))
-        let tax_minor = ((net.amount_minor as f64) * (rate / 100.0)).round() as i128;
+        let denominator = 10_000i128;
+        let numerator = net.amount_minor * rate_hundredths;
+        let tax_minor = if numerator >= 0 {
+            (numerator + denominator / 2) / denominator
+        } else {
+            -(((-numerator) + denominator / 2) / denominator)
+        };
+
         let tax_amount = Money {
             amount_minor: tax_minor,
             currency: curr.clone(),
@@ -144,7 +199,7 @@ impl VatRule {
 
         TaxBreakdown {
             net,
-            tax_rate_percent: rate,
+            tax_rate_percent: rate_hundredths as f64 / 100.0,
             tax_amount,
             gross,
         }
@@ -233,5 +288,92 @@ mod tests {
         assert_eq!(breakdown.tax_rate_percent, 20.0);
         assert_eq!(breakdown.tax_amount.amount_minor, 2000); // 20.00 EUR
         assert_eq!(breakdown.gross.amount_minor, 12000); // 120.00 EUR
+    }
+
+    #[test]
+    fn test_all_27_eu_member_vat_rates() {
+        // (ISO code, standard VAT rate in %) for all 27 EU member states.
+        let eu: &[(&str, f64)] = &[
+            ("AT", 20.0),
+            ("BE", 21.0),
+            ("BG", 20.0),
+            ("HR", 25.0),
+            ("CY", 19.0),
+            ("CZ", 21.0),
+            ("DK", 25.0),
+            ("EE", 22.0),
+            ("FI", 25.5),
+            ("FR", 20.0),
+            ("DE", 19.0),
+            ("GR", 24.0),
+            ("HU", 27.0),
+            ("IE", 23.0),
+            ("IT", 22.0),
+            ("LV", 21.0),
+            ("LT", 21.0),
+            ("LU", 17.0),
+            ("MT", 18.0),
+            ("NL", 21.0),
+            ("PL", 23.0),
+            ("PT", 23.0),
+            ("RO", 21.0),
+            ("SK", 23.0),
+            ("SI", 22.0),
+            ("ES", 21.0),
+            ("SE", 25.0),
+        ];
+        assert_eq!(eu.len(), 27);
+        for (code, expected) in eu {
+            assert!(VatRule::is_eu(code), "{code} must be an EU member");
+            assert!(
+                VatRule::is_supported(code),
+                "{code} must have a configured VAT rule"
+            );
+            assert_eq!(VatRule::rate_for(code), *expected, "rate for {code}");
+            assert_eq!(VatRule::currency_for(code), "EUR");
+            // Input is case-insensitive.
+            assert_eq!(VatRule::rate_for(&code.to_lowercase()), *expected);
+        }
+    }
+
+    #[test]
+    fn test_is_supported_distinguishes_unknown_country() {
+        assert!(VatRule::is_supported("FR"));
+        assert!(VatRule::is_supported("CH")); // non-EU but supported
+        assert!(!VatRule::is_supported("XX"));
+        assert!(!VatRule::is_supported(""));
+        // rate_for() alone is ambiguous (0.0 could be a real 0 % or "unsupported").
+        assert_eq!(VatRule::rate_for("XX"), 0.0);
+        assert!(!VatRule::is_supported("XX"));
+    }
+
+    #[test]
+    fn test_calculate_tax_exact_penny_rounding() {
+        // 999 cents at 20 % -> 199.8 -> 200 cents (rounded to the nearest cent).
+        let fr = VatRule::calculate_tax(Money::eur(999), "FR");
+        assert_eq!(fr.tax_rate_percent, 20.0);
+        assert_eq!(fr.tax_amount.amount_minor, 200);
+        assert_eq!(fr.gross.amount_minor, 1199);
+
+        // 999 cents at 25.5 % (FI) -> 254.745 -> 255 cents, exactly (no f64 drift).
+        let fi = VatRule::calculate_tax(Money::eur(999), "FI");
+        assert_eq!(fi.tax_rate_percent, 25.5);
+        assert_eq!(fi.tax_amount.amount_minor, 255);
+        assert_eq!(fi.gross.amount_minor, 1254);
+
+        // Large amount: 1,000,000.00 EUR at 19 % -> 190,000.00 EUR exactly.
+        let big = VatRule::calculate_tax(Money::eur(100_000_000), "DE");
+        assert_eq!(big.tax_amount.amount_minor, 19_000_000);
+        assert_eq!(big.gross.amount_minor, 119_000_000);
+
+        // Negative net (refund): rounding is half away from zero.
+        let refund = VatRule::calculate_tax(Money::eur(-999), "FR");
+        assert_eq!(refund.tax_amount.amount_minor, -200);
+
+        // Unsupported country: no invented tax.
+        let unknown = VatRule::calculate_tax(Money::eur(10000), "XX");
+        assert_eq!(unknown.tax_rate_percent, 0.0);
+        assert_eq!(unknown.tax_amount.amount_minor, 0);
+        assert_eq!(unknown.gross.amount_minor, 10000);
     }
 }

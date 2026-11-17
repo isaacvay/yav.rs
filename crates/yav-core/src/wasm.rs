@@ -32,6 +32,8 @@ pub struct WasmIslandProps {
     pub params: Option<String>,
     /// Fallback server-rendered HTML while WASM compiles and streams.
     pub fallback: Option<String>,
+    /// Optional CSP nonce attribute applied to the hydration script.
+    pub nonce: Option<String>,
     /// Whether to auto-instantiate the module on page load (`true`) or on user interaction (`false`).
     pub auto_start: bool,
 }
@@ -84,9 +86,17 @@ impl WasmIsland {
                 export_name: export_name.into(),
                 params: None,
                 fallback: None,
+                nonce: None,
                 auto_start: true,
             },
         }
+    }
+
+    /// Provide a CSP nonce attribute for the embedded hydration `<script>` tag.
+    #[must_use]
+    pub fn with_nonce(mut self, nonce: impl Into<String>) -> Self {
+        self.props.nonce = Some(nonce.into());
+        self
     }
 
     /// Provide JSON arguments passed to the WASM exported function.
@@ -115,21 +125,34 @@ impl WasmIsland {
         let id = escape_js_str(&self.props.id);
         let url = escape_js_str(&self.props.module_url);
         let export = escape_js_str(&self.props.export_name);
+        let nonce_attr = match &self.props.nonce {
+            Some(n) if !n.is_empty() => format!(" nonce=\"{}\"", escape_js_str(n)),
+            _ => String::new(),
+        };
         let call_expr = match &self.props.params {
             Some(raw) => {
-                let sanitized = if raw.to_ascii_lowercase().contains("</script") {
+                // Only embed params verbatim when they parse as valid JSON.
+                // JSON is a safe data-only subset of JavaScript: it cannot
+                // contain function expressions, statement separators, or
+                // other control-flow constructs that could break out of the
+                // call expression. If the value is not valid JSON, fall back
+                // to a properly escaped string literal.
+                let safe_arg = if serde_json::from_str::<serde_json::Value>(raw).is_ok() {
+                    // Valid JSON is a safe data-only subset of JS, but JSON
+                    // string values can contain "</script>" which would close
+                    // the outer <script> tag in the HTML parser. Escape it.
                     raw.replace("</script", "<\\/script")
                         .replace("</SCRIPT", "<\\/script")
                 } else {
-                    raw.clone()
+                    format!("\"{}\"", escape_js_str(raw))
                 };
-                format!("exports[\"{export}\"]({sanitized})")
+                format!("exports[\"{export}\"]({safe_arg})")
             }
             None => format!("exports[\"{export}\"]()"),
         };
 
         format!(
-            r#"<script>(function(){{
+            r#"<script{nonce_attr}>(function(){{
   var el = document.getElementById("{id}");
   if (!el || !window.WebAssembly) return;
 
@@ -214,5 +237,60 @@ mod tests {
         let island = WasmIsland::new("synth-island", "/wasm/synth.wasm", "start_audio");
         let html = render_to_string(&island.render());
         assert!(html.contains(r#"exports["start_audio"]()"#));
+    }
+
+    #[test]
+    fn test_wasm_island_json_params_embedded_verbatim() {
+        let island =
+            WasmIsland::new("island", "/wasm/m.wasm", "fn").with_params(r#"{"iterations": 1000}"#);
+        let html = render_to_string(&island.render());
+        assert!(html.contains(r#"exports["fn"]({"iterations": 1000})"#));
+    }
+
+    #[test]
+    fn test_wasm_island_non_json_params_escaped() {
+        // This is not valid JSON (function call syntax), so it gets wrapped
+        // in a string literal. This is safe but the caller should prefer JSON.
+        let island = WasmIsland::new("island", "/wasm/m.wasm", "fn").with_params("hello world");
+        let html = render_to_string(&island.render());
+        // "hello world" is not valid JSON, so it becomes a string literal
+        assert!(html.contains(r#"exports["fn"]("hello world")"#));
+    }
+
+    #[test]
+    fn test_wasm_island_xss_prevention() {
+        // This payload would break out of the call expression if embedded raw.
+        // With JSON validation, it fails to parse as JSON and is wrapped in
+        // an escaped string literal instead.
+        let payload = r#"1); alert(document.cookie);//"#;
+        let island = WasmIsland::new("island", "/wasm/m.wasm", "fn").with_params(payload);
+        let html = render_to_string(&island.render());
+        // The dangerous payload must NOT appear verbatim inside the call expression.
+        // It should be inside a string literal.
+        assert!(
+            !html.contains(r#"exports["fn"](1); alert(document.cookie);//)"#),
+            "XSS payload was embedded verbatim — vulnerability!"
+        );
+        // The alert call must not appear as executable code (it's inside a string).
+        assert!(html.contains(r#"exports["fn"]("1); alert(document.cookie);//")"#));
+    }
+
+    #[test]
+    fn test_wasm_island_script_tag_in_params() {
+        // JSON string values can contain "</script>" which would close the
+        // outer <script> tag. Verify it gets escaped.
+        let payload = r#""</script><script>alert(1)</script>""#;
+        let island = WasmIsland::new("island", "/wasm/m.wasm", "fn").with_params(payload);
+        let html = render_to_string(&island.render());
+        // The </script> must be escaped to prevent HTML breakout.
+        assert!(!html.contains("</script><script>alert(1)</script>"));
+        assert!(html.contains("<\\/script"));
+    }
+
+    #[test]
+    fn test_wasm_island_nonce_support() {
+        let island = WasmIsland::new("island", "/wasm/m.wasm", "fn").with_nonce("rAnd0mN0nc3");
+        let html = render_to_string(&island.render());
+        assert!(html.contains(r#"<script nonce="rAnd0mN0nc3">"#));
     }
 }

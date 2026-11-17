@@ -24,6 +24,16 @@ pub mod pwa;
 pub mod search;
 pub mod tailwind;
 
+#[cfg(feature = "a11y")]
+pub mod a11y;
+#[cfg(feature = "a11y")]
+pub use a11y::{lint_html, lint_report_html, A11yIssue};
+
+#[cfg(feature = "markdown")]
+pub mod markdown_advanced;
+#[cfg(feature = "markdown")]
+pub use markdown_advanced::{highlight_code, render_markdown};
+
 pub use assets::{
     fingerprint_filename, hash_bytes, to_forward_slash, AssetError, AssetManifest, AssetPipeline,
 };

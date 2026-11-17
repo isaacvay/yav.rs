@@ -2,6 +2,15 @@
 //!
 //! Compose emails using `rsx! { ... }` components, automatically generating both a responsive
 //! email-client-safe HTML document and a clean plain-text fallback (`multipart/alternative`).
+//!
+//! # Development transport only — no SMTP
+//!
+//! The `Mailer` in this module is an **in-memory / `.eml` development transport**: it
+//! records messages in an inspectable outbox and can write `.eml` files for local
+//! previewing. It performs **no SMTP** (or any other network) delivery and is **not
+//! suitable for production delivery**. A successful `Mailer::send` means "stored in
+//! the outbox", not "delivered to a recipient". For production, implement
+//! `crate::adapters::MailAdapter` with a real provider.
 
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -190,7 +199,10 @@ pub fn extract_plain_text_from_node(node: &Node, out: &mut String) {
     }
 }
 
-/// Thread-safe transactional email dispatcher with an inspectable outbox and optional `.eml` file sink.
+/// Thread-safe **in-memory / `.eml` development transport** with an inspectable outbox.
+///
+/// No SMTP or network delivery is performed; messages are only recorded in memory
+/// (or written as `.eml` files for local preview). Not suitable for production delivery.
 #[derive(Clone, Default)]
 pub struct Mailer {
     outbox: Arc<RwLock<Vec<EmailMessage>>>,
@@ -202,7 +214,11 @@ impl Mailer {
         Self::default()
     }
 
-    /// Dispatch an [`EmailMessage`] and record it in the outbox.
+    /// Record an [`EmailMessage`] in the in-memory outbox.
+    ///
+    /// **In-memory / `.eml` development transport, no SMTP; not suitable for production
+    /// delivery.** `Ok(())` means the message was stored in the outbox, **not** that it
+    /// was delivered to any recipient.
     pub fn send(&self, msg: EmailMessage) -> Result<(), String> {
         if msg.to.is_empty() {
             return Err("EmailMessage must have at least one recipient".to_string());

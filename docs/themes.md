@@ -1,6 +1,6 @@
 # Multi-Theme Design System (`yav-ui::theme`)
 
-Yav v0.1.4 features a complete, zero-dependency multi-theme design system equipped with **8 built-in themes**, seamless client-side switching, cookie & `localStorage` persistence, and guaranteed **zero Flash of Unstyled Content (FOUC)**.
+Yav v0.1.5 features a complete, zero-dependency multi-theme design system equipped with **8 built-in themes**, seamless client-side switching, cookie & `localStorage` persistence, and guaranteed **zero Flash of Unstyled Content (FOUC)**.
 
 ---
 

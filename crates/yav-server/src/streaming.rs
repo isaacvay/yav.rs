@@ -25,6 +25,7 @@ pub struct StreamingHtml {
     receiver: mpsc::Receiver<String>,
     closing_shell: String,
     sent_initial: bool,
+    nonce: Option<String>,
 }
 
 impl StreamingHtml {
@@ -39,14 +40,35 @@ impl StreamingHtml {
             receiver,
             closing_shell: closing_shell.into(),
             sent_initial: false,
+            nonce: None,
+        }
+    }
+
+    /// Attach the per-request CSP nonce to this stream.
+    ///
+    /// Every emitted chunk (including the initial and closing shells) has the
+    /// nonce injected into its `<script>` tags, so a strict `script-src
+    /// 'nonce-…'` policy works with streaming Suspense instead of blocking the
+    /// swap scripts.
+    pub fn with_nonce(mut self, nonce: impl Into<String>) -> Self {
+        self.nonce = Some(nonce.into());
+        self
+    }
+
+    fn apply_nonce(&self, chunk: String) -> String {
+        match self.nonce.as_deref() {
+            Some(n) if !n.is_empty() => crate::handler::inject_csp_nonce_into_scripts(&chunk, n),
+            _ => chunk,
         }
     }
 }
 
-fn escape_template_tag(html: &str) -> String {
-    // Use to_ascii_lowercase() so UTF-8 byte lengths and char boundaries are 100% identical to `html`
+/// Neutralises an HTML end-tag that could close the surrounding container early.
+///
+/// `to_ascii_lowercase()` keeps UTF-8 byte offsets identical to the source string, so
+/// slicing back into `html` is always on a valid char boundary.
+fn escape_breakout_tag(html: &str, needle: &str) -> String {
     let lower = html.to_ascii_lowercase();
-    let needle = "</template";
     if !lower.contains(needle) {
         return html.to_string();
     }
@@ -62,13 +84,44 @@ fn escape_template_tag(html: &str) -> String {
     out
 }
 
+/// Escapes a streamed HTML fragment so it cannot close either the `<template>` that
+/// holds it or a following inline `<script>` element.
+fn escape_template_tag(html: &str) -> String {
+    let without_template = escape_breakout_tag(html, "</template");
+    escape_breakout_tag(&without_template, "</script")
+}
+
+/// Serialises a value as a JavaScript string literal that is safe inside an inline
+/// `<script>` element. `serde_json` escapes quotes/backslashes/control characters but
+/// deliberately leaves `<`, `>`, `&`, `/` and the JS line separators untouched; an
+/// attacker-supplied `</script>` would otherwise terminate the script element and
+/// inject arbitrary markup (XSS).
+///
+/// `pub(crate)` so the PPR swap scripts (`crate::ppr`) reuse the exact same
+/// escaping instead of a raw `serde_json::to_string`.
+pub(crate) fn escape_js_string_literal(value: &str) -> String {
+    let json = serde_json::to_string(value).unwrap_or_else(|_| "\"\"".to_string());
+    let mut out = String::with_capacity(json.len() + 16);
+    for ch in json.chars() {
+        match ch {
+            '<' => out.push_str("\\u003c"),
+            '>' => out.push_str("\\u003e"),
+            '&' => out.push_str("\\u0026"),
+            '/' => out.push_str("\\/"),
+            '\u{2028}' => out.push_str("\\u2028"),
+            '\u{2029}' => out.push_str("\\u2029"),
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
 impl StreamingHtml {
     /// Helper to produce a replacement chunk that swaps a placeholder element by ID.
     pub fn swap_placeholder(target_id: &str, html: &str) -> String {
         let id_num = CHUNK_COUNTER.fetch_add(1, Ordering::Relaxed);
         let temp_id = format!("yav-chunk-{id_num}");
-        let safe_target_id =
-            serde_json::to_string(target_id).unwrap_or_else(|_| "\"\"".to_string());
+        let safe_target_id = escape_js_string_literal(target_id);
         let safe_html = escape_template_tag(html);
         format!(
             r#"<template id="{temp_id}">{safe_html}</template><script>(function(){{var t=document.getElementById('{temp_id}');var target=document.getElementById({safe_target_id});if(t&&target){{target.replaceWith(t.content.cloneNode(true));t.remove();}}}})();</script>"#
@@ -76,7 +129,17 @@ impl StreamingHtml {
     }
 
     /// Convert into an Axum [`Response`] with `Transfer-Encoding: chunked`.
-    pub fn into_response(self) -> Response {
+    ///
+    /// The nonce is taken from the current SSR context (i.e. the one installed by
+    /// the security middleware) or generated server-side if the stream is built
+    /// outside a request. It is advertised to the middleware through an internal
+    /// header so that a matching strict CSP can be emitted.
+    pub fn into_response(mut self) -> Response {
+        let nonce = yav_core::use_context::<crate::middleware::CspNonce>()
+            .map(|n| n.0.clone())
+            .filter(|n| !n.is_empty())
+            .unwrap_or_else(|| crate::middleware::CspNonce::generate().0);
+        self.nonce = Some(nonce.clone());
         let body = Body::from_stream(self);
         (
             StatusCode::OK,
@@ -84,6 +147,10 @@ impl StreamingHtml {
                 (header::CONTENT_TYPE, "text/html; charset=utf-8"),
                 (header::CACHE_CONTROL, "no-cache, no-transform"),
                 (header::HeaderName::from_static("x-accel-buffering"), "no"),
+                (
+                    header::HeaderName::from_static(crate::middleware::STREAMING_NONCE_HEADER),
+                    nonce.as_str(),
+                ),
             ],
             body,
         )
@@ -99,17 +166,17 @@ impl futures_util::Stream for StreamingHtml {
         if !self.sent_initial {
             self.sent_initial = true;
             let initial = std::mem::take(&mut self.initial_shell);
-            return Poll::Ready(Some(Ok(initial)));
+            return Poll::Ready(Some(Ok(self.apply_nonce(initial))));
         }
 
         // 2. Poll the channel for subsequent async fragments
         match self.receiver.poll_recv(cx) {
-            Poll::Ready(Some(chunk)) => Poll::Ready(Some(Ok(chunk))),
+            Poll::Ready(Some(chunk)) => Poll::Ready(Some(Ok(self.apply_nonce(chunk)))),
             Poll::Ready(None) => {
                 // 3. Channel closed: send closing shell if not empty
                 if !self.closing_shell.is_empty() {
                     let closing = std::mem::take(&mut self.closing_shell);
-                    Poll::Ready(Some(Ok(closing)))
+                    Poll::Ready(Some(Ok(self.apply_nonce(closing))))
                 } else {
                     Poll::Ready(None)
                 }
@@ -158,5 +225,59 @@ mod tests {
         let dbl_quote_id = r#"foo"); alert('xss'); ("#;
         let chunk2 = StreamingHtml::swap_placeholder(dbl_quote_id, "<div>ok</div>");
         assert!(chunk2.contains(r#"getElementById("foo\"); alert('xss'); ("#));
+    }
+
+    #[test]
+    fn test_swap_placeholder_blocks_script_breakout_in_id() {
+        let attacker_id = r#"</script><img src=x onerror=alert(1)>"#;
+        let chunk = StreamingHtml::swap_placeholder(attacker_id, "<div>ok</div>");
+        assert!(!chunk.contains("</script><img"));
+        assert!(chunk.contains(r#"\u003c\/script\u003e"#));
+        assert!(chunk.contains(r#"onerror=alert(1)"#));
+    }
+
+    #[test]
+    fn test_swap_placeholder_blocks_script_breakout_in_html() {
+        let payload = "</template></script><script>alert(1)</script>";
+        let chunk = StreamingHtml::swap_placeholder("target", payload);
+        assert!(!chunk.contains("</template></script>"));
+        assert!(chunk.contains(r#"<\/template>"#));
+        assert!(chunk.contains(r#"<\/script>"#));
+    }
+
+    #[test]
+    fn test_js_string_literal_escapes_js_line_separators() {
+        let literal = escape_js_string_literal("a\u{2028}alert(1)");
+        assert!(literal.contains(r"\u2028"));
+        assert!(!literal.contains('\u{2028}'));
+    }
+
+    #[tokio::test]
+    async fn test_streaming_response_injects_nonce_into_every_chunk() {
+        let (tx, streaming) = streaming_html("<html><script>boot()</script>", "", 4);
+        tx.send(StreamingHtml::swap_placeholder("slot", "<div>done</div>"))
+            .await
+            .unwrap();
+        drop(tx);
+
+        let response = streaming.into_response();
+        let advertised = response
+            .headers()
+            .get(crate::middleware::STREAMING_NONCE_HEADER)
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+        assert!(!advertised.is_empty());
+
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let html = String::from_utf8(bytes.to_vec()).unwrap();
+        assert_eq!(
+            html.matches(&format!(r#"nonce="{advertised}""#)).count(),
+            2,
+            "initial shell and swap chunk must both carry the nonce"
+        );
     }
 }

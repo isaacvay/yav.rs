@@ -32,6 +32,7 @@ pub fn classify_changes<'a>(paths: impl IntoIterator<Item = &'a Path>) -> Change
             || ext == "yav"
             || ext == "rsx"
             || file_name == "Cargo.toml"
+            || file_name == "Cargo.lock"
             || file_name == "package.yavml"
             || file_name == "package.yav"
             || file_name == "yav.toml"
@@ -112,8 +113,11 @@ fn find_available_port(host: &str, start_port: u16) -> (u16, bool) {
     if is_port_available(host, start_port) {
         return (start_port, false);
     }
-    for offset in 1..=20 {
-        let candidate = start_port + offset;
+    for offset in 1..=20u16 {
+        // Use checked_add to avoid overflow panic when start_port is near u16::MAX
+        let Some(candidate) = start_port.checked_add(offset) else {
+            break;
+        };
         if is_port_available(host, candidate) {
             return (candidate, true);
         }
@@ -164,8 +168,10 @@ pub async fn run(cli_port: u16) -> Result<(), Box<dyn std::error::Error>> {
 
     println!("\n  \x1b[1;36myav dev\x1b[0m \x1b[90m— Development Server\x1b[0m\n");
 
-    // 2. Start Live Reload SSE Server
+    // 2. Start Live Reload SSE Server. Keep an explicit cloneable shutdown
+    // handle so the main loop can stop it without owning the whole server.
     let (reload_server, reload_port) = ReloadServer::start(35729).await?;
+    let reload_shutdown = reload_server.shutdown_handle();
     println!("\x1b[32m  ➜  Live reload:  http://127.0.0.1:{reload_port}\x1b[0m");
     println!("\x1b[90m     Live reload enabled automatically for browser sessions\x1b[0m");
 
@@ -176,10 +182,14 @@ pub async fn run(cli_port: u16) -> Result<(), Box<dyn std::error::Error>> {
         let output_css = Path::new(&config.tailwind.output_css);
 
         if input_css.is_file() {
-            let is_ready = crate::tailwind_setup::ensure_tailwind_in_dev(&mgr)
-                .await
-                .unwrap_or(false);
-            if is_ready {
+            match crate::tailwind_setup::ensure_tailwind_in_dev(&mgr).await {
+                Ok(true) => {}
+                Ok(false) | Err(_) => {
+                    eprintln!("\x1b[33m  ! Tailwind CSS binary unavailable. CSS will not be compiled.\x1b[0m");
+                    eprintln!("\x1b[90m    The server will start without Tailwind. Fix the error above to enable CSS.\x1b[0m");
+                }
+            }
+            if mgr.is_cached() {
                 let spinner = crate::spinner::Spinner::start("Compiling initial Tailwind CSS");
                 let start = std::time::Instant::now();
                 let content_paths = vec![Path::new("src"), Path::new("public")];
@@ -259,6 +269,18 @@ pub async fn run(cli_port: u16) -> Result<(), Box<dyn std::error::Error>> {
             .watch(Path::new("yav.toml"), notify::RecursiveMode::NonRecursive)?;
     }
 
+    // Watch Cargo.toml and Cargo.lock for dependency changes
+    if Path::new("Cargo.toml").is_file() {
+        debouncer
+            .watcher()
+            .watch(Path::new("Cargo.toml"), notify::RecursiveMode::NonRecursive)?;
+    }
+    if Path::new("Cargo.lock").is_file() {
+        debouncer
+            .watcher()
+            .watch(Path::new("Cargo.lock"), notify::RecursiveMode::NonRecursive)?;
+    }
+
     println!("\x1b[90m(Press Ctrl+C to terminate development server)\x1b[0m\n");
 
     // 6. Main async event loop
@@ -266,6 +288,9 @@ pub async fn run(cli_port: u16) -> Result<(), Box<dyn std::error::Error>> {
         tokio::select! {
             _ = tokio::signal::ctrl_c() => {
                 println!("\n\x1b[33m  Shutting down dev server...\x1b[0m");
+                if !reload_shutdown.is_shutdown() {
+                    reload_shutdown.shutdown();
+                }
                 if let Some(child) = server_child.take() {
                     kill_server_child(child).await;
                 }

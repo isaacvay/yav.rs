@@ -158,11 +158,11 @@ impl IntoResponse for YavError {
             ),
             YavError::Internal(msg) => {
                 tracing::error!(%msg, "Internal Server Error");
-                let display_msg = if cfg!(debug_assertions) && !crate::session::is_production_mode()
-                {
-                    msg.as_str()
-                } else {
+                // Never leak internal error detail to clients in production.
+                let display_msg = if crate::session::is_production_mode() {
                     "An internal server error occurred. Please try again later."
+                } else {
+                    msg.as_str()
                 };
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
@@ -170,7 +170,17 @@ impl IntoResponse for YavError {
                     display_msg,
                 )
             }
-            YavError::BadRequest(msg) => (StatusCode::BAD_REQUEST, "Bad Request", msg.as_str()),
+            YavError::BadRequest(msg) => {
+                tracing::warn!(%msg, "Bad Request");
+                // In production, do not leak internal detail (file paths, SQL, etc.)
+                // that might have been wrapped in a BadRequest by lower layers.
+                let display_msg = if crate::session::is_production_mode() {
+                    "The request could not be processed."
+                } else {
+                    msg.as_str()
+                };
+                (StatusCode::BAD_REQUEST, "Bad Request", display_msg)
+            }
         };
 
         let html = render_error_page(status, title, message);

@@ -15,7 +15,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
-    Arc, Mutex,
+    Arc, Mutex, OnceLock,
 };
 
 /// Cookie name used to store serialized flash messages.
@@ -57,21 +57,44 @@ impl FlashMessage {
     }
 }
 
+/// Process-wide fallback secret, generated once so cookies can still be
+/// verified on the next request when no `SESSION_SECRET` is configured.
+static EPHEMERAL_FLASH_SECRET: OnceLock<Vec<u8>> = OnceLock::new();
+
 /// Resolve the HMAC secret key for flash cookie signing and verification.
+///
+/// Mirrors `YavApp`: without a configured secret we use an ephemeral CSPRNG
+/// secret rather than panicking (release builds use `panic = "abort"`). Flash
+/// cookies then simply do not survive a restart. The hardcoded development key
+/// is never used in production.
 fn resolve_flash_secret(custom: Option<&[u8]>) -> Vec<u8> {
     if let Some(secret) = custom {
         return secret.to_vec();
     }
-    std::env::var("SESSION_SECRET")
-        .or_else(|_| std::env::var("YAV_SECRET"))
-        .ok()
-        .map(|s| s.into_bytes())
-        .unwrap_or_else(|| {
+    if let Ok(value) = std::env::var("SESSION_SECRET").or_else(|_| std::env::var("YAV_SECRET")) {
+        return value.into_bytes();
+    }
+    EPHEMERAL_FLASH_SECRET
+        .get_or_init(|| {
+            let mut bytes = [0u8; 32];
+            if getrandom::getrandom(&mut bytes).is_ok() {
+                tracing::warn!(
+                    "SESSION_SECRET is not set: flash cookies use an ephemeral random secret; \
+                     they are invalidated on restart. Set SESSION_SECRET for persistence."
+                );
+                return bytes.to_vec();
+            }
+            // Same fail-fast condition as `YavApp`: no secret AND no CSPRNG.
+            // Never reached on a normal request path.
             if is_production_mode() {
-                panic!("FATAL: SESSION_SECRET must be explicitly set when running in production mode! Refusing to sign flash cookies with default dev secret.");
+                panic!(
+                    "FATAL: SESSION_SECRET must be set when the system CSPRNG is unavailable \
+                     in production mode."
+                );
             }
             DEFAULT_DEV_SESSION_SECRET.to_vec()
         })
+        .clone()
 }
 
 /// Axum extractor and manager for cryptographically signed flash messages.
@@ -263,10 +286,14 @@ pub fn extract_flash_from_cookie(cookie_hdr: Option<&HeaderValue>, secret: &[u8]
                                         } else {
                                             tracing::debug!("Rejected expired flash cookie");
                                         }
-                                    } else if let Ok(msgs) =
-                                        serde_json::from_str::<Vec<FlashMessage>>(&decoded)
-                                    {
-                                        incoming = msgs;
+                                    } else {
+                                        // Legacy `Vec<FlashMessage>` payloads carry no
+                                        // `expires_at`, so a captured signed cookie could
+                                        // be replayed forever. Refuse them instead of
+                                        // silently accepting an unbounded credential.
+                                        tracing::warn!(
+                                            "Rejected legacy flash payload without expiry"
+                                        );
                                     }
                                 }
                             } else {

@@ -563,7 +563,7 @@ impl Drawer {
         let close_btn = Element::new("button")
             .attr("type", "button")
             .attr("class", "rounded-md p-1.5 text-gray-400 hover:text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors")
-            .attr("onclick", "this.closest('dialog').close()")
+            .attr("yav:hide", format!("#{}", self.id))
             .attr("aria-label", "Fermer")
             .child(Node::raw(r#"<svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>"#));
         header = header.child(Node::Element(close_btn));

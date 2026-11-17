@@ -116,7 +116,7 @@ use yav::prelude::*;
 let og_url = og_image_url(
     "Supercharge your SSR with Yav.rs",
     Some("Zero-runtime overhead, pure Rust Virtual DOM & Tailwind CSS"),
-    Some("Release v0.1.4"),
+    Some("Release v0.1.5"),
 );
 
 let meta = PageMeta::new()
@@ -279,6 +279,6 @@ let app = YavApp::new()
     .get("/readyz", readyz);
 ```
 
-* `/healthz`: returns HTTP 200 `{"status": "ok", "service": "yav", "version": "0.1.0"}`.
+* `/healthz`: returns HTTP 200 with `"status": "ok"` and `"version"` set to the crate version (`CARGO_PKG_VERSION`, currently 0.1.6).
 * `/readyz`: returns HTTP 200 `"ready"`.
 * `ServerMetrics`: tracks total requests, errors, and average SSR rendering latencies in milliseconds.

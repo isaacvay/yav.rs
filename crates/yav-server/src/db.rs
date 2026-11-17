@@ -155,6 +155,22 @@ impl Migrator {
         fs::write(self.journal_path(), json).map_err(|e| e.to_string())
     }
 
+    /// Persist an explicit applied-migration journal.
+    ///
+    /// This is the public journal-writing hook used by out-of-tree migration
+    /// runners (e.g. `crate::roadmap::persistence`) that drive a real
+    /// [`crate::adapters::DatabaseAdapter`] instead of a closure. The runner
+    /// owns the decision of which statements succeeded; this method only
+    /// records the resulting state on disk.
+    pub fn record_applied(&self, applied: &[AppliedMigration]) -> Result<(), String> {
+        self.save_applied(applied)
+    }
+
+    /// Clear the applied-migration journal (writes an empty journal).
+    pub fn clear_applied(&self) -> Result<(), String> {
+        self.save_applied(&[])
+    }
+
     /// Compute the status of all discovered migrations against the applied journal.
     pub fn status(&self) -> Result<Vec<MigrationStatus>, String> {
         let discovered = self.discover()?;

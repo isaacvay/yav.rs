@@ -29,7 +29,7 @@ pub struct OgImageParams {
     /// Optional subtitle or brief description.
     #[serde(default)]
     pub subtitle: Option<String>,
-    /// Optional category or organization badge (e.g. "Blog", "Documentation", "v0.1.4").
+    /// Optional category or organization badge (e.g. "Blog", "Documentation", "v0.1.5").
     #[serde(default)]
     pub badge: Option<String>,
     /// Theme name (`"dark"`, `"indigo"`, `"emerald"`, `"sunset"`, `"minimal"`).

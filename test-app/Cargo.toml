@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-yav = { path = "../crates/yav" }
+yav = { path = "../crates/yav", features = ["full-icons"] }
 axum = "0.8"
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
@@ -18,5 +18,6 @@ serde_json = "1"
 opt-level = 3
 lto = true
 codegen-units = 1
-panic = "abort"
+# Keep unwinding, matching the workspace release profile: `panic = "abort"`
+# would let a panic in request handling kill the whole demo server process.
 strip = true

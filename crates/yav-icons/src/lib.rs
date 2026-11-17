@@ -74,6 +74,8 @@
 //! ```
 
 pub mod catalog;
+#[cfg(feature = "icon-minify")]
+pub mod minify;
 pub mod render;
 
 // Re-exports from catalog

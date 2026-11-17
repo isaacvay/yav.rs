@@ -147,6 +147,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n  \x1b[1;38;2;224;89;47m//\x1b[0m \x1b[1myav doctor\x1b[0m \x1b[90m— Environment & Project Diagnostics\x1b[0m\n");
     let checks = collect_checks(Path::new("."));
     let mut all_ok = true;
+    let mut critical_failures = 0;
 
     for check in &checks {
         if check.ok {
@@ -156,6 +157,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
             );
         } else {
             all_ok = false;
+            critical_failures += 1;
             println!(
                 "  \x1b[31m✖\x1b[0m \x1b[1m{:<26}\x1b[0m \x1b[31m{}\x1b[0m",
                 check.name, check.detail
@@ -167,7 +169,10 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     if all_ok {
         println!("  \x1b[1;32m✔ All checks passed. Your Yav environment is ready.\x1b[0m\n");
     } else {
-        println!("  \x1b[1;33m! Some checks reported warnings or missing tools.\x1b[0m\n");
+        println!(
+            "  \x1b[1;31m✖ {critical_failures} check(s) failed. Fix the issues above before continuing.\x1b[0m\n"
+        );
+        return Err(format!("{critical_failures} doctor check(s) failed").into());
     }
 
     Ok(())

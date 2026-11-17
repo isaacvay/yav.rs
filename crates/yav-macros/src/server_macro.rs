@@ -4,8 +4,11 @@
 //! Rust function into both a directly callable server function and a mountable HTTP POST
 //! endpoint with automatic [`FromFormData`] extraction and validation.
 //!
-//! # Example
-//! ```ignore
+//! # Example (illustrative, not compiled here)
+//!
+//! See the crate-level note in `lib.rs`: this crate's doctests cannot resolve
+//! the `yav` facade. Compiled `#[server]` examples live in the `yav` docs.
+//! ```rust,ignore
 //! use yav::prelude::*;
 //!
 //! #[derive(FromFormData)]

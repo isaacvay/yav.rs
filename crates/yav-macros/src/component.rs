@@ -91,3 +91,69 @@ pub fn component_impl(_attr: TokenStream, item: TokenStream) -> Result<TokenStre
 
     Ok(expanded)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use quote::quote;
+
+    fn error_message(item: TokenStream) -> String {
+        component_impl(TokenStream::new(), item)
+            .expect_err("expected #[component] input to be rejected")
+            .to_string()
+    }
+
+    #[test]
+    fn zero_arg_component_gets_generated_props() {
+        let expanded = component_impl(
+            TokenStream::new(),
+            quote! { fn Hello() -> Node { Node::empty() } },
+        )
+        .expect("zero-argument component should expand");
+        let text = expanded.to_string();
+        assert!(text.contains("HelloProps"), "{text}");
+        assert!(text.contains("_props"), "{text}");
+    }
+
+    #[test]
+    fn multiple_simple_args_become_props_fields() {
+        let expanded = component_impl(
+            TokenStream::new(),
+            quote! { fn Badge(name: String, admin: bool) -> Node { Node::empty() } },
+        )
+        .expect("simple arguments should expand");
+        let text = expanded.to_string();
+        assert!(text.contains("pub name"), "{text}");
+        assert!(text.contains("pub admin"), "{text}");
+        assert!(text.contains("BadgeProps"), "{text}");
+    }
+
+    #[test]
+    fn explicit_props_argument_is_left_untouched() {
+        let expanded = component_impl(
+            TokenStream::new(),
+            quote! { fn Card(props: CardProps) -> Node { props.render() } },
+        )
+        .expect("explicit props struct should be preserved");
+        assert!(!expanded.to_string().contains("CardPropsProps"));
+    }
+
+    #[test]
+    fn method_with_self_receiver_is_rejected() {
+        let msg = error_message(quote! { fn Bad(&self) -> Node { Node::empty() } });
+        assert!(msg.contains("self"), "{msg}");
+    }
+
+    #[test]
+    fn destructured_argument_is_rejected() {
+        let msg =
+            error_message(quote! { fn Bad((a, b): (String, String)) -> Node { Node::empty() } });
+        assert!(msg.contains("simple identifiers"), "{msg}");
+    }
+
+    #[test]
+    fn non_function_item_is_rejected() {
+        let msg = error_message(quote! { struct Nope; });
+        assert!(!msg.is_empty());
+    }
+}

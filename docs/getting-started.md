@@ -2,7 +2,8 @@
 
 ## Prerequisites
 
-- [Rust](https://rustup.rs/) (stable, 1.75+)
+- [Rust](https://rustup.rs/) **1.88 or newer** (this is the verified MSRV; the
+  locked dependency graph includes crates that require rustc 1.88)
 - No Node.js required
 
 ## Installation

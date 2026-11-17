@@ -4,12 +4,15 @@
 //! between Yav's zero-dependency in-memory/local engines and distributed
 //! production backends (PostgreSQL/SQLite via SQLx, Redis, AWS S3 / Cloudflare
 //! R2, SMTP / Resend / Postmark, and OpenAI / Anthropic / Gemini).
+//!
+//! # Honest defaults
+//!
+//! [`ServiceAdapters::default()`](ServiceAdapters::default) ships real in-memory
+//! cache/storage/mail helpers but **test-only mocks** for `db`/`llm` that return
+//! explicit errors. It never provides a silently-working fake database or LLM driver.
 
 use std::collections::HashMap;
-use std::sync::{
-    atomic::{AtomicUsize, Ordering},
-    Arc,
-};
+use std::sync::Arc;
 use std::time::Instant;
 
 use axum::body::Bytes;
@@ -34,8 +37,11 @@ pub trait DatabaseAdapter: Send + Sync {
     ) -> Result<Vec<HashMap<String, String>>, String>;
 
     /// Verify connectivity to the underlying database.
+    ///
+    /// The default is `false` (unhealthy) rather than a fabricated `true`: an
+    /// implementation must override this only after a real connectivity probe.
     fn health_check(&self) -> bool {
-        true
+        false
     }
 }
 
@@ -78,35 +84,37 @@ pub trait MailAdapter: Send + Sync {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Default Zero-Config Reference Implementations
+// Real in-memory reference implementations + explicit test MOCKS
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Default embedded database adapter backed by [`EmbeddedStore`].
+/// Test-only database MOCK: no database driver, no SQL execution, no network access.
+///
+/// Every method returns an explicit error instead of a fake `Ok`, so a misconfigured
+/// [`ServiceAdapters::default`] can never pretend a statement ran. Intended for unit
+/// tests and offline scaffolding only — wire a real `DatabaseAdapter` via
+/// [`ServiceAdapters::with_db`] for anything else.
 #[derive(Clone, Default)]
-pub struct EmbeddedDatabaseAdapter {
+pub struct MockDatabaseAdapter {
     store: EmbeddedStore,
-    seq: Arc<AtomicUsize>,
 }
 
-impl EmbeddedDatabaseAdapter {
+impl MockDatabaseAdapter {
     pub fn new() -> Self {
         Self {
             store: EmbeddedStore::new(),
-            seq: Arc::new(AtomicUsize::new(0)),
         }
     }
 
+    /// The (always empty) embedded store kept for API compatibility.
+    /// No SQL is ever written to it by this mock.
     pub fn store(&self) -> &EmbeddedStore {
         &self.store
     }
 }
 
-impl DatabaseAdapter for EmbeddedDatabaseAdapter {
-    fn execute(&self, sql: &str, params: &[String]) -> Result<u64, String> {
-        let id = self.seq.fetch_add(1, Ordering::SeqCst) + 1;
-        let payload = format!("{sql} | {params:?}");
-        self.store.insert("sql_log", &id.to_string(), &payload)?;
-        Ok(1)
+impl DatabaseAdapter for MockDatabaseAdapter {
+    fn execute(&self, _sql: &str, _params: &[String]) -> Result<u64, String> {
+        Err("MockDatabaseAdapter: no real database driver configured; SQL was NOT executed".into())
     }
 
     fn query_rows(
@@ -114,9 +122,23 @@ impl DatabaseAdapter for EmbeddedDatabaseAdapter {
         _sql: &str,
         _params: &[String],
     ) -> Result<Vec<HashMap<String, String>>, String> {
-        Ok(Vec::new())
+        Err("MockDatabaseAdapter: no real database driver configured; query was NOT run".into())
+    }
+
+    /// Always unhealthy: there is no real database to connect to.
+    fn health_check(&self) -> bool {
+        false
     }
 }
+
+/// Deprecated compatibility name for [`MockDatabaseAdapter`].
+///
+/// The old name suggested a real "embedded database" driver; the type is actually a
+/// test mock that never executes SQL. Use [`MockDatabaseAdapter`] instead.
+#[deprecated(
+    note = "renamed to MockDatabaseAdapter: test mock, no real database driver, no SQL execution"
+)]
+pub type EmbeddedDatabaseAdapter = MockDatabaseAdapter;
 
 /// Default cache adapter backed by Yav's bounded LRU [`SsrCache`].
 #[derive(Clone)]
@@ -152,6 +174,7 @@ impl CacheAdapter for MemoryCacheAdapter {
             body: Bytes::from(value),
             created_at: Instant::now(),
             revalidating: false,
+            headers: axum::http::HeaderMap::new(),
         };
         self.cache.insert_with_tags(key, entry, tags);
     }
@@ -217,24 +240,29 @@ impl StorageAdapter for MemoryStorageAdapter {
     }
 }
 
-/// Deterministic local LLM adapter for development and testing.
+/// Test-only LLM MOCK: no provider, no inference, no network access.
+///
+/// Every method returns an explicit error instead of fabricating a completion or an
+/// embedding, so callers can never mistake it for a working LLM driver.
 #[derive(Clone, Default)]
-pub struct LocalLlmAdapter;
+pub struct MockLlmAdapter;
 
-impl LlmAdapter for LocalLlmAdapter {
-    fn complete(&self, model: &str, messages: &[ChatMessage]) -> Result<String, String> {
-        let last = messages.last().map(|m| m.content.as_str()).unwrap_or("");
-        Ok(format!("[{model}] Processed: {last}"))
+impl LlmAdapter for MockLlmAdapter {
+    fn complete(&self, _model: &str, _messages: &[ChatMessage]) -> Result<String, String> {
+        Err("MockLlmAdapter: no real LLM provider configured; no completion was generated".into())
     }
 
-    fn embed(&self, _model: &str, text: &str) -> Result<Vec<f32>, String> {
-        let b = text.as_bytes();
-        let v0 = b.first().copied().unwrap_or(1) as f32 / 255.0;
-        let v1 = b.get(1).copied().unwrap_or(1) as f32 / 255.0;
-        let v2 = (b.len() as f32).min(255.0) / 255.0;
-        Ok(vec![v0, v1, v2])
+    fn embed(&self, _model: &str, _text: &str) -> Result<Vec<f32>, String> {
+        Err("MockLlmAdapter: no real LLM provider configured; no embedding was computed".into())
     }
 }
+
+/// Deprecated compatibility name for [`MockLlmAdapter`].
+///
+/// The old name suggested a real "local LLM"; the type is actually a test mock that
+/// never contacts any model. Use [`MockLlmAdapter`] instead.
+#[deprecated(note = "renamed to MockLlmAdapter: test mock, no real LLM provider, no inference")]
+pub type LocalLlmAdapter = MockLlmAdapter;
 
 /// Default mail adapter backed by [`Mailer`].
 #[derive(Clone, Default)]
@@ -262,6 +290,11 @@ impl MailAdapter for MemoryMailAdapter {
 }
 
 /// Unified container holding all pluggable infrastructure adapters for injection into [`crate::YavApp`].
+///
+/// [`ServiceAdapters::default`] is a **development/test** configuration: `cache`, `storage`
+/// and `mail` are real in-memory implementations, while `db` and `llm` are explicit mocks
+/// that always fail loudly. Supply real drivers with [`ServiceAdapters::with_db`] /
+/// [`ServiceAdapters::with_llm`] before using those slots.
 #[derive(Clone)]
 pub struct ServiceAdapters {
     pub db: Arc<dyn DatabaseAdapter>,
@@ -272,12 +305,14 @@ pub struct ServiceAdapters {
 }
 
 impl Default for ServiceAdapters {
+    /// Development defaults. The `db`/`llm` slots hold mocks that return explicit
+    /// errors rather than silently faking success; no real database or LLM is configured.
     fn default() -> Self {
         Self {
-            db: Arc::new(EmbeddedDatabaseAdapter::new()),
+            db: Arc::new(MockDatabaseAdapter::new()),
             cache: Arc::new(MemoryCacheAdapter::default()),
             storage: Arc::new(MemoryStorageAdapter::default()),
-            llm: Arc::new(LocalLlmAdapter),
+            llm: Arc::new(MockLlmAdapter),
             mail: Arc::new(MemoryMailAdapter::new()),
         }
     }
@@ -321,14 +356,22 @@ mod tests {
     #[test]
     fn test_service_adapters_end_to_end() {
         let services = ServiceAdapters::new();
-        assert!(services.db.health_check());
-        assert_eq!(
-            services
-                .db
-                .execute("INSERT INTO t VALUES ($1)", &["a".into()]),
-            Ok(1)
-        );
 
+        // Honest defaults: the db/llm mocks never pretend to have done real work.
+        assert!(!services.db.health_check());
+        let exec = services
+            .db
+            .execute("INSERT INTO t VALUES ($1)", &["a".into()]);
+        assert!(exec.is_err(), "mock must not claim SQL was executed");
+        assert!(exec.unwrap_err().contains("no real database driver"));
+        assert!(services.db.query_rows("SELECT * FROM t", &[]).is_err());
+
+        let llm_reply = services
+            .llm
+            .complete("gpt-4o", &[ChatMessage::user("Hello Yav")]);
+        assert!(llm_reply.is_err(), "mock must not fabricate a completion");
+
+        // These are real in-memory implementations and keep working as documented.
         services
             .cache
             .set("/home", "<h1>Cached</h1>".into(), 60, vec!["home".into()]);
@@ -344,16 +387,36 @@ mod tests {
             .unwrap();
         assert_eq!(meta.size, 3);
 
-        let reply = services
-            .llm
-            .complete("gpt-4o", &[ChatMessage::user("Hello Yav")])
-            .unwrap();
-        assert!(reply.contains("Hello Yav"));
-
         let msg = EmailMessage::new()
             .from("no-reply@yav.rs")
             .to("dev@yav.rs")
             .subject("Welcome");
+        // In-memory development transport (documented in `email.rs`), not SMTP delivery.
         assert!(services.mail.send_email(msg).is_ok());
+    }
+
+    #[test]
+    fn test_mocks_never_claim_sql_execution() {
+        let db = MockDatabaseAdapter::new();
+        let err = db
+            .execute("DELETE FROM users", &[])
+            .expect_err("mock must not return Ok(1)");
+        assert!(err.contains("NOT executed"));
+        assert!(db.query_rows("SELECT 1", &[]).is_err());
+        assert!(!db.health_check());
+
+        // Nothing was written: the `sql_log` collection must remain empty.
+        let logged: Vec<String> = db.store().find_all("sql_log").unwrap();
+        assert!(logged.is_empty(), "mock must not log/pretend to run SQL");
+
+        let llm = MockLlmAdapter;
+        assert!(llm
+            .complete("m", &[])
+            .unwrap_err()
+            .contains("no real LLM provider"));
+        assert!(llm
+            .embed("m", "text")
+            .unwrap_err()
+            .contains("no real LLM provider"));
     }
 }

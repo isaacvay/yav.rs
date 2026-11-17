@@ -1,7 +1,9 @@
-//! OpenAPI 3.1 schema generator and embedded interactive API documentation viewers.
+//! OpenAPI 3.1 schema generator and embedded API documentation pages.
 //!
-//! Generates compliant OpenAPI JSON descriptions for hybrid full-stack applications
-//! and serves ready-to-test Scalar and Swagger UI documentation interfaces.
+//! Generates compliant OpenAPI JSON descriptions for hybrid full-stack
+//! applications and serves **offline, dependency-free** reference pages. The
+//! pages are static HTML (no CDN bundles, no JavaScript); mount a real Scalar
+//! or Swagger UI application yourself if you need an interactive explorer.
 
 use std::collections::HashMap;
 
@@ -136,27 +138,45 @@ impl OpenApiSpec {
     }
 }
 
-/// Render a self-contained modern Scalar API Reference documentation page.
-pub fn scalar_ui_handler(title: &str, spec_url: &str) -> Response {
+/// Build a dependency-free, offline API reference page.
+///
+/// The previous implementation claimed to be "self-contained" while loading
+/// Scalar from `cdn.jsdelivr.net` and Swagger UI from `unpkg.com`. Those CDN
+/// bundles require network access and are blocked by a strict CSP. This page
+/// loads no external script, stylesheet or font and uses no JavaScript at all.
+fn offline_reference_html(title: &str, spec_url: &str, flavor: &str) -> String {
     let escaped_title = yav_core::escape_html(title);
-    let escaped_spec_url = yav_core::escape_attribute(spec_url);
-    let html = format!(
+    let escaped_flavor = yav_core::escape_html(flavor);
+    let escaped_url = yav_core::escape_attribute(spec_url);
+    let url_text = yav_core::escape_html(spec_url);
+    format!(
         r#"<!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <title>{escaped_title}</title>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>{escaped_title}</title>
+<style>
+:root {{ color-scheme: light dark; }}
+body {{ font: 16px/1.6 system-ui, sans-serif; margin: 0; padding: 2rem; }}
+main {{ max-width: 48rem; margin: 0 auto; }}
+code {{ background: rgba(127,127,127,.15); padding: .1rem .3rem; border-radius: .25rem; }}
+</style>
 </head>
 <body>
-  <script
-    id="api-reference"
-    data-url="{escaped_spec_url}"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@scalar/api-reference"></script>
+<main>
+<h1>{escaped_title}</h1>
+<p>Offline API reference ({escaped_flavor}). This page is genuinely self-contained: no external scripts, stylesheets or fonts, and no JavaScript, so it works offline and behind a strict Content-Security-Policy.</p>
+<p>OpenAPI 3.1 document: <a href="{escaped_url}"><code>{url_text}</code></a></p>
+<p>For an interactive explorer, mount a viewer of your choice yourself; the framework deliberately does not fetch third-party CDN bundles.</p>
+</main>
 </body>
 </html>"#
-    );
+    )
+}
 
+fn render_offline_reference(title: &str, spec_url: &str, flavor: &str) -> Response {
+    let html = offline_reference_html(title, spec_url, flavor);
     (
         StatusCode::OK,
         [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
@@ -165,38 +185,18 @@ pub fn scalar_ui_handler(title: &str, spec_url: &str) -> Response {
         .into_response()
 }
 
-/// Render a classic Swagger UI documentation page.
-pub fn swagger_ui_handler(title: &str, spec_url: &str) -> Response {
-    let escaped_title = yav_core::escape_html(title);
-    let spec_url_json = serde_json::to_string(spec_url).unwrap_or_else(|_| "\"\"".to_string());
-    let safe_spec_url_json = spec_url_json.replace("</", "<\\/");
-    let html = format!(
-        r#"<!DOCTYPE html>
-<html>
-<head>
-  <title>{escaped_title}</title>
-  <meta charset="utf-8" />
-  <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css" />
-</head>
-<body>
-  <div id="swagger-ui"></div>
-  <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
-  <script>
-    SwaggerUIBundle({{
-      url: {safe_spec_url_json},
-      dom_id: '#swagger-ui',
-    }});
-  </script>
-</body>
-</html>"#
-    );
+/// Render the offline Scalar-flavoured API reference page.
+///
+/// This is a static HTML page, not the upstream Scalar JS application.
+pub fn scalar_ui_handler(title: &str, spec_url: &str) -> Response {
+    render_offline_reference(title, spec_url, "Scalar layout")
+}
 
-    (
-        StatusCode::OK,
-        [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
-        Html(html),
-    )
-        .into_response()
+/// Render the offline Swagger-flavoured API reference page.
+///
+/// This is a static HTML page, not the upstream Swagger UI JS application.
+pub fn swagger_ui_handler(title: &str, spec_url: &str) -> Response {
+    render_offline_reference(title, spec_url, "Swagger layout")
 }
 
 #[cfg(test)]
@@ -216,5 +216,33 @@ mod tests {
         assert!(json.contains("Yav API"));
         assert!(json.contains("/api/v1/users"));
         assert!(json.contains("Liste des utilisateurs"));
+    }
+
+    #[test]
+    fn test_reference_pages_are_truly_self_contained() {
+        let scalar = offline_reference_html("My API", "/openapi.json", "Scalar layout");
+        let swagger = offline_reference_html("My API", "/openapi.json", "Swagger layout");
+        for html in [&scalar, &swagger] {
+            assert!(html.contains("<title>My API</title>"));
+            assert!(html.contains(r#"href="/openapi.json""#));
+            assert!(!html.contains("<script"));
+            assert!(!html.contains("cdn.jsdelivr.net"));
+            assert!(!html.contains("unpkg.com"));
+            assert!(!html.contains("https://"));
+            assert!(!html.contains("http://"));
+        }
+    }
+
+    #[test]
+    fn test_reference_page_escapes_title_and_spec_url() {
+        let html = offline_reference_html(
+            "<script>alert(1)</script>",
+            "\"/onmouseover=alert(1)",
+            "Scalar layout",
+        );
+        assert!(!html.contains("<script>alert(1)</script>"));
+        assert!(!html.contains(r#""/onmouseover"#));
+        assert!(html.contains("&lt;script&gt;"));
+        assert!(html.contains("&quot;"));
     }
 }

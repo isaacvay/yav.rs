@@ -25,7 +25,23 @@ pub fn resolve_asset_path(href: &str) -> String {
             .ok()
     });
     if let Some(ref manifest) = manifest_opt {
-        manifest.resolve_url(href)
+        let resolved = manifest.resolve_url(href);
+        // Verify target file exists if path is local, avoiding broken 404 links from stale manifests
+        let clean = resolved.trim_start_matches('/');
+        let stripped_public = clean.strip_prefix("public/").unwrap_or(clean);
+        if std::path::Path::new(clean).exists()
+            || std::path::Path::new("public")
+                .join(stripped_public)
+                .exists()
+            || std::path::Path::new("dist").join(stripped_public).exists()
+            || std::path::Path::new("dist/public")
+                .join(stripped_public)
+                .exists()
+        {
+            resolved
+        } else {
+            href.to_string()
+        }
     } else {
         href.to_string()
     }
@@ -88,14 +104,24 @@ pub fn json_response<T: Serialize>(status: StatusCode, data: &T) -> Response {
     }
 }
 
-/// Checks if a redirect target URL is safe against dangerous schemes (`javascript:`, `data:`, `vbscript:`)
-/// and protocol-relative open redirects (`//evil.com`, `/\evil.com`).
+/// Checks if a redirect target URL is free of dangerous schemes and header-injection
+/// payloads (`javascript:`, `data:`, `vbscript:`, `//evil.com`, `/\evil.com`, CRLF).
+///
+/// Note: this deliberately does **not** decide whether a target is *trustworthy*.
+/// An absolute `https://evil.com` passes this check; use
+/// [`is_local_redirect_path`] or [`is_allowlisted_redirect`] to prevent open
+/// redirects when the URL can be influenced by a client.
 pub fn is_safe_redirect_target(url: &str) -> bool {
     let trimmed = url.trim();
     if trimmed.is_empty() || trimmed.chars().any(|c| c.is_control()) {
         return false;
     }
-    if trimmed.starts_with("//") || trimmed.starts_with("/\\") || trimmed.starts_with('\\') {
+    // Browsers normalise backslashes into slashes in URLs (`/\evil.com`,
+    // `https:\evil.com`, `/%5c evil.com`). Reject every form of ambiguity.
+    if trimmed.contains('\\') || trimmed.to_ascii_lowercase().contains("%5c") {
+        return false;
+    }
+    if trimmed.starts_with("//") {
         return false;
     }
     let normalized: String = trimmed
@@ -106,13 +132,56 @@ pub fn is_safe_redirect_target(url: &str) -> bool {
     if normalized.contains("%0d") || normalized.contains("%0a") || normalized.contains("%00") {
         return false;
     }
-    if normalized.starts_with("javascript:")
-        || normalized.starts_with("data:")
-        || normalized.starts_with("vbscript:")
-    {
-        return false;
+    // An absolute URL may only use http/https, and must have a proper authority.
+    if let Some(colon) = normalized.find(':') {
+        let first_slash = normalized.find('/').unwrap_or(normalized.len());
+        if colon < first_slash {
+            let scheme = &normalized[..colon];
+            if (scheme != "http" && scheme != "https") || !normalized[colon + 1..].starts_with("//")
+            {
+                return false;
+            }
+            // Reject userinfo trickery (`https://trusted.com@evil.com/`).
+            let authority = normalized[colon + 3..]
+                .split('/')
+                .next()
+                .unwrap_or_default();
+            if authority.contains('@') {
+                return false;
+            }
+        }
     }
     true
+}
+
+/// Validate an absolute redirect target against an explicit origin allowlist.
+///
+/// `allowed_origins` entries look like `https://example.com` (an optional port is
+/// allowed). Comparison is case-insensitive and ignores a trailing slash. An
+/// empty allowlist rejects every external target.
+pub fn is_allowlisted_redirect(url: &str, allowed_origins: &[String]) -> bool {
+    if !is_safe_redirect_target(url) {
+        return false;
+    }
+    let normalized = url.trim().to_ascii_lowercase();
+    let Some((scheme, rest)) = normalized.split_once("://") else {
+        return false;
+    };
+    if scheme != "http" && scheme != "https" {
+        return false;
+    }
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    if authority.is_empty() {
+        return false;
+    }
+    allowed_origins.iter().any(|allowed| {
+        let clean = allowed.trim().trim_end_matches('/').to_ascii_lowercase();
+        let without_scheme = clean
+            .split_once("://")
+            .map(|(_, r)| r)
+            .unwrap_or(clean.as_str());
+        without_scheme == authority
+    })
 }
 
 /// Checks if a redirect target is strictly a local relative path (starts with `/` and not `//` or `/\`).
@@ -130,9 +199,13 @@ pub fn is_local_redirect_path(path: &str) -> bool {
     true
 }
 
-/// Construct a 302 Found redirect response to the given target URL.
+/// Construct a 302 Found redirect response to a **local** application path.
 ///
-/// Rejects dangerous schemes (`javascript:`, `data:`, `vbscript:`) and protocol-relative URLs (`//`).
+/// Only same-origin paths (`/...`) are accepted. Absolute URLs, protocol-relative
+/// URLs, dangerous schemes and header-injection payloads are rejected with
+/// `400 Bad Request`, which prevents user-controlled values from turning this
+/// into an open redirect. Use [`redirect_allowlisted`] when an external redirect
+/// is genuinely required.
 ///
 /// # Examples
 /// ```rust,no_run
@@ -143,7 +216,7 @@ pub fn is_local_redirect_path(path: &str) -> bool {
 /// assert_eq!(resp.status(), StatusCode::FOUND);
 /// ```
 pub fn redirect(url: &str) -> Response {
-    if !is_safe_redirect_target(url) {
+    if !is_local_redirect_path(url) {
         return (
             StatusCode::BAD_REQUEST,
             [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
@@ -155,6 +228,30 @@ pub fn redirect(url: &str) -> Response {
         Ok(loc) => (StatusCode::FOUND, [(header::LOCATION, loc)]).into_response(),
         Err(_) => (
             StatusCode::INTERNAL_SERVER_ERROR,
+            [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+            "Invalid redirect URL",
+        )
+            .into_response(),
+    }
+}
+
+/// Construct a 302 Found redirect to an external URL, but only when its origin
+/// appears in `allowed_origins` (e.g. an OAuth provider / payment gateway).
+///
+/// This keeps external redirects possible without reintroducing an open redirect.
+pub fn redirect_allowlisted(url: &str, allowed_origins: &[String]) -> Response {
+    if !is_allowlisted_redirect(url, allowed_origins) {
+        return (
+            StatusCode::BAD_REQUEST,
+            [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+            "Redirect target is not in the allowed origin list",
+        )
+            .into_response();
+    }
+    match HeaderValue::try_from(url.trim()) {
+        Ok(loc) => (StatusCode::FOUND, [(header::LOCATION, loc)]).into_response(),
+        Err(_) => (
+            StatusCode::BAD_REQUEST,
             [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
             "Invalid redirect URL",
         )
@@ -428,31 +525,72 @@ impl HtmlPage {
 }
 
 /// Injects `nonce="..."` into `<script` opening tags that do not already carry a `nonce=` attribute.
+///
+/// The scan is *script-aware*: once an opening `<script …>` tag is found, its raw
+/// text is copied verbatim up to the matching `</script>`. A naive global replace
+/// would corrupt JavaScript string literals such as `document.write('<script>')`
+/// and would rewrite escaped `</script>` payloads inside streamed `<template>`
+/// fragments. Both script tags and attributes are matched case-insensitively.
 pub fn inject_csp_nonce_into_scripts(html: &str, nonce: &str) -> String {
     let escaped_nonce = yav_core::escape_html(nonce);
+    // `to_ascii_lowercase()` only maps A-Z to a-z, so byte offsets stay valid.
+    let lower = html.to_ascii_lowercase();
     let mut out = String::with_capacity(html.len() + 64);
-    let mut rest = html;
-    while let Some(idx) = rest.find("<script") {
-        out.push_str(&rest[..idx]);
-        let after = &rest[idx + 7..];
-        let next_char = after.chars().next();
-        if matches!(
-            next_char,
-            Some(' ') | Some('>') | Some('\t') | Some('\n') | Some('\r')
+    let mut cursor = 0usize;
+
+    while let Some(rel) = lower[cursor..].find("<script") {
+        let idx = cursor + rel;
+        out.push_str(&html[cursor..idx]);
+
+        let after = &html[idx + 7..];
+        if !matches!(
+            after.chars().next(),
+            Some(' ') | Some('>') | Some('\t') | Some('\n') | Some('\r') | Some('/')
         ) {
-            let tag_end = after.find('>').unwrap_or(after.len());
-            let tag_attrs = &after[..tag_end];
-            if !tag_attrs.contains("nonce=") {
-                out.push_str(&format!(r#"<script nonce="{escaped_nonce}""#));
-            } else {
-                out.push_str("<script");
-            }
-        } else {
-            out.push_str("<script");
+            // e.g. `<scripture>` — not a script element.
+            out.push_str(&html[idx..idx + 7]);
+            cursor = idx + 7;
+            continue;
         }
-        rest = after;
+
+        let tag_end_rel = after.find('>');
+        let (tag_end, has_gt) = match tag_end_rel {
+            Some(rel_end) => (idx + 7 + rel_end, true),
+            None => (html.len(), false),
+        };
+        let attrs = &html[idx + 7..tag_end];
+
+        out.push_str(&html[idx..idx + 7]);
+        if !attrs.to_ascii_lowercase().contains("nonce=") {
+            out.push_str(&format!(r#" nonce="{escaped_nonce}""#));
+        }
+        out.push_str(attrs);
+        if has_gt {
+            out.push('>');
+        }
+
+        let content_start = if has_gt { tag_end + 1 } else { tag_end };
+        if content_start >= html.len() {
+            cursor = html.len();
+            break;
+        }
+
+        // Copy the script body untouched so JS/JSON payloads are never rewritten.
+        if let Some(close_rel) = lower[content_start..].find("</script") {
+            let close_idx = content_start + close_rel;
+            let close_end = lower[close_idx..]
+                .find('>')
+                .map(|r| close_idx + r + 1)
+                .unwrap_or(html.len());
+            out.push_str(&html[content_start..close_end]);
+            cursor = close_end;
+        } else {
+            out.push_str(&html[content_start..]);
+            cursor = html.len();
+        }
     }
-    out.push_str(rest);
+
+    out.push_str(&html[cursor..]);
     out
 }
 
@@ -568,14 +706,19 @@ impl IntoResponse for HtmlFragment {
             }
         }
         if let Some(redirect) = self.hx_redirect {
-            if is_safe_redirect_target(&redirect) {
+            // HTMX navigation must stay on this origin; otherwise a reflected
+            // value could ship visitors to an attacker-controlled site.
+            if is_local_redirect_path(&redirect) {
                 if let Ok(val) = HeaderValue::from_str(redirect.trim()) {
                     headers.insert("HX-Redirect", val);
                 }
             }
         }
         if let Some(push_url) = self.hx_push_url {
-            if is_safe_redirect_target(&push_url) {
+            // `false` is the documented HTMX value for "do not push a URL".
+            let allowed =
+                push_url.trim().eq_ignore_ascii_case("false") || is_local_redirect_path(&push_url);
+            if allowed {
                 if let Ok(val) = HeaderValue::from_str(push_url.trim()) {
                     headers.insert("HX-Push-Url", val);
                 }
@@ -667,6 +810,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::forms::ActionResponse;
 
     #[derive(Serialize)]
     struct TestData {
@@ -818,6 +962,57 @@ mod tests {
     }
 
     #[test]
+    fn test_redirect_is_not_an_open_redirect() {
+        for target in [
+            "https://evil.com/phish",
+            "http://evil.com",
+            "\\\\evil.com",
+            "/\\evil.com",
+            "https:/\\evil.com",
+            "https://trusted.example@evil.com/",
+            "/%5cevil.com",
+            "mailto:attacker@example.com",
+        ] {
+            let resp = redirect(target);
+            assert_eq!(
+                resp.status(),
+                StatusCode::BAD_REQUEST,
+                "external/ambiguous target must be rejected: {target}"
+            );
+        }
+        assert_eq!(redirect("/dashboard?next=/ok").status(), StatusCode::FOUND);
+    }
+
+    #[test]
+    fn test_redirect_allowlisted_requires_explicit_origin() {
+        let allowed = vec!["https://accounts.example.com".to_string()];
+        let ok = redirect_allowlisted("https://accounts.example.com/oauth/cb", &allowed);
+        assert_eq!(ok.status(), StatusCode::FOUND);
+
+        let blocked = redirect_allowlisted("https://evil.com/oauth/cb", &allowed);
+        assert_eq!(blocked.status(), StatusCode::BAD_REQUEST);
+
+        let spoofed =
+            redirect_allowlisted("https://accounts.example.com@evil.com/oauth/cb", &allowed);
+        assert_eq!(spoofed.status(), StatusCode::BAD_REQUEST);
+
+        let empty = redirect_allowlisted("https://accounts.example.com/", &[]);
+        assert_eq!(empty.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn test_form_action_redirect_blocks_external_targets() {
+        let resp = ActionResponse::redirect("https://evil.com/phish").into_response();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+        let allowed = ["https://pay.example.com"];
+        let ok =
+            ActionResponse::redirect_allowlisted("https://pay.example.com/checkout/done", allowed)
+                .into_response();
+        assert_eq!(ok.status(), StatusCode::SEE_OTHER);
+    }
+
+    #[test]
     fn test_html_page_script_and_stylesheet_block_javascript_urls() {
         let page = HtmlPage::new(Node::text("Body"))
             .stylesheet("javascript:alert(1)")
@@ -840,5 +1035,23 @@ mod tests {
         );
         assert!(html.contains(r#"<script nonce="nonce-xyz-999" src="/app.js"></script>"#));
         assert!(html.contains(r#"<script nonce="nonce-xyz-999" id="yav-micro-actions">"#));
+    }
+
+    #[test]
+    fn test_nonce_injection_does_not_corrupt_script_bodies() {
+        let html = r#"<script>var x = "<script>alert(1)</script>";</script><script src="/a.js"></script><script NONCE="keep">ok()</script>"#;
+        let out = inject_csp_nonce_into_scripts(html, "n0nce");
+        // The literal inside the JS string must remain byte-for-byte identical.
+        assert!(out.contains(r#"var x = "<script>alert(1)</script>""#));
+        assert_eq!(out.matches(r#"nonce="n0nce""#).count(), 2);
+        assert!(out.contains(r#"<script NONCE="keep">"#));
+    }
+
+    #[test]
+    fn test_nonce_injection_handles_uppercase_and_lookalike_tags() {
+        let html = r#"<SCRIPT>foo()</SCRIPT><scripture>not a tag</scripture>"#;
+        let out = inject_csp_nonce_into_scripts(html, "N");
+        assert!(out.contains(r#"<SCRIPT nonce="N">foo()</SCRIPT>"#));
+        assert!(out.contains("<scripture>not a tag</scripture>"));
     }
 }

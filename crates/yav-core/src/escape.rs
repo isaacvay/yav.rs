@@ -128,6 +128,119 @@ pub fn escape_url(url: &str) -> Option<String> {
     Some(escape_attribute(trimmed).into_owned())
 }
 
+/// Escape a value for the `srcdoc` attribute of an `<iframe>`.
+///
+/// `srcdoc` is special: the HTML parser decodes character references in the
+/// attribute value *before* the resulting string is parsed as a standalone HTML
+/// document for the iframe. A single round of escaping is therefore not enough:
+/// `srcdoc="&lt;script&gt;"` would make the browser decode the attribute to
+/// `<script>` and then parse it as a live element.
+///
+/// To keep the content inert we first HTML-escape it (turning `<script>` into
+/// `&lt;script&gt;`) and then re-escape every `&` into `&amp;`. The attribute
+/// decoder then yields the text `&lt;script&gt;`, which the nested document
+/// renders as literal text instead of an active element.
+///
+/// # Examples
+/// ```
+/// use yav_core::escape_srcdoc;
+/// assert_eq!(
+///     escape_srcdoc("<script>alert(1)</script>"),
+///     "&amp;lt;script&amp;gt;alert(1)&amp;lt;/script&amp;gt;"
+/// );
+/// ```
+pub fn escape_srcdoc(input: &str) -> String {
+    let once = escape_html(input);
+    // Second pass: re-escape the ampersands of the entities produced above so
+    // the browser's attribute decoding cannot resurrect them into live markup.
+    once.replace('&', "&amp;")
+}
+
+/// Escape and validate a `srcset` attribute value.
+///
+/// `srcset` is a comma-separated list of image candidates, each an URL followed
+/// by an optional descriptor (`1x`, `100w`, ...). Every URL is passed through
+/// [`escape_url`]; if any candidate is dangerous the whole list is rejected
+/// (`None`) so the renderer omits the attribute entirely. Descriptors are
+/// attribute-escaped so a quote cannot break out of the attribute, and the
+/// list is rebuilt from the sanitized parts.
+///
+/// # Examples
+/// ```
+/// use yav_core::escape_srcset;
+/// assert_eq!(
+///     escape_srcset("a.png 1x, b.png 2x"),
+///     Some("a.png 1x, b.png 2x".to_string())
+/// );
+/// assert_eq!(escape_srcset("javascript:alert(1) 1x"), None);
+/// ```
+pub fn escape_srcset(input: &str) -> Option<String> {
+    let mut rebuilt: Vec<String> = Vec::new();
+    for candidate in input.split(',') {
+        let candidate = candidate.trim();
+        let mut parts = candidate.splitn(2, char::is_whitespace);
+        let url = parts.next().unwrap_or("");
+        let descriptor = parts.next().unwrap_or("").trim();
+
+        // A single dangerous URL invalidates the entire srcset list.
+        let safe_url = escape_url(url)?;
+        let mut entry = safe_url;
+        if !descriptor.is_empty() {
+            entry.push(' ');
+            entry.push_str(&escape_attribute(descriptor));
+        }
+        rebuilt.push(entry);
+    }
+    Some(rebuilt.join(", "))
+}
+
+/// Sanitize a `style` attribute value for embedding in a double-quoted attribute.
+///
+/// A handful of CSS constructs can execute script or break out of the CSS
+/// context and cannot be made safe by HTML escaping alone: legacy IE
+/// `expression(...)`, `url(javascript:...)` (and any `javascript:` scheme),
+/// `</style` (which can close an enclosing `<style>` element) and `@import`
+/// loading an external origin. If any of these is detected the whole value is
+/// refused (an empty string is returned) — the safest neutralisation. Otherwise
+/// the value is escaped with [`escape_attribute`].
+///
+/// Detection runs on a lowercased, whitespace/control-stripped copy so that
+/// obfuscations such as `url ( javaScript:` are still caught.
+///
+/// # Examples
+/// ```
+/// use yav_core::escape_style;
+/// assert_eq!(escape_style("color: red;"), "color: red;");
+/// assert_eq!(escape_style("background: url(javascript:alert(1))"), "");
+/// ```
+pub fn escape_style(input: &str) -> String {
+    let normalized: String = input
+        .chars()
+        .map(|c| c.to_ascii_lowercase())
+        .filter(|c| !c.is_whitespace() && !c.is_control())
+        .collect();
+
+    const FORBIDDEN: &[&str] = &["expression(", "url(javascript:", "javascript:", "</style"];
+    if FORBIDDEN.iter().any(|pat| normalized.contains(*pat)) {
+        return String::new();
+    }
+
+    // `@import` is only dangerous with an external origin; same-origin relative
+    // imports are left to the caller.
+    if let Some(pos) = normalized.find("@import") {
+        let tail = &normalized[pos + "@import".len()..];
+        if tail.contains("http:")
+            || tail.contains("https:")
+            || tail.contains("//")
+            || tail.contains("data:")
+        {
+            return String::new();
+        }
+    }
+
+    escape_attribute(input).into_owned()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -234,5 +347,70 @@ mod tests {
     fn escape_no_changes_needed() {
         let safe = "Hello World 123";
         assert_eq!(escape_html(safe).as_ref(), safe);
+    }
+
+    #[test]
+    fn escape_srcdoc_double_escapes_markup() {
+        let escaped = escape_srcdoc("<script>alert(1)</script>");
+        assert_eq!(
+            escaped,
+            "&amp;lt;script&amp;gt;alert(1)&amp;lt;/script&amp;gt;"
+        );
+        assert!(!escaped.contains("<script>"));
+        assert!(!escaped.contains('"'));
+    }
+
+    #[test]
+    fn escape_srcdoc_plain_and_ampersand() {
+        assert_eq!(escape_srcdoc("Hello World"), "Hello World");
+        assert_eq!(escape_srcdoc("a & b"), "a &amp;amp; b");
+    }
+
+    #[test]
+    fn escape_srcset_safe_candidates() {
+        assert_eq!(
+            escape_srcset("a.png 1x, b.png 2x, wide.png 100w"),
+            Some("a.png 1x, b.png 2x, wide.png 100w".to_string())
+        );
+    }
+
+    #[test]
+    fn escape_srcset_rejects_any_dangerous_url() {
+        assert_eq!(escape_srcset("javascript:alert(1) 1x"), None);
+        assert_eq!(escape_srcset("safe.png 1x, javascript:alert(1) 2x"), None);
+        assert_eq!(escape_srcset("vbscript:msgbox 1x"), None);
+    }
+
+    #[test]
+    fn escape_srcset_escapes_descriptor_breakout() {
+        let escaped = escape_srcset("img.png 1x\" onload=\"alert(1)").unwrap();
+        assert!(!escaped.contains('"'));
+        assert!(escaped.contains("img.png"));
+    }
+
+    #[test]
+    fn escape_style_refuses_dangerous_constructs() {
+        assert_eq!(escape_style("width: expression(alert(1))"), "");
+        assert_eq!(escape_style("background: url(javascript:alert(1))"), "");
+        assert_eq!(escape_style("color: red; } </style><script>"), "");
+        assert_eq!(
+            escape_style("@import url('https://evil.example/x.css');"),
+            ""
+        );
+        assert_eq!(escape_style("@import \"//evil.example/x.css\";"), "");
+    }
+
+    #[test]
+    fn escape_style_preserves_and_escapes_safe_css() {
+        assert_eq!(
+            escape_style("color: red; font-size: 12px;"),
+            "color: red; font-size: 12px;"
+        );
+        assert_eq!(
+            escape_style("content: \"a & b\""),
+            "content: &quot;a &amp; b&quot;"
+        );
+        // Same-origin relative imports are allowed (no external origin).
+        assert!(escape_style("@import url('theme.css');").contains("@import"));
     }
 }

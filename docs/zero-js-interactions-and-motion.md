@@ -1,6 +1,6 @@
 # Zero-JS Declarative Interactivity & Motion Engine
 
-Yav v0.1.4 introduces a groundbreaking architecture for rich modern web interfaces: **Zero-JS client interactivity powered by native Rust components and declarative HTML5 attributes**.
+Yav v0.1.5 introduces a groundbreaking architecture for rich modern web interfaces: **Zero-JS client interactivity powered by native Rust components and declarative HTML5 attributes**.
 
 You can build drawers, modals, command palettes, 3D tilt cards, cursor-following spotlights, magnetic buttons, physical spring gestures, scroll-spy table-of-contents, animated count-ups, and reactive calculators **without writing a single line of JavaScript**.
 

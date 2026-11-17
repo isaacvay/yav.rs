@@ -463,7 +463,7 @@ yav export --output dist --base-url https://yav.rs
 
 ## 12. High-Performance Radix Route Trie (`RouteTrie`)
 
-Yav features an optimized Radix Prefix Tree ([`RouteTrie`](file:///d:/deep/yav.rs/crates/yav-router/src/trie.rs)) integrated directly into [`RouteTable`](file:///d:/deep/yav.rs/crates/yav-router/src/table.rs) for sub-microsecond route resolution:
+Yav features an optimized Radix Prefix Tree ([`RouteTrie`](../crates/yav-router/src/trie.rs)) integrated directly into [`RouteTable`](../crates/yav-router/src/table.rs) for sub-microsecond route resolution:
 
 ### Algorithmic Complexity
 Traditional web frameworks often scan registered routes linearly ($O(N)$, where $N$ is the total number of routes). In contrast, Yav's `RouteTrie` resolves requests in **$O(L)$ time**, where $L$ is the number of path segments (typically 1 to 5), completely invariant to how many hundreds or thousands of routes exist in the project.

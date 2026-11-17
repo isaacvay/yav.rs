@@ -338,7 +338,7 @@ function executeCode() {{
       const elapsed = Math.round(performance.now() - t0);
       statusSpan.textContent = `Exécuté (${{elapsed}}ms)`;
       statusSpan.className = 'yav-play-status text-emerald-400 font-medium';
-      outputPre.textContent = `[Simulation Yav REPL] Code soumis (${{code.length}} caractères, ${{code.split('\\n').length}} lignes)\n---\nSortie simulée: Exécution réussie sans erreurs.`;
+      outputPre.textContent = `[Yav REPL] Aucun endpoint d'exécution configuré. Définissez \`run_endpoint\` sur l'URL de votre serveur d'exécution pour exécuter ce code.\n---\nCode soumis: ${{code.length}} caractères, ${{code.split('\\n').length}} lignes.`;
     }}, 120);
   }}
 }}

@@ -30,7 +30,7 @@ pub enum GenerateTarget {
         #[arg(short, long)]
         output: Option<String>,
     },
-    /// Export OpenAPI 3.0 specification from discovered application routes
+    /// Export OpenAPI 3.1 specification from discovered application routes
     #[command(alias = "api")]
     Openapi {
         /// Destination file path (default: openapi.json)
@@ -634,7 +634,7 @@ export type RouteParams = {
     Ok(())
 }
 
-/// Export OpenAPI 3.0.3 specification JSON from application routes.
+/// Export OpenAPI 3.1 specification JSON from application routes.
 pub fn generate_openapi(
     root: &Path,
     output: Option<String>,
@@ -744,7 +744,7 @@ pub fn generate_openapi(
     }
 
     let spec = serde_json::json!({
-        "openapi": "3.0.3",
+        "openapi": "3.1.0",
         "info": {
             "title": "Yav Application API",
             "description": "Auto-generated OpenAPI specification from Yav routes",
@@ -804,7 +804,7 @@ mod tests {
         let api_path = temp_dir.join("openapi.json");
         generate_openapi(&temp_dir, Some(api_path.to_str().unwrap().to_string())).unwrap();
         let api_content = fs::read_to_string(&api_path).unwrap();
-        assert!(api_content.contains("\"openapi\": \"3.0.3\""));
+        assert!(api_content.contains("\"openapi\": \"3.1.0\""));
         assert!(api_content.contains("\"/about\""));
         assert!(api_content.contains("\"/_actions/contact\""));
         assert!(api_content.contains("\"server_post_submit_contact\""));

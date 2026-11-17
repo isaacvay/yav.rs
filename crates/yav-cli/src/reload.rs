@@ -6,7 +6,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, watch};
 
 /// Events broadcasted to connected browser dev clients.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -227,11 +227,40 @@ pub const CLIENT_RELOAD_SCRIPT: &str = r#"(function() {
 })();
 "#;
 
+/// Handle that explicitly stops a running [`ReloadServer`].
+///
+/// Cheap to clone and safe to call more than once. Dropping every handle does
+/// **not** implicitly stop the server; call [`ReloadShutdown::shutdown`].
+#[derive(Clone)]
+pub struct ReloadShutdown {
+    tx: watch::Sender<bool>,
+}
+
+impl std::fmt::Debug for ReloadShutdown {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ReloadShutdown").finish_non_exhaustive()
+    }
+}
+
+impl ReloadShutdown {
+    /// Signal the reload listener to stop accepting connections.
+    pub fn shutdown(&self) {
+        let _ = self.tx.send(true);
+    }
+
+    /// Whether a shutdown has been requested.
+    #[must_use]
+    pub fn is_shutdown(&self) -> bool {
+        *self.tx.subscribe().borrow()
+    }
+}
+
 /// Live reload server handling SSE connections and file change notifications.
 #[derive(Clone)]
 pub struct ReloadServer {
     tx: Arc<broadcast::Sender<ReloadEvent>>,
     port: u16,
+    shutdown: ReloadShutdown,
 }
 
 impl ReloadServer {
@@ -246,18 +275,28 @@ impl ReloadServer {
         let actual_port = local_addr.port();
         let (tx, _) = broadcast::channel::<ReloadEvent>(16);
         let tx = Arc::new(tx);
+        let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
         let server = Self {
             tx: tx.clone(),
             port: actual_port,
+            shutdown: ReloadShutdown { tx: shutdown_tx },
         };
 
-        let server_clone = server.clone();
+        let events = tx.clone();
+        let port = actual_port;
+        let mut stopped_rx = shutdown_rx;
         tokio::spawn(async move {
-            server_clone.run_listener(listener).await;
+            Self::run_listener(listener, events, port, &mut stopped_rx).await;
         });
 
         Ok((server, actual_port))
+    }
+
+    /// Return a handle that can stop this reload server from another task.
+    #[must_use]
+    pub fn shutdown_handle(&self) -> ReloadShutdown {
+        self.shutdown.clone()
     }
 
     /// Broadcasts a reload event to all connected browser clients.
@@ -297,21 +336,36 @@ impl ReloadServer {
         )
     }
 
-    async fn run_listener(self, listener: TcpListener) {
+    async fn run_listener(
+        listener: TcpListener,
+        tx: Arc<broadcast::Sender<ReloadEvent>>,
+        port: u16,
+        stopped: &mut watch::Receiver<bool>,
+    ) {
         loop {
-            match listener.accept().await {
-                Ok((stream, addr)) => {
-                    let tx = self.tx.clone();
-                    let port = self.port;
-                    tokio::spawn(async move {
-                        if let Err(e) = handle_connection(stream, addr, tx, port).await {
-                            tracing::debug!("Reload client connection closed: {e}");
-                        }
-                    });
+            tokio::select! {
+                // Wakes as soon as `ReloadShutdown::shutdown` flips the flag.
+                changed = stopped.changed() => {
+                    if changed.is_err() || *stopped.borrow() {
+                        tracing::debug!("Reload listener stopped by shutdown handle");
+                        break;
+                    }
                 }
-                Err(e) => {
-                    tracing::debug!("Error accepting reload connection: {e}");
-                    break;
+                incoming = listener.accept() => {
+                    match incoming {
+                        Ok((stream, addr)) => {
+                            let tx = tx.clone();
+                            tokio::spawn(async move {
+                                if let Err(e) = handle_connection(stream, addr, tx, port).await {
+                                    tracing::debug!("Reload client connection closed: {e}");
+                                }
+                            });
+                        }
+                        Err(e) => {
+                            tracing::debug!("Error accepting reload connection: {e}");
+                            break;
+                        }
+                    }
                 }
             }
         }
@@ -489,5 +543,37 @@ mod tests {
         server.notify_css_reload("/public/styles.css");
         server.notify_error("test error");
         server.notify_clear_error();
+    }
+
+    #[tokio::test]
+    async fn test_shutdown_handle_stops_listener_and_releases_port() {
+        let (server, port) = ReloadServer::start(0)
+            .await
+            .expect("Failed to start server");
+        let handle = server.shutdown_handle();
+        assert!(!handle.is_shutdown());
+
+        handle.shutdown();
+        assert!(handle.is_shutdown());
+        // Idempotent: a second call must not panic or error.
+        handle.shutdown();
+        // A second handle cloned from the same server sees the same state.
+        assert!(server.shutdown_handle().is_shutdown());
+
+        // The listener task drops its TcpListener when it exits, so the port
+        // becomes bindable again. Yield until that happens; fail rather than
+        // hang if shutdown does not propagate.
+        let mut rebound = false;
+        for _ in 0..50 {
+            if TcpListener::bind(format!("127.0.0.1:{port}")).await.is_ok() {
+                rebound = true;
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        assert!(
+            rebound,
+            "reload listener did not release port {port} after shutdown"
+        );
     }
 }

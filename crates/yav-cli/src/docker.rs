@@ -40,7 +40,7 @@ pub fn run(force: bool) -> Result<(), Box<dyn std::error::Error>> {
       - HOST=0.0.0.0
       - PORT=3000
       - RUST_LOG=info
-      - SESSION_SECRET=${{SESSION_SECRET:-change_me_in_production_at_least_32_bytes_long}}
+      - SESSION_SECRET=${{SESSION_SECRET:?ERROR: Set SESSION_SECRET environment variable before starting}}
     restart: unless-stopped
 "#
     );
@@ -120,8 +120,9 @@ RUN cargo build --release && \
     if [ -n "$TW_IN" ]; then \
       mkdir -p public && \
       ARCH=$(uname -m); \
-      if [ "$ARCH" = "aarch64" ]; then TW_ARCH="linux-arm64-musl"; else TW_ARCH="linux-x64-musl"; fi; \
+      if [ "$ARCH" = "aarch64" ]; then TW_ARCH="linux-arm64-musl"; TW_SHA="69b1378b8133192d7d2feb12a116fa12d035594f58db3eff215879e4ad8cf39b"; else TW_ARCH="linux-x64-musl"; TW_SHA="7d24f7fa191d2193b78cd5f5a42a6093e14409521908529f42d80b11fde1f1d4"; fi; \
       curl -sSL "https://github.com/tailwindlabs/tailwindcss/releases/download/v3.4.17/tailwindcss-${{TW_ARCH}}" -o /tmp/tailwindcss && \
+      echo "$TW_SHA  /tmp/tailwindcss" | sha256sum -c - && \
       chmod +x /tmp/tailwindcss && \
       /tmp/tailwindcss -i "$TW_IN" -o public/styles.css --content "./src/**/*.{{rs,yavml,yav,rsx,html}},./public/**/*.html" --minify; \
     fi
