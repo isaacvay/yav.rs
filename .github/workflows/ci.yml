@@ -88,7 +88,7 @@ jobs:
       # The locked dependency graph contains `image` / `icu` / `encoding_rs`
       # releases that require rustc 1.88, and Cargo.lock v4 needs >= 1.78.
       - name: Install MSRV toolchain
-        uses: dtolnay/rust-toolchain@1.88.0
+        uses: dtolnay/rust-toolchain@1.120.0
 
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
