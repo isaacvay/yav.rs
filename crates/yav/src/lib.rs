@@ -405,9 +405,9 @@
 //! | Module | Underlying Crate | Description |
 //! |---|---|---|
 //! | [`core`] | `yav-core` | Virtual DOM, [`core::Node`], [`signals`], [`state_machine`], [`collab`] (CRDTs & `LexoRank`), escaping, i18n, and context |
-//! | [`macros`] | `yav-macros` | Procedural macros: [`rsx!`], [`#[component]`](component), [`#[derive(FromFormData)]`](FromFormData), [`#[derive(ApiSchema)]`](ApiSchema), [`#[server]`](server) |
+//! | [`macros`] | `yav-macros` | Procedural macros: [`rsx!`], [`#[component]`](component), [`#[derive(FromFormData)]`](FromFormData), [`#[derive(ApiSchema)]`](ApiSchema), [`#[server]`](macro@server) |
 //! | [`router`] | `yav-router` | File-based routing, `@slot` parallel routes, `(.)` intercepting routes, `[[...slug]]`, and table resolution |
-//! | [`server`] | `yav-server` | Axum HTTP server, [`auth`], [`db`], [`email`], [`jobs`], [`image_opt`], [`flags`], [`ai`], [`billing`], [`storage`], [`geo`], [`adapters`] |
+//! | [`mod@server`] | `yav-server` | Axum HTTP server, [`auth`], [`db`], [`email`], [`jobs`], [`image_opt`], [`flags`], [`ai`], [`billing`], [`storage`], [`geo`], [`adapters`] |
 //! | [`ui`] | `yav-ui` | 60+ accessible UI components, [`charts`], [`datagrid`], [`kanban`], [`virtual_list`], [`flow_canvas`], [`rich_editor`] |
 //! | [`icons`] | `yav-icons` | ~1,900 Classic icons by default, ~13,600 with `full-icons` (Lucide, MynaUI, Phosphor) |
 //! | [`build`] | `yav-build` | Asset hashing, GFM Markdown + syntax highlighting, [`search`] (BM25), [`minifier`], and Tailwind compiler |

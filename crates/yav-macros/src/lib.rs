@@ -359,7 +359,7 @@ pub fn t_strict(input: TokenStream) -> TokenStream {
     tokens.into()
 }
 
-/// Derive [`FromFormData`](::yav::server::FromFormData) for a struct with declarative field validation rules.
+/// Derive `FromFormData` for a struct with declarative field validation rules.
 ///
 /// # Supported `#[form(...)]` Field Attributes
 /// - `#[form(required = "Email is required")]` or `#[form(required)]`

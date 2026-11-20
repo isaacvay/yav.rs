@@ -92,7 +92,7 @@ yav build
 ---
 
 ### 5. `yav update` (aliases: `yav up`, `yav upgrade`)
-Updates the `yav` CLI binary itself and upgrades Yav dependencies in the current project (`package.yavml`, `Cargo.toml`, `Cargo.lock`, and the cached standalone Tailwind CSS binary):
+Checks crates.io, rebuilds the `yav` CLI and upgrades Yav dependencies in the current project. The CLI is built into a temporary directory and then swapped into place atomically, so the command also works on Windows where a running `yav.exe` cannot be overwritten in place. **Restart your shell after a CLI update** to use the new binary; there are no prebuilt release binaries yet, so the rebuild compiles from source and can take several minutes.
 
 ```bash
 # Update both the yav CLI and the current project (if inside a Yav project)
@@ -107,12 +107,22 @@ yav update --self
 # Only update the current project's manifests and Cargo.lock
 yav update --project
 
-# Update yav-cli directly from the official GitHub repository (main branch)
+# Build yav-cli from the official GitHub repository (main branch) instead of crates.io
 yav update --git
 
-# Force reinstallation / update even if already up to date
+# Force reinstallation of the CLI even if already up to date
 yav update --force
 ```
+
+Project updates rewrite Yav dependency versions in `package.yavml`, `package.yav`, `yav.toml` and `Cargo.toml`, preserving path/git dependencies and never downgrading a newer local version. Only the Yav crates that changed are refreshed in `Cargo.lock` (`cargo update -p <crate>`); unrelated dependencies are left untouched. The Tailwind standalone compiler is only downloaded when its pinned version is missing from the cache — `yav update` does not upgrade Tailwind itself. If crates.io cannot be reached, the project phase is skipped and the command exits non-zero instead of silently claiming success. `--self` and `--git` cannot be combined with `--project`; `--check` is always read-only.
+
+If your installed CLI is `0.1.6` or older on Windows, its self-update still tries to overwrite its own running executable and fails. Upgrade once manually from a shell where `yav` is not running:
+
+```bash
+cargo install yav-cli --force
+```
+
+After that, subsequent `yav update` calls use the atomic replacement described above. The same applies to a `0.1.6` CLI built from crates.io: the self-update fix ships in the next published version, so a first manual install (or `cargo install --git https://github.com/isaacvay/yav.rs yav-cli`) is required to obtain it.
 
 ---
 

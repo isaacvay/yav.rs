@@ -1,6 +1,6 @@
 //! Full-Text Search Indexer with BM25-style Scoring and Snippet Highlighting (Pagefind / Algolia DocSearch equivalent).
 //!
-//! Indexes [`MarkdownDoc`](crate::markdown::MarkdownDoc) or arbitrary documents into a compact,
+//! Indexes [`MarkdownDoc`] or arbitrary documents into a compact,
 //! serializable inverted index with title boosting, prefix matching, and `<mark>` snippet extraction.
 
 use crate::markdown::MarkdownDoc;

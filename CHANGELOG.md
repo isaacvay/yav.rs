@@ -5,6 +5,49 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.7] - 2026-11-20
+
+### Fixed
+
+- **`yav update` on Windows**: the CLI no longer tries to overwrite its own
+  running `yav.exe`. It builds into a temporary Cargo root and atomically
+  replaces the executable via `self_replace`; restart the shell to pick up the
+  new binary. Cargo output is streamed instead of captured, so the multi-minute
+  source build is no longer silent.
+- A failed CLI install no longer aborts the project-dependency phase, and a
+  second (identical) Git build is only attempted when the registry itself was
+  unreachable — not when compilation failed.
+- Offline behaviour: the framework version check no longer falls back to the
+  CLI version and is honestly reported as skipped; `--force` can no longer
+  downgrade project dependencies, and an unparsable remote version is rejected.
+  Manifest updates never downgrade and now understand `[dependencies.yav]`,
+  `[target.'cfg(...)'.dependencies]` and `yav.toml`.
+- Project updates now refresh only changed Yav crates (`cargo update -p`) instead
+  of bumping every dependency with a blanket `cargo update`; project detection
+  parses `Cargo.toml` rather than searching for the substring `yav`.
+- Unparsable registry versions no longer count as available updates, single-quoted
+  TOML strings and quoted `[dependencies.'yav']` tables are handled, and Clap now
+  rejects `--self`/`--git` combined with `--project` instead of silently doing
+  nothing.
+- CLI contract tests: the stale hardcoded `0.1.5` version expectation is gone,
+  and new tests cover update flags/aliases, conflicting scopes and offline,
+  read-only `--check`.
+- **HTTP integration tests proxy isolation**: `crates/yav-server/tests/http_integration.rs`
+  now configures `.no_proxy()` on the test client, preventing spurious `400 Bad Request`
+  failures caused by environment/system HTTP proxies intercepting loopback connections.
+- **Rustdoc intra-doc links**: Cleaned up ambiguous and unresolved links in
+  `yav-build`, `yav-icons`, `yav-macros`, `yav-server`, and `yav` facade.
+
+### Changed
+
+- Bump workspace and crate versions to `0.1.7`.
+- Synchronized `examples/dashboard/Cargo.lock` and `test-app/Cargo.lock` with workspace dependencies.
+- `docs/cli.md`, `docs/getting-started.md` and `docs/limitations.md` now describe
+  the real self-update flow, its build time, the absence of prebuilt binaries and
+  the one-time manual install required for `0.1.5`/`0.1.6` binaries on Windows.
+- `SECURITY.md` now lists `0.1.7` as the supported version and records the
+  `rust-version` metadata fix as historical rather than pending.
+
 ## [0.1.6] - 2026-11-17
 
 Audit remediation release. Full findings and severities:

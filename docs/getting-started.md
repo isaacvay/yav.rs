@@ -19,6 +19,10 @@ cargo install --git https://github.com/isaacvay/yav.rs yav-cli
 yav update
 ```
 
+`yav update` rebuilds the CLI from source (no prebuilt release binaries yet)
+and replaces the executable atomically; restart your shell afterwards. Use
+`yav update --check` for a read-only version check.
+
 ## Create a New Project
 
 ```bash

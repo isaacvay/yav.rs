@@ -36,6 +36,8 @@ toml.workspace = true
 serde_json.workspace = true
 cargo_metadata = { workspace = true, optional = true }
 tracing-tree = { workspace = true, optional = true }
+self-replace.workspace = true
+tempfile.workspace = true
 
 [dev-dependencies]
 assert_cmd.workspace = true

@@ -4,17 +4,17 @@
 
 | Version | Supported |
 | --- | --- |
-| `0.1.5` (current workspace version) | Yes |
-| `0.1.x` older releases | No — upgrade to 0.1.5 |
+| `0.1.7` (current workspace version) | Yes |
+| `0.1.x` older releases | No — upgrade to 0.1.7 |
 | Unreleased `main` | Best effort; not recommended for production |
 
 Yav is pre-1.0. Security fixes land on `main` and are released as the next
 `0.1.x` patch; there are no long-term support branches yet.
 
-> **Release metadata caveat:** the `0.1.5` artifact on crates.io declares
-> `rust-version = 1.75`, while the workspace and its locked dependency graph
-> require **Rust 1.88**. `cargo install yav-cli` on 1.75 is accepted by Cargo
-> and then fails to compile. This is corrected in the next release.
+> **Historical metadata caveat:** the `0.1.5` artifact on crates.io declared
+> `rust-version = 1.75`, while its locked dependency graph required **Rust
+> 1.88**, so `cargo install yav-cli` on 1.75 was accepted and then failed to
+> compile. `0.1.6` declares `rust-version = 1.88` and resolves this.
 
 ## Reporting a vulnerability
 

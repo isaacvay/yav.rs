@@ -1,6 +1,6 @@
 //! SVG icon rendering for Yav virtual DOM nodes.
 //!
-//! Provides [`render_icon`] and the [`Icon`] component to render Classic,
+//! Provides [`render_icon`] and the [`struct@Icon`] component to render Classic,
 //! Minimal, and System SVG icons directly into [`yav_core::Node`] trees.
 
 use crate::catalog::{IconData, IconFamily, IconStyle};
@@ -292,7 +292,7 @@ impl<'a> IntoNode for Icon<'a> {
     }
 }
 
-/// Properties for constructing an [`Icon`] via `rsx!`.
+/// Properties for constructing an [`struct@Icon`] via `rsx!`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct IconProps {
     pub name: String,
@@ -303,7 +303,7 @@ pub struct IconProps {
     pub aria_label: Option<String>,
 }
 
-/// Functional component adapter for [`Icon`], enabling `<Icon name="..." />` in `rsx!`.
+/// Functional component adapter for [`struct@Icon`], enabling `<Icon name="..." />` in `rsx!`.
 #[allow(non_snake_case)]
 pub fn Icon(props: IconProps) -> yav_core::Node {
     let mut icon = Icon::new(&props.name);

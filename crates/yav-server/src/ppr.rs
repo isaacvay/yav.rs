@@ -2,7 +2,7 @@
 //!
 //! Combines the sub-millisecond TTFB of static site generation with dynamic
 //! server-rendered holes streamed in over the same HTTP response:
-//! - [`PprShell`] caches the static HTML shell containing `<template data-yav-ppr-slot="id">`
+//! - [`PprPage`] caches the static HTML shell containing `<template data-yav-ppr-slot="id">`
 //!   fallback placeholders.
 //! - Dynamic [`PprSlot`] futures are resolved **concurrently**. The streaming
 //!   path uses `FuturesUnordered` and flushes each swap script as soon as its

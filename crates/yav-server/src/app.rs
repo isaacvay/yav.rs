@@ -911,7 +911,7 @@ impl YavApp {
         self.get_cached_with_policy(path, crate::cache::CachePolicy::new(ttl), handler)
     }
 
-    /// Register a cached GET route with an explicit [`CachePolicy`] (TTL + SWR toggle).
+    /// Register a cached GET route with an explicit [`crate::cache::CachePolicy`] (TTL + SWR toggle).
     pub fn get_cached_with_policy<M>(
         self,
         path: impl Into<String>,

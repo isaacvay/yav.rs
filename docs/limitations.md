@@ -6,7 +6,7 @@ feature is not listed here and you find it is only partially implemented,
 please open an issue — and see [`CONTRIBUTING.md`](../CONTRIBUTING.md) for the
 rule that forbids reporting fake success.
 
-Current workspace version: **0.1.6**.
+Current workspace version: **0.1.7**.
 
 ## 1. Modules that are libraries, not mounted services
 
@@ -198,6 +198,17 @@ required third-party license texts are shipped at the crate root
   listener only — it does not manage the application process lifetime.
 - `yav doctor` reports missing critical tools with a non-zero exit code, but
   it does not repair the environment.
+- `yav update` has **no prebuilt release binaries**: it always runs
+  `cargo install` into a temporary root, which is a full source build and can
+  take several minutes. The replacement itself is atomic (`self_replace`), so
+  it works on Windows, but the new binary only takes effect after restarting
+  the shell. `--force` reinstalls the CLI; it never forces a dependency
+  downgrade. Tailwind's standalone compiler is cached by pinned version and
+  is not upgraded to newer Tailwind releases by `yav update`.
+- The self-update fix is only effective in the binary that contains it. A CLI
+  already installed from `0.1.5`/`0.1.6` on Windows cannot replace itself and
+  needs one manual `cargo install yav-cli --force` (or a `--git` install from
+  `main`) before `yav update` becomes self-sufficient.
 
 ## 11. Test and packaging gaps
 

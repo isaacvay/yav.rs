@@ -414,10 +414,7 @@ impl CacheAdapter for MokaCacheAdapter {
             // The same key may be indexed under other tags. Drop those stale
             // references too, otherwise a later `invalidate_tag` reports keys
             // that were already removed.
-            let mut index = self
-                .tag_index
-                .write()
-                .unwrap_or_else(|e| e.into_inner());
+            let mut index = self.tag_index.write().unwrap_or_else(|e| e.into_inner());
             for remaining in index.values_mut() {
                 remaining.remove(&key);
             }

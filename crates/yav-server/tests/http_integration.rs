@@ -39,6 +39,7 @@ async fn serve(app: Router) -> String {
 
 fn client() -> reqwest::Client {
     reqwest::Client::builder()
+        .no_proxy()
         .timeout(Duration::from_secs(10))
         .build()
         .expect("build HTTP client")
