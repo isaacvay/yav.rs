@@ -142,7 +142,8 @@ impl GraphQlSchema {
         self
     }
 
-    /// Execute a GraphQL query string against this schema.
+    /// Execute a GraphQL query string against this schema (supporting nested field projection,
+    /// aliases, `$variables`, named `fragment` spreads, `@include`/`@skip` directives, and introspection).
     pub fn execute(
         &self,
         query_str: &str,
@@ -164,8 +165,51 @@ impl GraphQlSchema {
             };
         }
 
+        // Extract top-level `fragment Name on Type { ... }` blocks
+        let mut fragments: HashMap<String, String> = HashMap::new();
+        let mut op_query = String::new();
+        let mut rest = trimmed;
+        while let Some(frag_pos) = rest.find("fragment ") {
+            op_query.push_str(&rest[..frag_pos]);
+            let after_kw = rest[frag_pos + "fragment ".len()..].trim_start();
+            if let Some(brace_open) = after_kw.find('{') {
+                let header = after_kw[..brace_open].trim();
+                let frag_name = header.split_whitespace().next().unwrap_or("").to_string();
+                let mut depth = 0usize;
+                let mut end_brace = None;
+                for (i, ch) in after_kw[brace_open..].char_indices() {
+                    match ch {
+                        '{' => depth += 1,
+                        '}' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                end_brace = Some(brace_open + i);
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                if let Some(end_idx) = end_brace {
+                    if !frag_name.is_empty() {
+                        fragments.insert(
+                            frag_name,
+                            after_kw[brace_open + 1..end_idx].trim().to_string(),
+                        );
+                    }
+                    rest = &after_kw[end_idx + 1..];
+                    continue;
+                }
+            }
+            op_query.push_str(&rest[frag_pos..]);
+            rest = "";
+            break;
+        }
+        op_query.push_str(rest);
+        let op_trimmed = op_query.trim();
+
         // 2. Determine operation type: query or mutation
-        let is_mutation = trimmed.starts_with("mutation");
+        let is_mutation = op_trimmed.starts_with("mutation");
         let target_object = if is_mutation {
             match &self.mutation {
                 Some(m) => m,
@@ -182,28 +226,32 @@ impl GraphQlSchema {
             &self.query
         };
 
-        // 3. Simple robust token extraction for top-level query fields and arguments
-        let body_str = if let Some(open_brace) = trimmed.find('{') {
-            if let Some(close_brace) = trimmed.rfind('}') {
-                &trimmed[open_brace + 1..close_brace]
+        // 3. Extract top-level operation body `{ ... }` and expand fragments
+        let body_str = if let Some(open_brace) = op_trimmed.find('{') {
+            if let Some(close_brace) = op_trimmed.rfind('}') {
+                &op_trimmed[open_brace + 1..close_brace]
             } else {
-                trimmed
+                op_trimmed
             }
         } else {
-            trimmed
+            op_trimmed
         };
+        let expanded_body = expand_fragments(body_str, &fragments);
 
         let mut data_map = serde_json::Map::new();
         let mut errors = Vec::new();
 
-        for line in split_top_level_fields(body_str) {
+        for line in split_top_level_fields(&expanded_body) {
             let line = line.trim();
             if line.is_empty() || line.starts_with('#') {
                 continue;
             }
+            if !should_include_field(line, variables) {
+                continue;
+            }
 
-            // Extract field alias, field name and optional arguments
-            let (output_key, field_name, mut args) = parse_field_and_args(line);
+            // Extract field alias, field name, arguments and optional nested `{ ... }` selection
+            let (output_key, field_name, mut args, nested_body) = parse_field_full(line);
 
             // Substitute variable references if provided ($var_name)
             if let Some(vars) = variables {
@@ -222,7 +270,12 @@ impl GraphQlSchema {
                 if let Some(resolver) = &field.resolver {
                     match resolver(args) {
                         Ok(val) => {
-                            data_map.insert(output_key, val);
+                            let projected = if let Some(nb) = nested_body {
+                                project_selection_set(val, nb, variables, &fragments)
+                            } else {
+                                val
+                            };
+                            data_map.insert(output_key, projected);
                         }
                         Err(err) => {
                             errors.push(GraphQlError { message: err });
@@ -343,6 +396,167 @@ fn split_top_level_fields(body: &str) -> Vec<String> {
     fields
 }
 
+fn split_top_level_args(args_str: &str) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut start = 0usize;
+    let mut quote: Option<u8> = None;
+    let mut escaped = false;
+    let mut depth = 0usize;
+
+    for (i, &b) in args_str.as_bytes().iter().enumerate() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if let Some(q) = quote {
+            if b == b'\\' {
+                escaped = true;
+            } else if b == q {
+                quote = None;
+            }
+            continue;
+        }
+        match b {
+            b'"' | b'\'' => quote = Some(b),
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth = depth.saturating_sub(1),
+            b',' if depth == 0 => {
+                let s = args_str[start..i].trim();
+                if !s.is_empty() {
+                    parts.push(s);
+                }
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    let tail = args_str[start..].trim();
+    if !tail.is_empty() {
+        parts.push(tail);
+    }
+    parts
+}
+
+fn expand_fragments(body: &str, fragments: &HashMap<String, String>) -> String {
+    let mut out = String::with_capacity(body.len());
+    let mut i = 0;
+    let bytes = body.as_bytes();
+    while i < bytes.len() {
+        if body[i..].starts_with("...") {
+            let after = &body[i + 3..];
+            let trimmed = after.trim_start();
+            // Skip inline fragment syntax if not named
+            if !trimmed.starts_with("on ") && !trimmed.starts_with('{') {
+                let name_len = trimmed
+                    .find(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+                    .unwrap_or(trimmed.len());
+                if name_len > 0 {
+                    let frag_name = &trimmed[..name_len];
+                    if let Some(frag_body) = fragments.get(frag_name) {
+                        out.push_str(frag_body);
+                        let consumed = (after.len() - trimmed.len()) + name_len;
+                        i += 3 + consumed;
+                        continue;
+                    }
+                }
+            }
+        }
+        let ch = body[i..].chars().next().unwrap();
+        out.push(ch);
+        i += ch.len_utf8();
+    }
+    out
+}
+
+fn project_selection_set(
+    val: Value,
+    selection_body: &str,
+    variables: Option<&HashMap<String, Value>>,
+    fragments: &HashMap<String, String>,
+) -> Value {
+    match val {
+        Value::Array(items) => Value::Array(
+            items
+                .into_iter()
+                .map(|item| project_selection_set(item, selection_body, variables, fragments))
+                .collect(),
+        ),
+        Value::Object(obj) => {
+            let expanded = expand_fragments(selection_body, fragments);
+            let mut projected = serde_json::Map::new();
+            for sub in split_top_level_fields(&expanded) {
+                let sub = sub.trim();
+                if sub.is_empty() || sub.starts_with('#') {
+                    continue;
+                }
+                if !should_include_field(sub, variables) {
+                    continue;
+                }
+                let (out_key, target_field, _, nested_body) = parse_field_full(sub);
+                if let Some(child_val) = obj.get(&target_field).cloned() {
+                    let final_val = if let Some(nb) = nested_body {
+                        project_selection_set(child_val, nb, variables, fragments)
+                    } else {
+                        child_val
+                    };
+                    projected.insert(out_key, final_val);
+                }
+            }
+            Value::Object(projected)
+        }
+        other => other,
+    }
+}
+
+fn should_include_field(line: &str, variables: Option<&HashMap<String, Value>>) -> bool {
+    let header = line.split('{').next().unwrap_or(line);
+    if let Some(pos) = header.find("@include(") {
+        if let Some(end) = header[pos + 9..].find(')') {
+            let expr = header[pos + 9..pos + 9 + end].trim();
+            if let Some(val_str) = expr.strip_prefix("if:").map(str::trim) {
+                return resolve_bool_directive(val_str, variables, true);
+            }
+        }
+    }
+    if let Some(pos) = header.find("@skip(") {
+        if let Some(end) = header[pos + 6..].find(')') {
+            let expr = header[pos + 6..pos + 6 + end].trim();
+            if let Some(val_str) = expr.strip_prefix("if:").map(str::trim) {
+                return !resolve_bool_directive(val_str, variables, false);
+            }
+        }
+    }
+    true
+}
+
+fn resolve_bool_directive(
+    token: &str,
+    variables: Option<&HashMap<String, Value>>,
+    default: bool,
+) -> bool {
+    if let Some(var_name) = token.strip_prefix('$') {
+        return variables
+            .and_then(|v| v.get(var_name))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(default);
+    }
+    match token {
+        "true" => true,
+        "false" => false,
+        _ => default,
+    }
+}
+
+fn parse_field_full(line: &str) -> (String, String, HashMap<String, Value>, Option<&str>) {
+    let nested_body = line.find('{').and_then(|open| {
+        line.rfind('}')
+            .filter(|&close| close > open)
+            .map(|close| &line[open + 1..close])
+    });
+    let (out_key, field, args) = parse_field_and_args(line);
+    (out_key, field, args, nested_body)
+}
+
 fn parse_field_and_args(line: &str) -> (String, String, HashMap<String, Value>) {
     let mut args = HashMap::new();
     let before_brace = if let Some(brace_idx) = line.find('{') {
@@ -350,18 +564,26 @@ fn parse_field_and_args(line: &str) -> (String, String, HashMap<String, Value>) 
     } else {
         line
     };
-    let cleaned = before_brace.trim();
+    // Strip trailing directives (`@include(...)`, `@skip(...)`) before parsing field/args
+    let without_directives = if let Some(at_idx) = before_brace.find('@') {
+        before_brace[..at_idx].trim()
+    } else {
+        before_brace.trim()
+    };
 
-    let (raw_field, raw_args) = if let Some(paren_start) = cleaned.find('(') {
-        let field_part = cleaned[..paren_start].trim();
-        let args_part = if let Some(paren_end) = cleaned.rfind(')') {
-            &cleaned[paren_start + 1..paren_end]
+    let (raw_field, raw_args) = if let Some(paren_start) = without_directives.find('(') {
+        let field_part = without_directives[..paren_start].trim();
+        let args_part = if let Some(paren_end) = without_directives.rfind(')') {
+            &without_directives[paren_start + 1..paren_end]
         } else {
             ""
         };
         (field_part, Some(args_part))
     } else {
-        let field_part = cleaned.split_whitespace().next().unwrap_or(cleaned);
+        let field_part = without_directives
+            .split_whitespace()
+            .next()
+            .unwrap_or(without_directives);
         (field_part, None)
     };
 
@@ -373,15 +595,27 @@ fn parse_field_and_args(line: &str) -> (String, String, HashMap<String, Value>) 
     };
 
     if let Some(inner_args) = raw_args {
-        for pair in inner_args.split(',') {
+        for pair in split_top_level_args(inner_args) {
             if let Some((k, v)) = pair.split_once(':') {
                 let k = k.trim().to_string();
                 let v_trimmed = v.trim();
-                let v_str = v_trimmed.trim_matches('"').trim_matches('\'');
-                if let Ok(num) = v_str.parse::<i64>() {
+                let is_quoted = (v_trimmed.starts_with('"') && v_trimmed.ends_with('"'))
+                    || (v_trimmed.starts_with('\'') && v_trimmed.ends_with('\''));
+                let v_str = if is_quoted && v_trimmed.len() >= 2 {
+                    &v_trimmed[1..v_trimmed.len() - 1]
+                } else {
+                    v_trimmed
+                };
+                if is_quoted {
+                    args.insert(k, json!(v_str));
+                } else if let Ok(num) = v_str.parse::<i64>() {
+                    args.insert(k, json!(num));
+                } else if let Ok(num) = v_str.parse::<f64>() {
                     args.insert(k, json!(num));
                 } else if v_str == "true" || v_str == "false" {
                     args.insert(k, json!(v_str == "true"));
+                } else if v_str == "null" {
+                    args.insert(k, Value::Null);
                 } else {
                     args.insert(k, json!(v_str));
                 }
@@ -454,12 +688,21 @@ pub fn graphiql_html(endpoint: &str) -> String {
 
 /// Unified Axum handler for `GET /graphql` (Playground/Schema) and `POST /graphql` (Execution).
 pub async fn graphql_handler(schema: Arc<GraphQlSchema>, req: Request<Body>) -> Response {
+    graphql_handler_at(schema, "/graphql", req).await
+}
+
+/// Unified Axum handler mounted at a custom `endpoint` path.
+pub async fn graphql_handler_at(
+    schema: Arc<GraphQlSchema>,
+    endpoint: &str,
+    req: Request<Body>,
+) -> Response {
     if req.method() == axum::http::Method::GET {
         return Response::builder()
             .status(StatusCode::OK)
             .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
-            .body(Body::from(graphiql_html("/graphql")))
-            .unwrap();
+            .body(Body::from(graphiql_html(endpoint)))
+            .unwrap_or_else(|_| Response::new(Body::empty()));
     }
 
     let bytes = match axum::body::to_bytes(req.into_body(), 1024 * 1024).await {
@@ -470,7 +713,7 @@ pub async fn graphql_handler(schema: Arc<GraphQlSchema>, req: Request<Body>) -> 
                 .body(Body::from(
                     r#"{"errors":[{"message":"Invalid request body"}]}"#,
                 ))
-                .unwrap();
+                .unwrap_or_else(|_| Response::new(Body::empty()));
         }
     };
 
@@ -482,7 +725,7 @@ pub async fn graphql_handler(schema: Arc<GraphQlSchema>, req: Request<Body>) -> 
                 .body(Body::from(
                     r#"{"errors":[{"message":"Malformed JSON GraphQL payload"}]}"#,
                 ))
-                .unwrap();
+                .unwrap_or_else(|_| Response::new(Body::empty()));
         }
     };
 
@@ -493,7 +736,7 @@ pub async fn graphql_handler(schema: Arc<GraphQlSchema>, req: Request<Body>) -> 
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "application/json")
         .body(Body::from(res_json))
-        .unwrap()
+        .unwrap_or_else(|_| Response::new(Body::empty()))
 }
 
 #[cfg(test)]

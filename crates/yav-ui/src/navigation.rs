@@ -284,6 +284,14 @@ if (document.readyState === 'loading') {
     Node::Element(el)
 }
 
+/// Nonce-aware variant of [`client_router_script`] for strict CSP.
+pub fn client_router_script_with_nonce(nonce: &str) -> Node {
+    match client_router_script() {
+        Node::Element(el) => Node::Element(el.attr("nonce", nonce)),
+        other => other,
+    }
+}
+
 /// Convenience function to construct a new [`Link`].
 pub fn link(href: impl Into<String>) -> Link {
     Link::new(href)

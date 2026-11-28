@@ -449,6 +449,7 @@ impl YavApp {
         let session_secret = std::env::var("SESSION_SECRET")
             .or_else(|_| std::env::var("YAV_SECRET"))
             .ok()
+            .filter(|s| !s.is_empty())
             .map(crate::session::SessionSecret::new);
 
         let default_public = std::path::Path::new(&manifest.build.public_dir);
@@ -967,6 +968,7 @@ impl YavApp {
                     return inner.call(req).await;
                 }
 
+                let session_ref = req.extensions().get::<crate::session::Session>().cloned();
                 let lang = req
                     .headers()
                     .get(axum::http::header::ACCEPT_LANGUAGE)
@@ -988,9 +990,20 @@ impl YavApp {
                     if entry.is_fresh(ttl) {
                         return entry.into_response_with_status("HIT", ttl);
                     }
-                    // Stale-while-revalidate: serve stale immediately and trigger a
-                    // background refresh, but only when the policy actually enables it.
                     if stale_while_revalidate && cache.try_begin_revalidation(&cache_key) {
+                        struct RevalidationGuard {
+                            cache: crate::cache::SsrCache,
+                            key: String,
+                            committed: bool,
+                        }
+                        impl Drop for RevalidationGuard {
+                            fn drop(&mut self) {
+                                if !self.committed {
+                                    self.cache.cancel_revalidation(&self.key);
+                                }
+                            }
+                        }
+
                         let bg_cache = cache.clone();
                         let bg_inner = inner.clone();
                         let bg_key = cache_key.clone();
@@ -1001,8 +1014,15 @@ impl YavApp {
                             .body(axum::body::Body::empty())
                             .unwrap_or_else(|_| Request::new(axum::body::Body::empty()));
                         *bg_req.headers_mut() = req.headers().clone();
-                        *bg_req.extensions_mut() = req.extensions().clone();
+                        let mut bg_ext = req.extensions().clone();
+                        bg_ext.remove::<crate::session::Session>();
+                        *bg_req.extensions_mut() = bg_ext;
                         tokio::spawn(async move {
+                            let mut guard = RevalidationGuard {
+                                cache: bg_cache.clone(),
+                                key: bg_key.clone(),
+                                committed: false,
+                            };
                             let resp = bg_inner.call(bg_req).await;
                             let status = resp.status();
                             if status.is_success()
@@ -1016,22 +1036,23 @@ impl YavApp {
                                         status, &headers, bytes,
                                     );
                                     bg_cache.insert_with_tags(bg_key, entry, bg_tags);
-                                    return;
+                                    guard.committed = true;
                                 }
                             }
-                            bg_cache.cancel_revalidation(&bg_key);
                         });
                         return entry.into_response_with_status("STALE", ttl);
                     }
-                    // SWR disabled (or a refresh is already running): fall through and
-                    // render a fresh response synchronously instead of serving stale data.
                 }
 
                 let resp = inner.call(req).await;
                 let status = resp.status();
-                // Never cache a response that establishes a session or rotates a token:
-                // replaying Set-Cookie on a HIT would hand one visitor's cookie to another.
+                let session_touched = session_ref
+                    .as_ref()
+                    .is_some_and(|s| s.is_modified() || s.get("_csrf_token").is_some());
+                // Never cache a response that touched session/CSRF state or sets cookies:
+                // otherwise an anonymous visitor's CSRF token or session could leak to others.
                 if !status.is_success()
+                    || session_touched
                     || resp.headers().contains_key(axum::http::header::SET_COOKIE)
                 {
                     return resp;
@@ -1116,6 +1137,53 @@ impl YavApp {
         });
 
         self
+    }
+
+    /// Mount a [`GraphQlSchema`](crate::graphql::GraphQlSchema) on `{path}` (`GET` Playground + `POST` JSON execution).
+    #[must_use]
+    pub fn mount_graphql(
+        mut self,
+        path: impl AsRef<str>,
+        schema: Arc<crate::graphql::GraphQlSchema>,
+    ) -> Self {
+        let endpoint = path.as_ref().to_string();
+        let get_schema = Arc::clone(&schema);
+        let get_ep = endpoint.clone();
+        self = self.get(&endpoint, move |req| {
+            let s = Arc::clone(&get_schema);
+            let ep = get_ep.clone();
+            async move { crate::graphql::graphql_handler_at(s, &ep, req).await }
+        });
+        let post_schema = schema;
+        let post_ep = endpoint.clone();
+        self.post(&endpoint, move |req| {
+            let s = Arc::clone(&post_schema);
+            let ep = post_ep.clone();
+            async move { crate::graphql::graphql_handler_at(s, &ep, req).await }
+        })
+    }
+
+    /// Mount an [`McpServer`](crate::mcp::McpServer) JSON-RPC endpoint on `{path}` (`POST`).
+    #[must_use]
+    pub fn mount_mcp(self, path: impl AsRef<str>, server: crate::mcp::McpServer) -> Self {
+        let handler = server.into_axum_handler();
+        self.post(path.as_ref(), handler)
+    }
+
+    /// Mount the live HTML metrics dashboard handler at `{path}` (`GET`, e.g. `"/metrics/dashboard"`).
+    #[must_use]
+    pub fn mount_metrics_dashboard(self, path: impl AsRef<str>) -> Self {
+        self.get(path.as_ref(), |_req| async {
+            crate::metrics_dashboard::metrics_dashboard_handler().await
+        })
+    }
+
+    /// Mount a `Content-Security-Policy` violation reporting endpoint at `{path}` (`POST`).
+    #[must_use]
+    pub fn mount_csp_report(self, path: impl AsRef<str>) -> Self {
+        self.post(path.as_ref(), |req| async move {
+            crate::security_audit::csp_report_handler(req).await
+        })
     }
 
     /// Convert the configured `YavApp` into an Axum [`Router`].
@@ -1309,14 +1377,78 @@ impl YavApp {
             }
         });
 
-        // Apply CORS layer if enabled
+        // Layer ordering in Axum wraps bottom-to-top (last added runs outermost).
+        // Order from innermost (closest to handlers) -> outermost:
+        //   csrf -> session -> etag -> security_headers -> body_limit
+        //   -> compression -> rate_limit -> request_logger -> cors
+        //   -> custom extensions -> global state extensions -> otel.
+        let secret = self
+            .session_secret
+            .or_else(|| {
+                std::env::var("SESSION_SECRET")
+                    .or_else(|_| std::env::var("YAV_SECRET"))
+                    .ok()
+                    .filter(|s| !s.is_empty())
+                    .map(|s| crate::session::SessionSecret::new(s.into_bytes()))
+            })
+            .unwrap_or_else(|| {
+                let mut bytes = [0u8; 32];
+                if getrandom::getrandom(&mut bytes).is_ok() {
+                    tracing::warn!(
+                        "SESSION_SECRET is not set: using an ephemeral random secret. \
+                         Sessions will be invalidated on every restart. Set SESSION_SECRET \
+                         (at least 32 bytes) for persistent sessions."
+                    );
+                    crate::session::SessionSecret::new(bytes.to_vec())
+                } else if crate::session::is_production_mode() {
+                    panic!(
+                        "FATAL: SESSION_SECRET must be set when the system CSPRNG is unavailable \
+                         in production mode."
+                    );
+                } else {
+                    crate::session::SessionSecret::new(crate::session::DEFAULT_DEV_SESSION_SECRET)
+                }
+            });
+
+        if self.csrf.enabled {
+            router = router
+                .layer(axum::middleware::from_fn(
+                    crate::middleware::csrf_middleware,
+                ))
+                .layer(axum::Extension(self.csrf.clone()));
+        }
+        router = router
+            .layer(axum::middleware::from_fn(
+                crate::session::session_middleware,
+            ))
+            .layer(axum::Extension(self.session_config))
+            .layer(axum::Extension(secret));
+
+        if self.etag {
+            router = router.layer(axum::middleware::from_fn(etag_middleware));
+        }
+
+        router = router
+            .layer(axum::middleware::from_fn(security_headers_middleware))
+            .layer(axum::extract::DefaultBodyLimit::max(2 * 1024 * 1024));
+
+        if self.compression {
+            router = router.layer(tower_http::compression::CompressionLayer::new());
+        }
+
+        if let Some(ref limiter) = self.rate_limiter {
+            router = router
+                .layer(axum::middleware::from_fn(
+                    crate::rate_limit::rate_limit_middleware,
+                ))
+                .layer(axum::Extension(limiter.clone()));
+        }
+
+        router = router.layer(axum::middleware::from_fn(request_logger_middleware));
+
         if self.cors {
             if self.cors_origins.is_empty() {
                 if crate::session::is_production_mode() {
-                    // A wildcard CORS policy in production exposes cookies and
-                    // authenticated endpoints to any website. Fail closed: a
-                    // layer with no allowed origins emits no ACAO header, so
-                    // browsers reject cross-origin reads by default.
                     tracing::warn!(
                         "CORS is enabled without an origin allowlist in production; cross-origin requests are rejected. Configure .cors_origins([...]) to allow specific origins."
                     );
@@ -1337,7 +1469,6 @@ impl YavApp {
                             ]),
                     );
                 } else {
-                    // Local development (HMR, separate dev ports) stays convenient.
                     router = router.layer(tower_http::cors::CorsLayer::permissive());
                 }
             } else {
@@ -1365,93 +1496,28 @@ impl YavApp {
             }
         }
 
-        // Apply rate limiter layer if configured
-        if let Some(ref limiter) = self.rate_limiter {
-            router = router
-                .layer(axum::middleware::from_fn(
-                    crate::rate_limit::rate_limit_middleware,
-                ))
-                .layer(axum::Extension(limiter.clone()));
-        }
-
-        // Apply SessionSecret and session_middleware so FromRequestParts and handlers automatically commit cookies
-        let secret = self
-            .session_secret
-            .or_else(|| {
-                std::env::var("SESSION_SECRET")
-                    .or_else(|_| std::env::var("YAV_SECRET"))
-                    .ok()
-                    .map(|s| crate::session::SessionSecret::new(s.into_bytes()))
-            })
-            .unwrap_or_else(|| {
-                // Never abort the process (release uses `panic = "abort"`). Generate an
-                // ephemeral cryptographically-random secret instead: sessions simply do
-                // not survive a restart, which is safe and lets the server start.
-                let mut bytes = [0u8; 32];
-                if getrandom::getrandom(&mut bytes).is_ok() {
-                    tracing::warn!(
-                        "SESSION_SECRET is not set: using an ephemeral random secret. \
-                         Sessions will be invalidated on every restart. Set SESSION_SECRET \
-                         (at least 32 bytes) for persistent sessions."
-                    );
-                    crate::session::SessionSecret::new(bytes.to_vec())
-                } else if crate::session::is_production_mode() {
-                    // Startup-only fail-fast: no CSPRNG and no configured secret means we
-                    // cannot safely sign sessions. This is never reached on a request path.
-                    panic!(
-                        "FATAL: SESSION_SECRET must be set when the system CSPRNG is unavailable \
-                         in production mode."
-                    );
-                } else {
-                    crate::session::SessionSecret::new(crate::session::DEFAULT_DEV_SESSION_SECRET)
-                }
-            });
-        // CSRF validation must sit INSIDE the session layer so that the
-        // `Session` extension (holding `_csrf_token`) is already populated.
-        if self.csrf.enabled {
-            router = router
-                .layer(axum::middleware::from_fn(
-                    crate::middleware::csrf_middleware,
-                ))
-                .layer(axum::Extension(self.csrf.clone()));
-        }
-        router = router
-            .layer(axum::middleware::from_fn(
-                crate::session::session_middleware,
-            ))
-            .layer(axum::Extension(self.session_config))
-            .layer(axum::Extension(secret));
-
-        // Apply standard security headers, etag caching, and request logging layers
-        if self.etag {
-            router = router.layer(axum::middleware::from_fn(etag_middleware));
-        }
-
-        router = router
-            // Reject oversized request bodies before any handler/extractor sees them.
-            // Preserves the 2 MiB form limit while giving every route a real global cap.
-            .layer(axum::extract::DefaultBodyLimit::max(2 * 1024 * 1024))
-            .layer(axum::middleware::from_fn(security_headers_middleware))
-            .layer(axum::middleware::from_fn(request_logger_middleware))
-            .layer(axum::Extension(self.metrics.clone()))
-            .layer(axum::Extension(self.state_context.clone()))
-            .layer(axum::Extension(self.ssr_cache.clone()));
-
-        if let Some(ref i18n) = self.i18n {
-            router = router.layer(axum::Extension(i18n.clone()));
-        }
-
-        if self.compression {
-            router = router.layer(tower_http::compression::CompressionLayer::new());
-        }
-
         // Apply custom state layers and extensions
         for ext in self.extensions {
             router = ext(router);
         }
 
-        // Keep tracing outermost so it observes every request, including 404s,
-        // and can echo `traceparent` after all inner layers have run.
+        router = router
+            .layer(axum::Extension(self.metrics.clone()))
+            .layer(axum::Extension(self.state_context.clone()))
+            .layer(axum::Extension(self.ssr_cache.clone()));
+
+        if let Some(ref dir) = self.static_dir {
+            router = router.layer(axum::Extension(crate::image_opt::ImageOptimizerDir(
+                dir.clone(),
+            )));
+        }
+
+        if let Some(ref i18n) = self.i18n {
+            router = router.layer(axum::Extension(i18n.clone()));
+        }
+
+        // Keep tracing outermost so it observes every request, including 429/403/404s,
+        // and echoes `traceparent` after all inner layers have run.
         if self.otel {
             router = router.layer(axum::middleware::from_fn(
                 crate::otel::otel_tracing_middleware,
@@ -1542,7 +1608,8 @@ impl YavApp {
                     .iter()
                     .map(|r| {
                         let full = format!("{}{}", base_url.trim_end_matches('/'), r);
-                        format!("  <url><loc>{full}</loc><priority>0.8</priority></url>")
+                        let escaped = yav_core::escape_html(&full);
+                        format!("  <url><loc>{escaped}</loc><priority>0.8</priority></url>")
                     })
                     .collect::<Vec<_>>()
                     .join("\n")

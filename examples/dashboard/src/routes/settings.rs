@@ -4,7 +4,21 @@ use crate::layouts::*;
 use axum::extract::Request;
 use yav::prelude::*;
 
-pub async fn settings_get(_req: Request) -> yav::server::HtmlPage {
+pub async fn settings_get(req: Request) -> yav::server::HtmlPage {
+    let csrf_token = match (
+        req.extensions().get::<yav::server::Session>(),
+        req.extensions().get::<yav::server::SessionSecret>(),
+    ) {
+        (Some(sess), Some(secret)) => {
+            yav::server::CsrfToken::from_session_with_secret(sess, secret.as_bytes())
+                .as_str()
+                .to_string()
+        }
+        (Some(sess), None) => yav::server::CsrfToken::from_session(sess)
+            .as_str()
+            .to_string(),
+        _ => String::new(),
+    };
     let page = rsx! {
         <DashboardLayout current_path="/settings">
             <div class="max-w-2xl space-y-8">
@@ -19,8 +33,7 @@ pub async fn settings_get(_req: Request) -> yav::server::HtmlPage {
 
                 <div class="p-8 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/60 shadow-xs space-y-6">
                     <form method="POST" action="/settings" class="space-y-6">
-                        // Hidden CSRF token field
-                        <input type="hidden" name="csrf_token" value="demo-yav-csrf-token" />
+                        {yav::server::csrf_field(csrf_token)}
 
                         <div class="space-y-2">
                             <label class="block text-xs font-semibold text-zinc-700 dark:text-zinc-300">

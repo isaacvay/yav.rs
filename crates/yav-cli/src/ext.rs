@@ -7,7 +7,7 @@ use clap::Subcommand;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-const EXTENSION_DIR_NAME: &str = "yav-framework.yav-vscode-0.1.0";
+const EXTENSION_DIR_NAME: &str = "yav-framework.yav-vscode-0.1.8";
 
 // Embedded extension files from editors/vscode
 const PKG_JSON: &str = include_str!("../editors/vscode/package.json");

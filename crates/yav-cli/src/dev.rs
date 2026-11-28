@@ -38,7 +38,7 @@ pub fn classify_changes<'a>(paths: impl IntoIterator<Item = &'a Path>) -> Change
             || file_name == "yav.toml"
         {
             set.rust_changed = true;
-        } else if ext == "css" && (!in_public || file_name == "input.css") {
+        } else if ext == "css" && (!in_public || file_name != "styles.css") {
             set.css_changed = true;
         } else if in_public && ext != "css" {
             set.public_changed = true;
@@ -335,14 +335,14 @@ pub async fn run(cli_port: u16) -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
 
-                    println!("\x1b[33m  ➜  Code modified. Checking & rebuilding...\x1b[0m");
-                    if let Ok(check_out) = tokio::process::Command::new("cargo")
-                        .args(["check", "--color=never"])
+                    println!("\x1b[33m  ➜  Code modified. Building...\x1b[0m");
+                    if let Ok(build_out) = tokio::process::Command::new("cargo")
+                        .args(["build", "--color=never"])
                         .output()
                         .await
                     {
-                        if !check_out.status.success() {
-                            let stderr = String::from_utf8_lossy(&check_out.stderr).trim().to_string();
+                        if !build_out.status.success() {
+                            let stderr = String::from_utf8_lossy(&build_out.stderr).trim().to_string();
                             eprintln!("\n\x1b[31m✖ Compiler error:\x1b[0m\n{stderr}\n");
                             reload_server.notify_error(stderr);
                             continue;

@@ -159,13 +159,33 @@ pub fn resolve_static_path(base_dir: &Path, request_path: &str) -> Result<PathBu
         let canonical_base = base_dir
             .canonicalize()
             .map_err(|_| YavError::BadRequest("Invalid static base directory".to_string()))?;
-        let canonical_full = full_path.canonicalize().map_err(|_| {
-            YavError::BadRequest("Invalid or unresolvable static file path".to_string())
-        })?;
-        if !canonical_full.starts_with(&canonical_base) {
-            return Err(YavError::BadRequest(
-                "Path traversal detected: target path escapes base directory".to_string(),
-            ));
+        match full_path.canonicalize() {
+            Ok(canonical_full) => {
+                if !canonical_full.starts_with(&canonical_base) {
+                    return Err(YavError::BadRequest(
+                        "Path traversal detected: target path escapes base directory".to_string(),
+                    ));
+                }
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                // Broken symlink inside `base_dir`: verify parent resolves inside `base_dir`, then return 404.
+                if let Some(parent) = full_path.parent() {
+                    if let Ok(canonical_parent) = parent.canonicalize() {
+                        if !canonical_parent.starts_with(&canonical_base) {
+                            return Err(YavError::BadRequest(
+                                "Path traversal detected: target path escapes base directory"
+                                    .to_string(),
+                            ));
+                        }
+                    }
+                }
+                return Err(YavError::NotFound);
+            }
+            Err(_) => {
+                return Err(YavError::BadRequest(
+                    "Invalid or unresolvable static file path".to_string(),
+                ));
+            }
         }
     }
 
@@ -255,11 +275,17 @@ fn client_accepts_encoding(accept_encoding: &str, encoding: &str) -> bool {
     false
 }
 
-fn is_safe_precompressed_path(base_dir: &Path, candidate: &Path) -> bool {
-    if !candidate.is_file() {
+async fn is_safe_precompressed_path(base_dir: &Path, candidate: &Path) -> bool {
+    if !tokio::fs::metadata(candidate)
+        .await
+        .is_ok_and(|m| m.is_file())
+    {
         return false;
     }
-    match (base_dir.canonicalize(), candidate.canonicalize()) {
+    match (
+        tokio::fs::canonicalize(base_dir).await,
+        tokio::fs::canonicalize(candidate).await,
+    ) {
         (Ok(cb), Ok(cf)) => cf.starts_with(&cb),
         _ => false,
     }
@@ -277,7 +303,10 @@ pub async fn serve_static_file_with_encoding(
 ) -> Result<Response, YavError> {
     let file_path = resolve_static_path(base_dir, request_path)?;
 
-    if !file_path.is_file() {
+    if !tokio::fs::metadata(&file_path)
+        .await
+        .is_ok_and(|m| m.is_file())
+    {
         return Err(YavError::NotFound);
     }
 
@@ -294,11 +323,12 @@ pub async fn serve_static_file_with_encoding(
             gz_os.push(".gz");
             let gz_path = PathBuf::from(gz_os);
 
-            if client_accepts_encoding(enc, "br") && is_safe_precompressed_path(base_dir, &br_path)
+            if client_accepts_encoding(enc, "br")
+                && is_safe_precompressed_path(base_dir, &br_path).await
             {
                 (br_path, Some("br"))
             } else if client_accepts_encoding(enc, "gzip")
-                && is_safe_precompressed_path(base_dir, &gz_path)
+                && is_safe_precompressed_path(base_dir, &gz_path).await
             {
                 (gz_path, Some("gzip"))
             } else {

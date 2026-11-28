@@ -124,7 +124,7 @@ impl Component for RichTextEditor {
             .attr("role", "textbox")
             .attr("aria-multiline", "true")
             .attr("data-placeholder", &self.placeholder)
-            .child(Node::Raw(self.initial_html.clone()));
+            .child(Node::Raw(yav_core::sanitize_html_strict(&self.initial_html)));
 
         let hidden_input = Element::new("input")
             .attr("type", "hidden")

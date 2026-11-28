@@ -278,11 +278,30 @@ impl McpServer {
 
                 match prompt_opt {
                     Some(pr) => {
-                        let mut rendered = pr.template.clone();
-                        if let Some(arg_map) = args {
-                            for (k, v) in arg_map {
-                                let val_str = v.as_str().unwrap_or("");
-                                rendered = rendered.replace(&format!("{{{k}}}"), val_str);
+                        // Single-pass `{key}` substitution so a substituted argument
+                        // value containing `{other_key}` is never re-expanded.
+                        let mut rendered = String::with_capacity(pr.template.len());
+                        let tpl = pr.template.as_str();
+                        let mut i = 0;
+                        while i < tpl.len() {
+                            if let Some(rel_open) = tpl[i..].find('{') {
+                                rendered.push_str(&tpl[i..i + rel_open]);
+                                let after_open = i + rel_open + 1;
+                                if let Some(rel_close) = tpl[after_open..].find('}') {
+                                    let key = &tpl[after_open..after_open + rel_close];
+                                    if let Some(val_str) =
+                                        args.and_then(|m| m.get(key)).and_then(|v| v.as_str())
+                                    {
+                                        rendered.push_str(val_str);
+                                        i = after_open + rel_close + 1;
+                                        continue;
+                                    }
+                                }
+                                rendered.push('{');
+                                i = after_open;
+                            } else {
+                                rendered.push_str(&tpl[i..]);
+                                break;
                             }
                         }
                         JsonRpcResponse {
@@ -347,8 +366,13 @@ impl McpServer {
                 };
                 match serde_json::from_slice::<JsonRpcRequest>(&bytes) {
                     Ok(rpc_req) => {
+                        let is_notification = rpc_req.id.is_none();
                         let resp = srv.handle_rpc(&rpc_req);
-                        Json(resp).into_response()
+                        if is_notification {
+                            StatusCode::ACCEPTED.into_response()
+                        } else {
+                            Json(resp).into_response()
+                        }
                     }
                     Err(_) => StatusCode::BAD_REQUEST.into_response(),
                 }

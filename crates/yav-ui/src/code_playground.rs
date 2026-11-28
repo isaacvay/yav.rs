@@ -4,7 +4,7 @@
 //! Includes synchronized line numbers gutter, execution console output / iframe preview,
 //! syntax language pills, Ctrl+Enter runner, and remote execution API binding.
 
-use yav_core::{escape_html, Component, Element, Node};
+use yav_core::{Component, Element, Node};
 
 use crate::utils::merge_classes;
 
@@ -345,12 +345,16 @@ function executeCode() {{
 
 runBtn.addEventListener('click', executeCode);
 }})();"##,
-            id = escape_html(&self.id),
+            id = yav_core::escape_js_str(&self.id),
             run_endpoint_json = self
                 .run_endpoint
-                .as_ref()
-                .map_or("null".to_string(), |u| format!(r#""{}""#, escape_html(u))),
-            lang = escape_html(&self.language),
+                .as_deref()
+                .and_then(yav_core::escape_url)
+                .map_or("null".to_string(), |u| {
+                    let json = serde_json::to_string(&u).unwrap_or_else(|_| "\"\"".to_string());
+                    yav_core::escape_script_json(&json)
+                }),
+            lang = yav_core::escape_js_str(&self.language),
         );
 
         let container = Element::new("div")

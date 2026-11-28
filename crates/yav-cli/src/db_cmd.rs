@@ -245,11 +245,24 @@ fn execute_sql_against_database(sql: &str) -> Result<(), String> {
             ),
         }
     } else if db_url.starts_with("postgres://") || db_url.starts_with("postgresql://") {
-        let status = std::process::Command::new("psql")
-            .arg(&db_url)
-            .arg("-c")
-            .arg(sql)
-            .status();
+        let mut cmd = std::process::Command::new("psql");
+        // Strip embedded credentials from argv so `ps` cannot expose DB passwords.
+        if let Some((scheme_rest, host_part)) = db_url.split_once("://") {
+            if let Some((userinfo, authority_and_db)) = host_part.split_once('@') {
+                if let Some((user, pass)) = userinfo.split_once(':') {
+                    cmd.env("PGUSER", user);
+                    cmd.env("PGPASSWORD", pass);
+                } else {
+                    cmd.env("PGUSER", userinfo);
+                }
+                cmd.arg(format!("{scheme_rest}://{authority_and_db}"));
+            } else {
+                cmd.arg(&db_url);
+            }
+        } else {
+            cmd.arg(&db_url);
+        }
+        let status = cmd.arg("-c").arg(sql).status();
         match status {
             Ok(s) if s.success() => {
                 println!("  🎯 Executed SQL via psql on database");

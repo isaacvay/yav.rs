@@ -425,6 +425,14 @@ pub fn floating_script() -> Node {
     Node::Element(Element::new("script").child(Node::raw(script)))
 }
 
+/// Nonce-aware variant of [`floating_script`] for strict Content Security Policies.
+pub fn floating_script_with_nonce(nonce: &str) -> Node {
+    match floating_script() {
+        Node::Element(el) => Node::Element(el.attr("nonce", nonce)),
+        other => other,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

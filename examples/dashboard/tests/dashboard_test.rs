@@ -118,6 +118,27 @@ async fn test_dashboard_routes_render_html() {
         .unwrap();
     let resp = app.clone().oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
+    let set_cookie = resp
+        .headers()
+        .get(axum::http::header::SET_COOKIE)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.split(';').next())
+        .unwrap_or("")
+        .to_string();
+    let get_bytes = axum::body::to_bytes(resp.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let get_html = String::from_utf8_lossy(&get_bytes);
+    assert!(get_html.contains("name=\"_csrf\""));
+    let csrf_val = get_html
+        .split("name=\"_csrf\"")
+        .nth(1)
+        .and_then(|s| s.split("value=\"").nth(1))
+        .and_then(|s| s.split('"').next())
+        .unwrap_or("")
+        .to_string();
+    assert!(!csrf_val.is_empty());
+    assert!(!csrf_val.contains("demo-yav-csrf-token"));
 
     let req_post = Request::builder()
         .method("POST")
@@ -125,8 +146,24 @@ async fn test_dashboard_routes_render_html() {
         .body(axum::body::Body::empty())
         .unwrap();
     // CSRF is enabled by default: an unprotected POST must be rejected.
-    let resp_post = app.oneshot(req_post).await.unwrap();
+    let resp_post = app.clone().oneshot(req_post).await.unwrap();
     assert_eq!(resp_post.status(), StatusCode::FORBIDDEN);
+
+    // Valid CSRF token + session cookie passes through the real middleware.
+    let req_valid = Request::builder()
+        .method("POST")
+        .uri("/settings")
+        .header(axum::http::header::COOKIE, &set_cookie)
+        .header(
+            axum::http::header::CONTENT_TYPE,
+            "application/x-www-form-urlencoded",
+        )
+        .body(axum::body::Body::from(format!(
+            "_csrf={csrf_val}&org_name=Acme"
+        )))
+        .unwrap();
+    let resp_valid = app.oneshot(req_valid).await.unwrap();
+    assert_eq!(resp_valid.status(), StatusCode::OK);
 
     // With CSRF explicitly disabled, the same handler renders its success page.
     let req_post = Request::builder()

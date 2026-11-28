@@ -14,7 +14,7 @@ yav build
 
 1. **Manifest Validation**: Validates `package.yavml` configuration, ports, assets, and script settings.
 2. **Tailwind Minification**: Executes standalone Tailwind CLI in production mode (`--minify`) to purge unused utility classes.
-3. **Asset Fingerprinting & Pre-Compression**: Copies files from `public/` into the output directory (`dist/`), computes SHA-256 content hashes, and generates pre-compressed `.gz` (Gzip) and `.br` (Brotli) variants in a single in-memory pass.
+3. **Asset Fingerprinting & Pre-Compression**: Copies files from `public/` into the output directory (`dist/`), computes SHA-256 content hashes, and generates pre-compressed `.gz` (Gzip) variants in a single in-memory pass (while `CompressionLayer` negotiates runtime Gzip/Deflate/Brotli for dynamic responses).
 4. **Release Compilation**: Runs `cargo build --release` with optimization settings.
 5. **Manifest Generation**: Writes `dist/asset-manifest.json` mapping logical paths to fingerprinted filenames for long-term browser caching (`HtmlPage` automatically caches and resolves fingerprinted URLs in production via `OnceLock`).
 

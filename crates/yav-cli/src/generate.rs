@@ -553,6 +553,172 @@ fn collect_server_fns_recursive(dir: &Path, acc: &mut Vec<(String, String)>) {
     }
 }
 
+/// A model struct field discovered from `#[derive(...)]` declarations in `src/`.
+#[derive(Debug, Clone)]
+pub struct ScannedField {
+    pub name: String,
+    pub rust_type: String,
+    pub optional: bool,
+}
+
+/// A serialized/schema model struct discovered in `src/`.
+#[derive(Debug, Clone)]
+pub struct ScannedModel {
+    pub name: String,
+    pub fields: Vec<ScannedField>,
+}
+
+/// Discover `pub struct` types in `src/` annotated with `Serialize`, `Deserialize`,
+/// `ApiSchema`, `JsonSchema`, or `TS` so `yav generate` emits typed schemas & TS interfaces.
+pub fn scan_api_models(root: &Path) -> Vec<ScannedModel> {
+    let src_dir = root.join("src");
+    let mut models = Vec::new();
+    if src_dir.exists() && src_dir.is_dir() {
+        collect_models_recursive(&src_dir, &mut models);
+    }
+    models.sort_by(|a, b| a.name.cmp(&b.name));
+    models.dedup_by(|a, b| a.name == b.name);
+    models
+}
+
+fn collect_models_recursive(dir: &Path, acc: &mut Vec<ScannedModel>) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_models_recursive(&path, acc);
+            continue;
+        }
+        if !path.extension().is_some_and(|e| e == "rs") {
+            continue;
+        }
+        let Ok(content) = fs::read_to_string(&path) else {
+            continue;
+        };
+        let lines: Vec<&str> = content.lines().collect();
+        let mut i = 0;
+        let mut pending_schema_derive = false;
+        while i < lines.len() {
+            let trimmed = lines[i].trim();
+            if trimmed.starts_with("#[derive(")
+                && (trimmed.contains("Serialize")
+                    || trimmed.contains("Deserialize")
+                    || trimmed.contains("ApiSchema")
+                    || trimmed.contains("JsonSchema")
+                    || trimmed.contains("TS"))
+            {
+                pending_schema_derive = true;
+                i += 1;
+                continue;
+            }
+            if pending_schema_derive && trimmed.starts_with("#[") {
+                i += 1;
+                continue;
+            }
+            if pending_schema_derive {
+                pending_schema_derive = false;
+                if let Some(rest) = trimmed
+                    .strip_prefix("pub struct ")
+                    .or_else(|| trimmed.strip_prefix("struct "))
+                {
+                    let name: String = rest
+                        .chars()
+                        .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+                        .collect();
+                    if !name.is_empty() && trimmed.contains('{') {
+                        let mut fields = Vec::new();
+                        let mut j = i + 1;
+                        while j < lines.len() {
+                            let f_line = lines[j].trim();
+                            if f_line.starts_with('}') {
+                                break;
+                            }
+                            if let Some((f_left, f_right)) = f_line.split_once(':') {
+                                let clean_name = f_left
+                                    .trim()
+                                    .strip_prefix("pub ")
+                                    .unwrap_or(f_left.trim())
+                                    .trim();
+                                if !clean_name.is_empty()
+                                    && !clean_name.starts_with("//")
+                                    && !clean_name.starts_with('#')
+                                    && clean_name
+                                        .chars()
+                                        .all(|c| c.is_ascii_alphanumeric() || c == '_')
+                                {
+                                    let raw_ty = f_right
+                                        .split("//")
+                                        .next()
+                                        .unwrap_or("")
+                                        .trim()
+                                        .trim_end_matches(',')
+                                        .trim();
+                                    let (optional, inner_ty) = if let Some(inner) = raw_ty
+                                        .strip_prefix("Option<")
+                                        .and_then(|s| s.strip_suffix('>'))
+                                    {
+                                        (true, inner.trim().to_string())
+                                    } else {
+                                        (false, raw_ty.to_string())
+                                    };
+                                    fields.push(ScannedField {
+                                        name: clean_name.to_string(),
+                                        rust_type: inner_ty,
+                                        optional,
+                                    });
+                                }
+                            }
+                            j += 1;
+                        }
+                        if !fields.is_empty() {
+                            acc.push(ScannedModel { name, fields });
+                        }
+                        i = j;
+                    }
+                }
+            }
+            i += 1;
+        }
+    }
+}
+
+fn rust_type_to_ts(ty: &str) -> String {
+    let t = ty.trim();
+    if let Some(inner) = t.strip_prefix("Vec<").and_then(|s| s.strip_suffix('>')) {
+        return format!("{}[]", rust_type_to_ts(inner));
+    }
+    match t {
+        "String" | "&str" | "&'static str" | "char" => "string".to_string(),
+        "bool" => "boolean".to_string(),
+        "i8" | "i16" | "i32" | "i64" | "i128" | "isize" | "u8" | "u16" | "u32" | "u64" | "u128"
+        | "usize" | "f32" | "f64" => "number".to_string(),
+        "serde_json::Value" | "Value" => "unknown".to_string(),
+        other if other.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') => other.to_string(),
+        _ => "unknown".to_string(),
+    }
+}
+
+fn rust_type_to_openapi(ty: &str) -> serde_json::Value {
+    let t = ty.trim();
+    if let Some(inner) = t.strip_prefix("Vec<").and_then(|s| s.strip_suffix('>')) {
+        return serde_json::json!({ "type": "array", "items": rust_type_to_openapi(inner) });
+    }
+    match t {
+        "String" | "&str" | "&'static str" | "char" => serde_json::json!({ "type": "string" }),
+        "bool" => serde_json::json!({ "type": "boolean" }),
+        "i8" | "i16" | "i32" | "i64" | "i128" | "isize" | "u8" | "u16" | "u32" | "u64" | "u128"
+        | "usize" => serde_json::json!({ "type": "integer" }),
+        "f32" | "f64" => serde_json::json!({ "type": "number" }),
+        "serde_json::Value" | "Value" => serde_json::json!({}),
+        other if other.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') => {
+            serde_json::json!({ "$ref": format!("#/components/schemas/{other}") })
+        }
+        _ => serde_json::json!({ "type": "object" }),
+    }
+}
+
 /// Generate TypeScript interface declarations for routes, actions, and models.
 pub fn generate_typescript(
     root: &Path,
@@ -624,6 +790,21 @@ export type RouteParams = {
             ts.push_str(&format!("  \"{}\": \"{}\";\n", fn_name, endpoint));
         }
         ts.push_str("};\n");
+    }
+
+    let models = scan_api_models(root);
+    for model in &models {
+        ts.push_str(&format!("\nexport interface {} {{\n", model.name));
+        for field in &model.fields {
+            let q = if field.optional { "?" } else { "" };
+            ts.push_str(&format!(
+                "  {}{}: {};\n",
+                field.name,
+                q,
+                rust_type_to_ts(&field.rust_type)
+            ));
+        }
+        ts.push_str("}\n");
     }
 
     fs::write(&out_path, ts)?;
@@ -743,14 +924,38 @@ pub fn generate_openapi(
         }
     }
 
+    let models = scan_api_models(root);
+    let mut schemas_obj = serde_json::Map::new();
+    for model in &models {
+        let mut props = serde_json::Map::new();
+        let mut required = Vec::new();
+        for field in &model.fields {
+            props.insert(field.name.clone(), rust_type_to_openapi(&field.rust_type));
+            if !field.optional {
+                required.push(serde_json::Value::String(field.name.clone()));
+            }
+        }
+        schemas_obj.insert(
+            model.name.clone(),
+            serde_json::json!({
+                "type": "object",
+                "properties": props,
+                "required": required
+            }),
+        );
+    }
+
     let spec = serde_json::json!({
         "openapi": "3.1.0",
         "info": {
             "title": "Yav Application API",
-            "description": "Auto-generated OpenAPI specification from Yav routes",
+            "description": "Auto-generated OpenAPI specification from Yav routes and serialized models",
             "version": "1.0.0"
         },
-        "paths": paths_obj
+        "paths": paths_obj,
+        "components": {
+            "schemas": schemas_obj
+        }
     });
 
     let json_text = serde_json::to_string_pretty(&spec)?;

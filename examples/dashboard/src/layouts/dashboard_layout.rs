@@ -44,7 +44,7 @@ pub fn DashboardLayout(props: DashboardLayoutProps) -> Node {
         }
     };
 
-    let anti_fouc = r#"(function(){var t=localStorage.getItem('theme');if(t==='dark'||(!t&&window.matchMedia('(prefers-color-scheme: dark)').matches)){document.documentElement.classList.add('dark')}else{document.documentElement.classList.remove('dark')}})();"#;
+    let anti_fouc = r#"(function(){var t=localStorage.getItem('theme');if(t==='dark'||(!t&&window.matchMedia('(prefers-color-scheme: dark)').matches)){document.documentElement.classList.add('dark')}else{document.documentElement.classList.remove('dark')}document.addEventListener('click',function(e){var btn=e.target.closest&&e.target.closest('[data-dashboard-theme-toggle]');if(btn){var d=document.documentElement.classList.toggle('dark');localStorage.setItem('theme',d?'dark':'light');}});})();"#;
     let tailwind_config = r#"tailwind.config={darkMode:'class',theme:{extend:{fontFamily:{sans:['Inter','system-ui','sans-serif']},colors:{brand:{50:'#fff7ed',100:'#ffedd5',500:'#f97316',600:'#ea580c',700:'#c2410c'}}}}};"#;
 
     rsx! {
@@ -133,7 +133,7 @@ pub fn DashboardLayout(props: DashboardLayoutProps) -> Node {
                             <div class="flex items-center gap-3">
                                 // Light / Dark Mode Toggle
                                 <button
-                                    onclick="var d=document.documentElement.classList.toggle('dark');localStorage.setItem('theme',d?'dark':'light');"
+                                    data-dashboard-theme-toggle="true"
                                     class="p-2 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white transition-colors cursor-pointer"
                                     aria-label="Toggle theme"
                                 >

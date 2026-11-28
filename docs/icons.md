@@ -15,13 +15,13 @@ Lucide-style set (~1,900 variants). Select what you need in `Cargo.toml`:
 
 ```toml
 # Default: Classic only
-yav = "0.1.6"
+yav = "0.1.8"
 
 # All three families (~13,600 variants)
-yav = { version = "0.1.6", features = ["full-icons"] }
+yav = { version = "0.1.7", features = ["full-icons"] }
 
 # Or mix and match
-yav = { version = "0.1.6", features = ["system-icons"] }
+yav = { version = "0.1.7", features = ["system-icons"] }
 ```
 
 Available features: `classic-icons` (default), `minimal-icons`, `system-icons`
@@ -30,8 +30,7 @@ so `render_icon("minimal:bell", …)` returns the fallback SVG until the matchin
 feature is enabled. `ICON_COUNT` always reports the number of **compiled**
 variants for the active feature set — it is not a constant 13,600.
 
-If you depend on `yav-icons` directly, its own defaults still enable all three
-families; use `default-features = false, features = ["classic"]` there too.
+`yav-icons` itself also defaults to `classic` only; enable `features = ["minimal", "system"]` (or `"full"` on `yav`) to include additional families, or enable `icon-minify` with `YAV_ICON_ALLOWLIST` for per-icon compile-time pruning.
 
 ## Basic Usage
 

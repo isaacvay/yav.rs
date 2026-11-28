@@ -279,6 +279,6 @@ let app = YavApp::new()
     .get("/readyz", readyz);
 ```
 
-* `/healthz`: returns HTTP 200 with `"status": "ok"` and `"version"` set to the crate version (`CARGO_PKG_VERSION`, currently 0.1.6).
+* `/healthz`: returns HTTP 200 with `"status": "ok"` and `"version"` set to the crate version (`CARGO_PKG_VERSION`, currently 0.1.8).
 * `/readyz`: returns HTTP 200 `"ready"`.
 * `ServerMetrics`: tracks total requests, errors, and average SSR rendering latencies in milliseconds.

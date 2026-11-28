@@ -9,7 +9,13 @@ updates:
       rust-dependencies:
         patterns:
           - "*"
+        update-types:
+          - "minor"
+          - "patch"
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
       interval: weekly
+    ignore:
+      # Keep the MSRV CI job pinned to Cargo.toml's rust-version = "1.88"
+      - dependency-name: "dtolnay/rust-toolchain"

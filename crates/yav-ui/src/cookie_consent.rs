@@ -3,7 +3,7 @@
 //! Compliant privacy consent banner and customization modal with category toggles,
 //! local storage state persistence, and client consent event broadcasting.
 
-use yav_core::{escape_html, Component, Element, Node};
+use yav_core::{Component, Element, Node};
 
 use crate::utils::merge_classes;
 
@@ -143,8 +143,8 @@ root.querySelector('.yav-consent-reject')?.addEventListener('click', () => {{
   saveConsent({{ necessary: true, analytics: false, marketing: false }});
 }});
 }})();"##,
-            id = escape_html(&self.id),
-            storage_key = escape_html(&self.storage_key),
+            id = yav_core::escape_js_str(&self.id),
+            storage_key = yav_core::escape_js_str(&self.storage_key),
         );
 
         let container = Element::new("div")

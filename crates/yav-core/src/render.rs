@@ -174,22 +174,7 @@ fn render_element_depth(el: &crate::node::Element, buf: &mut String, depth: usiz
                 render_dynamic_string_attribute(&attr.name, val, buf);
             }
             AttributeValue::Static(val) => {
-                if is_url_attribute(&attr.name) {
-                    if let Some(safe_url) = crate::escape::escape_url(val) {
-                        buf.push(' ');
-                        buf.push_str(&attr.name);
-                        buf.push_str("=\"");
-                        buf.push_str(&safe_url);
-                        buf.push('"');
-                    }
-                    // Dangerous URLs: omit the attribute entirely
-                } else {
-                    buf.push(' ');
-                    buf.push_str(&attr.name);
-                    buf.push_str("=\"");
-                    buf.push_str(&escape_attribute(val));
-                    buf.push('"');
-                }
+                render_dynamic_string_attribute(&attr.name, val, buf);
             }
             AttributeValue::Bool(true) => {
                 buf.push(' ');
@@ -218,9 +203,9 @@ fn render_element_depth(el: &crate::node::Element, buf: &mut String, depth: usiz
 
     for child in &el.children {
         if is_script {
-            render_rawtext_child(child, buf, "</script", "<\\/script");
+            render_rawtext_child(child, buf, "</script", "<\\/script", depth + 1);
         } else if is_style {
-            render_rawtext_child(child, buf, "</style", "<\\/style");
+            render_rawtext_child(child, buf, "</style", "<\\/style", depth + 1);
         } else {
             render_node_depth(child, buf, depth + 1);
         }
@@ -249,7 +234,17 @@ fn replace_case_insensitive(input: &str, target: &str, replacement: &str) -> Str
     result
 }
 
-fn render_rawtext_child(node: &Node, buf: &mut String, close_tag: &str, replacement: &str) {
+fn render_rawtext_child(
+    node: &Node,
+    buf: &mut String,
+    close_tag: &str,
+    replacement: &str,
+    depth: usize,
+) {
+    if depth > MAX_RENDER_DEPTH {
+        buf.push_str("/* yav: render depth limit exceeded */");
+        return;
+    }
     match node {
         Node::Text(text) => {
             let sanitized = replace_case_insensitive(text, close_tag, replacement);
@@ -265,11 +260,14 @@ fn render_rawtext_child(node: &Node, buf: &mut String, close_tag: &str, replacem
         }
         Node::Fragment(children) => {
             for child in children {
-                render_rawtext_child(child, buf, close_tag, replacement);
+                render_rawtext_child(child, buf, close_tag, replacement, depth + 1);
             }
         }
         Node::Element(el) => {
-            render_element_depth(el, buf, 1);
+            let mut inner = String::new();
+            render_element_depth(el, &mut inner, depth + 1);
+            let sanitized = replace_case_insensitive(&inner, close_tag, replacement);
+            buf.push_str(&sanitized);
         }
         Node::Empty => {}
     }
@@ -468,24 +466,10 @@ fn render_node_skipping_heads(node: &Node, buf: &mut String, depth: usize) {
                 }
                 match &attr.value {
                     AttributeValue::String(val) => {
-                        render_dynamic_string_attribute(&attr.name, val, buf);
+                        render_dynamic_string_attribute(&attr.name, val.as_str(), buf);
                     }
                     AttributeValue::Static(val) => {
-                        if is_url_attribute(&attr.name) {
-                            if let Some(safe_url) = crate::escape::escape_url(val) {
-                                buf.push(' ');
-                                buf.push_str(&attr.name);
-                                buf.push_str("=\"");
-                                buf.push_str(&safe_url);
-                                buf.push('"');
-                            }
-                        } else {
-                            buf.push(' ');
-                            buf.push_str(&attr.name);
-                            buf.push_str("=\"");
-                            buf.push_str(&escape_attribute(val));
-                            buf.push('"');
-                        }
+                        render_dynamic_string_attribute(&attr.name, val, buf);
                     }
                     AttributeValue::Bool(true) | AttributeValue::None => {
                         buf.push(' ');
@@ -503,9 +487,9 @@ fn render_node_skipping_heads(node: &Node, buf: &mut String, depth: usize) {
             let is_style = safe_tag.eq_ignore_ascii_case("style");
             for child in &el.children {
                 if is_script {
-                    render_rawtext_child(child, buf, "</script", "<\\/script");
+                    render_rawtext_child(child, buf, "</script", "<\\/script", depth + 1);
                 } else if is_style {
-                    render_rawtext_child(child, buf, "</style", "<\\/style");
+                    render_rawtext_child(child, buf, "</style", "<\\/style", depth + 1);
                 } else {
                     render_node_skipping_heads(child, buf, depth + 1);
                 }

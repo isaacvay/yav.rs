@@ -22,7 +22,7 @@ pub fn AppLayout(props: AppLayoutProps) -> Node {
                         <a href="/" class="flex items-center gap-2.5 hover:opacity-90 transition-opacity">
                             <img src="/public/favicon.svg" class="h-6 w-6" alt="Yav logo" />
                             <span class="font-bold tracking-tight text-zinc-900 dark:text-white text-base">"yav"</span>
-                            <span class="rounded bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 px-1.5 py-0.5 text-[11px] font-mono font-medium">"v0.1.0"</span>
+                            <span class="rounded bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 px-1.5 py-0.5 text-[11px] font-mono font-medium">"v0.1.7"</span>
                         </a>
 
                         <nav class="hidden sm:flex items-center gap-5 text-sm text-zinc-600 dark:text-zinc-400 font-medium">
@@ -39,7 +39,8 @@ pub fn AppLayout(props: AppLayoutProps) -> Node {
 
                     <div class="flex items-center gap-3">
                         <button
-                            onclick="navigator.clipboard.writeText('http://127.0.0.1:3000'); const el=this.querySelector('.copy-txt'); el.innerText='copied!'; setTimeout(()=>el.innerText='127.0.0.1:3000', 1200);"
+                            data-copy-text="http://127.0.0.1:3000"
+                            data-copy-label="127.0.0.1:3000"
                             class="hidden sm:inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-zinc-100 hover:bg-zinc-200/80 dark:bg-zinc-800/80 dark:hover:bg-zinc-700/80 text-[11px] font-mono text-zinc-600 dark:text-zinc-300 transition-colors cursor-pointer border border-zinc-200 dark:border-zinc-700/60"
                             title="Click to copy local URL"
                         >

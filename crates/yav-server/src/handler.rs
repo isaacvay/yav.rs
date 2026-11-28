@@ -524,70 +524,174 @@ impl HtmlPage {
     }
 }
 
+fn find_closing_gt_respecting_quotes(s: &str) -> Option<usize> {
+    let mut quote: Option<u8> = None;
+    for (i, &b) in s.as_bytes().iter().enumerate() {
+        if let Some(q) = quote {
+            if b == q {
+                quote = None;
+            }
+        } else if b == b'"' || b == b'\'' {
+            quote = Some(b);
+        } else if b == b'>' {
+            return Some(i);
+        }
+    }
+    None
+}
+
+fn has_nonce_attribute(attrs: &str) -> bool {
+    let bytes = attrs.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        while i < bytes.len() && (bytes[i].is_ascii_whitespace() || bytes[i] == b'/') {
+            i += 1;
+        }
+        if i >= bytes.len() {
+            break;
+        }
+        let name_start = i;
+        while i < bytes.len()
+            && !bytes[i].is_ascii_whitespace()
+            && bytes[i] != b'='
+            && bytes[i] != b'/'
+        {
+            i += 1;
+        }
+        let name = &attrs[name_start..i];
+        while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        let has_eq = i < bytes.len() && bytes[i] == b'=';
+        if name.eq_ignore_ascii_case("nonce") && has_eq {
+            return true;
+        }
+        if has_eq {
+            i += 1;
+            while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+                i += 1;
+            }
+            if i < bytes.len() && (bytes[i] == b'"' || bytes[i] == b'\'') {
+                let q = bytes[i];
+                i += 1;
+                while i < bytes.len() && bytes[i] != q {
+                    i += 1;
+                }
+                if i < bytes.len() {
+                    i += 1;
+                }
+            } else {
+                while i < bytes.len() && !bytes[i].is_ascii_whitespace() {
+                    i += 1;
+                }
+            }
+        }
+    }
+    false
+}
+
 /// Injects `nonce="..."` into `<script` opening tags that do not already carry a `nonce=` attribute.
 ///
-/// The scan is *script-aware*: once an opening `<script …>` tag is found, its raw
-/// text is copied verbatim up to the matching `</script>`. A naive global replace
-/// would corrupt JavaScript string literals such as `document.write('<script>')`
-/// and would rewrite escaped `</script>` payloads inside streamed `<template>`
-/// fragments. Both script tags and attributes are matched case-insensitively.
+/// The scan is *HTML/script-aware*: skips HTML comments (`<!-- ... -->`), rawtext
+/// non-script elements (`<textarea>`, `<title>`, `<style>`), parses `<script ...>`
+/// attributes while respecting quoted `>`, checks exact attribute name boundaries
+/// (avoiding false positives on `data-nonce=`), and copies `<script>` bodies verbatim.
 pub fn inject_csp_nonce_into_scripts(html: &str, nonce: &str) -> String {
     let escaped_nonce = yav_core::escape_html(nonce);
-    // `to_ascii_lowercase()` only maps A-Z to a-z, so byte offsets stay valid.
     let lower = html.to_ascii_lowercase();
     let mut out = String::with_capacity(html.len() + 64);
     let mut cursor = 0usize;
 
-    while let Some(rel) = lower[cursor..].find("<script") {
+    while let Some(rel) = lower[cursor..].find('<') {
         let idx = cursor + rel;
         out.push_str(&html[cursor..idx]);
 
-        let after = &html[idx + 7..];
-        if !matches!(
-            after.chars().next(),
-            Some(' ') | Some('>') | Some('\t') | Some('\n') | Some('\r') | Some('/')
-        ) {
-            // e.g. `<scripture>` — not a script element.
-            out.push_str(&html[idx..idx + 7]);
-            cursor = idx + 7;
+        let rest_lower = &lower[idx..];
+        if rest_lower.starts_with("<!--") {
+            let end = rest_lower
+                .find("-->")
+                .map(|p| idx + p + 3)
+                .unwrap_or(html.len());
+            out.push_str(&html[idx..end]);
+            cursor = end;
             continue;
         }
 
-        let tag_end_rel = after.find('>');
-        let (tag_end, has_gt) = match tag_end_rel {
-            Some(rel_end) => (idx + 7 + rel_end, true),
-            None => (html.len(), false),
-        };
-        let attrs = &html[idx + 7..tag_end];
+        if let Some(after_tag) = rest_lower.strip_prefix("<script") {
+            if !matches!(
+                after_tag.chars().next(),
+                Some(' ') | Some('>') | Some('\t') | Some('\n') | Some('\r') | Some('/')
+            ) {
+                out.push_str(&html[idx..idx + 7]);
+                cursor = idx + 7;
+                continue;
+            }
 
-        out.push_str(&html[idx..idx + 7]);
-        if !attrs.to_ascii_lowercase().contains("nonce=") {
-            out.push_str(&format!(r#" nonce="{escaped_nonce}""#));
-        }
-        out.push_str(attrs);
-        if has_gt {
-            out.push('>');
+            let after = &html[idx + 7..];
+            let (tag_end, has_gt) = match find_closing_gt_respecting_quotes(after) {
+                Some(rel_end) => (idx + 7 + rel_end, true),
+                None => (html.len(), false),
+            };
+            let attrs = &html[idx + 7..tag_end];
+
+            out.push_str(&html[idx..idx + 7]);
+            if !has_nonce_attribute(attrs) {
+                out.push_str(&format!(r#" nonce="{escaped_nonce}""#));
+            }
+            out.push_str(attrs);
+            if has_gt {
+                out.push('>');
+            }
+
+            let content_start = if has_gt { tag_end + 1 } else { tag_end };
+            if content_start >= html.len() {
+                cursor = html.len();
+                break;
+            }
+
+            if let Some(close_rel) = lower[content_start..].find("</script") {
+                let close_idx = content_start + close_rel;
+                let close_end = lower[close_idx..]
+                    .find('>')
+                    .map(|r| close_idx + r + 1)
+                    .unwrap_or(html.len());
+                out.push_str(&html[content_start..close_end]);
+                cursor = close_end;
+            } else {
+                out.push_str(&html[content_start..]);
+                cursor = html.len();
+            }
+            continue;
         }
 
-        let content_start = if has_gt { tag_end + 1 } else { tag_end };
-        if content_start >= html.len() {
-            cursor = html.len();
-            break;
+        // Skip rawtext non-script containers verbatim so `<script>` inside `<textarea>`/`<title>`/`<style>` stays untouched.
+        let raw_tag = ["<textarea", "<title", "<style"].into_iter().find(|&tag| {
+            rest_lower.strip_prefix(tag).is_some_and(|after| {
+                matches!(
+                    after.chars().next(),
+                    Some(' ') | Some('>') | Some('\t') | Some('\n') | Some('\r') | Some('/')
+                )
+            })
+        });
+        if let Some(tag) = raw_tag {
+            let close_pat = format!("</{}", &tag[1..]);
+            if let Some(open_gt) = find_closing_gt_respecting_quotes(&html[idx + tag.len()..]) {
+                let body_start = idx + tag.len() + open_gt + 1;
+                if let Some(close_rel) = lower[body_start..].find(&close_pat) {
+                    let close_idx = body_start + close_rel;
+                    let close_end = lower[close_idx..]
+                        .find('>')
+                        .map(|r| close_idx + r + 1)
+                        .unwrap_or(html.len());
+                    out.push_str(&html[idx..close_end]);
+                    cursor = close_end;
+                    continue;
+                }
+            }
         }
 
-        // Copy the script body untouched so JS/JSON payloads are never rewritten.
-        if let Some(close_rel) = lower[content_start..].find("</script") {
-            let close_idx = content_start + close_rel;
-            let close_end = lower[close_idx..]
-                .find('>')
-                .map(|r| close_idx + r + 1)
-                .unwrap_or(html.len());
-            out.push_str(&html[content_start..close_end]);
-            cursor = close_end;
-        } else {
-            out.push_str(&html[content_start..]);
-            cursor = html.len();
-        }
+        out.push('<');
+        cursor = idx + 1;
     }
 
     out.push_str(&html[cursor..]);

@@ -33,7 +33,7 @@ pub async fn index(_req: Request) -> yav::server::HtmlPage {
                         <div class="flex items-center gap-1.5 p-1 rounded-lg bg-zinc-200/60 dark:bg-zinc-800 text-xs font-medium">
                             <button
                                 id="tab-btn-preview"
-                                onclick="document.getElementById('tab-preview').classList.remove('hidden'); document.getElementById('tab-code').classList.add('hidden'); this.className='inline-flex items-center gap-1.5 px-3 py-1 rounded-md bg-white dark:bg-zinc-900 text-zinc-900 dark:text-white shadow-xs font-medium cursor-pointer transition-all'; document.getElementById('tab-btn-code').className='inline-flex items-center gap-1.5 px-3 py-1 rounded-md text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white cursor-pointer transition-all';"
+                                data-workbench-tab="preview"
                                 class="inline-flex items-center gap-1.5 px-3 py-1 rounded-md bg-white dark:bg-zinc-900 text-zinc-900 dark:text-white shadow-xs font-medium cursor-pointer transition-all"
                             >
                                 {render_icon("play", IconSize::Sm, Some("w-3.5 h-3.5"), None)}
@@ -41,7 +41,7 @@ pub async fn index(_req: Request) -> yav::server::HtmlPage {
                             </button>
                             <button
                                 id="tab-btn-code"
-                                onclick="document.getElementById('tab-code').classList.remove('hidden'); document.getElementById('tab-preview').classList.add('hidden'); this.className='inline-flex items-center gap-1.5 px-3 py-1 rounded-md bg-white dark:bg-zinc-900 text-zinc-900 dark:text-white shadow-xs font-medium cursor-pointer transition-all'; document.getElementById('tab-btn-preview').className='inline-flex items-center gap-1.5 px-3 py-1 rounded-md text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white cursor-pointer transition-all';"
+                                data-workbench-tab="code"
                                 class="inline-flex items-center gap-1.5 px-3 py-1 rounded-md text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white cursor-pointer transition-all"
                             >
                                 {render_icon("code", IconSize::Sm, Some("w-3.5 h-3.5"), None)}
@@ -74,7 +74,7 @@ pub async fn index(_req: Request) -> yav::server::HtmlPage {
 
                             <div class="flex items-center gap-2">
                                 <button
-                                    onclick="const el = document.getElementById('workbench-count'); el.innerText = Math.max(0, parseInt(el.innerText) - 1);"
+                                    data-workbench-count="dec"
                                     class="w-8 h-8 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-700 font-mono text-sm font-semibold text-zinc-800 dark:text-zinc-200 flex items-center justify-center transition-colors cursor-pointer active:scale-95"
                                     aria-label="decrement"
                                 >
@@ -86,7 +86,7 @@ pub async fn index(_req: Request) -> yav::server::HtmlPage {
                                 </div>
 
                                 <button
-                                    onclick="const el = document.getElementById('workbench-count'); el.innerText = parseInt(el.innerText) + 1;"
+                                    data-workbench-count="inc"
                                     class="w-8 h-8 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-700 font-mono text-sm font-semibold text-zinc-800 dark:text-zinc-200 flex items-center justify-center transition-colors cursor-pointer active:scale-95"
                                     aria-label="increment"
                                 >
@@ -94,7 +94,7 @@ pub async fn index(_req: Request) -> yav::server::HtmlPage {
                                 </button>
 
                                 <button
-                                    onclick="document.getElementById('workbench-count').innerText = '0';"
+                                    data-workbench-count="reset"
                                     class="px-2.5 py-1.5 rounded-lg text-xs font-mono text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white transition-colors cursor-pointer"
                                 >
                                     "Reset"
@@ -252,7 +252,8 @@ pub async fn index(_req: Request) -> yav::server::HtmlPage {
 
                     <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
                         <button
-                            onclick="navigator.clipboard.writeText('yav dev'); const el = this.querySelector('.cmd-copy'); el.innerText='copied!'; setTimeout(()=>el.innerText='click to copy', 1500);"
+                            data-copy-text="yav dev"
+                            data-copy-label="click to copy"
                             class="text-left rounded-xl border border-zinc-200 dark:border-zinc-800 p-4 bg-white dark:bg-zinc-900/40 hover:border-zinc-300 dark:hover:border-zinc-700 transition-all cursor-pointer group shadow-xs"
                         >
                             <div class="flex items-center justify-between">
@@ -273,7 +274,8 @@ pub async fn index(_req: Request) -> yav::server::HtmlPage {
                         </button>
 
                         <button
-                            onclick="navigator.clipboard.writeText('yav build --release'); const el = this.querySelector('.cmd-copy'); el.innerText='copied!'; setTimeout(()=>el.innerText='click to copy', 1500);"
+                            data-copy-text="yav build --release"
+                            data-copy-label="click to copy"
                             class="text-left rounded-xl border border-zinc-200 dark:border-zinc-800 p-4 bg-white dark:bg-zinc-900/40 hover:border-zinc-300 dark:hover:border-zinc-700 transition-all cursor-pointer group shadow-xs"
                         >
                             <div class="flex items-center justify-between">
@@ -294,7 +296,8 @@ pub async fn index(_req: Request) -> yav::server::HtmlPage {
                         </button>
 
                         <button
-                            onclick="navigator.clipboard.writeText('cargo test'); const el = this.querySelector('.cmd-copy'); el.innerText='copied!'; setTimeout(()=>el.innerText='click to copy', 1500);"
+                            data-copy-text="cargo test"
+                            data-copy-label="click to copy"
                             class="text-left rounded-xl border border-zinc-200 dark:border-zinc-800 p-4 bg-white dark:bg-zinc-900/40 hover:border-zinc-300 dark:hover:border-zinc-700 transition-all cursor-pointer group shadow-xs"
                         >
                             <div class="flex items-center justify-between">
@@ -336,7 +339,47 @@ pub async fn index(_req: Request) -> yav::server::HtmlPage {
         },
       },
     },
-  }
+  };
+  document.addEventListener('click', function(e) {
+    var tabBtn = e.target.closest && e.target.closest('[data-workbench-tab]');
+    if (tabBtn) {
+      var mode = tabBtn.getAttribute('data-workbench-tab');
+      var prev = document.getElementById('tab-preview');
+      var code = document.getElementById('tab-code');
+      var bPrev = document.getElementById('tab-btn-preview');
+      var bCode = document.getElementById('tab-btn-code');
+      var active = 'inline-flex items-center gap-1.5 px-3 py-1 rounded-md bg-white dark:bg-zinc-900 text-zinc-900 dark:text-white shadow-xs font-medium cursor-pointer transition-all';
+      var inactive = 'inline-flex items-center gap-1.5 px-3 py-1 rounded-md text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white cursor-pointer transition-all';
+      if (mode === 'preview' && prev && code) {
+        prev.classList.remove('hidden'); code.classList.add('hidden');
+        if (bPrev) bPrev.className = active;
+        if (bCode) bCode.className = inactive;
+      } else if (mode === 'code' && prev && code) {
+        code.classList.remove('hidden'); prev.classList.add('hidden');
+        if (bCode) bCode.className = active;
+        if (bPrev) bPrev.className = inactive;
+      }
+      return;
+    }
+    var cntBtn = e.target.closest && e.target.closest('[data-workbench-count]');
+    if (cntBtn) {
+      var op = cntBtn.getAttribute('data-workbench-count');
+      var el = document.getElementById('workbench-count');
+      if (el) {
+        var cur = parseInt(el.innerText || '0', 10) || 0;
+        el.innerText = op === 'inc' ? String(cur + 1) : op === 'dec' ? String(Math.max(0, cur - 1)) : '0';
+      }
+      return;
+    }
+    var cpBtn = e.target.closest && e.target.closest('[data-copy-text]');
+    if (cpBtn && navigator.clipboard) {
+      var txt = cpBtn.getAttribute('data-copy-text');
+      var lbl = cpBtn.getAttribute('data-copy-label') || txt;
+      navigator.clipboard.writeText(txt);
+      var out = cpBtn.querySelector('.cmd-copy, .copy-txt');
+      if (out) { out.innerText = 'copied!'; setTimeout(function() { out.innerText = lbl; }, 1200); }
+    }
+  });
 </script>
 <link rel="stylesheet" href="/public/styles.css" />"#;
 

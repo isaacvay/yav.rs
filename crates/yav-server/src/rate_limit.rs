@@ -137,7 +137,14 @@ impl RateLimiter {
         } else {
             client_id
         };
-        let key = format!("{sanitized_client}:{normalized_path}");
+        let has_path_override = self.config.path_limits.contains_key(path)
+            || self.config.path_limits.contains_key(normalized_path);
+        let bucket_scope = if has_path_override {
+            normalized_path
+        } else {
+            "*"
+        };
+        let key = format!("{sanitized_client}:{bucket_scope}");
         let mut lock = self.clients.lock().unwrap_or_else(|e| e.into_inner());
 
         let window_start = now.checked_sub(self.config.window).unwrap_or(now);
@@ -216,10 +223,10 @@ impl RateLimiter {
     pub fn response_429(&self, retry_after_secs: u64, limit: u32) -> Response {
         let html_body = format!(
             r#"<!DOCTYPE html>
-<html lang="fr" class="h-full">
+<html lang="en" class="h-full">
 <head>
   <meta charset="utf-8" />
-  <title>429 - Trop de requêtes</title>
+  <title>429 - Too Many Requests</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <style>
     body {{ font-family: ui-sans-serif, system-ui, sans-serif; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; background: #0f172a; color: #f8fafc; }}
@@ -232,9 +239,9 @@ impl RateLimiter {
 <body>
   <div class="card">
     <h1>429</h1>
-    <h2>Trop de requêtes</h2>
-    <p>Vous avez dépassé la limite autorisée. Veuillez patienter avant de réessayer.</p>
-    <div class="badge">Nouvel essai dans : {retry_after_secs} secondes</div>
+    <h2>Too Many Requests</h2>
+    <p>Rate limit exceeded. Please wait before retrying.</p>
+    <div class="badge">Retry after: {retry_after_secs} seconds</div>
   </div>
 </body>
 </html>"#
@@ -265,10 +272,15 @@ pub fn extract_client_ip(req: &axum::extract::Request, config: &RateLimitConfig)
         .map(|ci| ci.0.ip().to_string());
 
     let can_trust_headers = config.trust_proxy
-        && (config.trusted_proxies.is_empty()
-            || peer_ip
+        && if config.trusted_proxies.is_empty() {
+            // In production, trusting forwarded headers without an explicit proxy allowlist
+            // would allow any client to spoof X-Forwarded-For and bypass rate limits.
+            !crate::session::is_production_mode()
+        } else {
+            peer_ip
                 .as_deref()
-                .is_some_and(|ip| config.trusted_proxies.iter().any(|p| p == ip)));
+                .is_some_and(|ip| config.trusted_proxies.iter().any(|p| p == ip))
+        };
 
     if can_trust_headers {
         if let Some(xff) = req

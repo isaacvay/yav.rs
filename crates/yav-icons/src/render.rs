@@ -87,7 +87,7 @@ pub fn render_icon(
 /// Internal rendering helper for both `render_icon` and `Icon`.
 fn render_icon_internal(
     icon_data: Option<&IconData>,
-    fallback_name: &str,
+    _fallback_name: &str,
     size: IconSize,
     class: Option<&str>,
     aria_label: Option<&str>,
@@ -99,10 +99,7 @@ fn render_icon_internal(
             icon.stroke_width,
             icon.is_fill,
         ),
-        None => {
-            eprintln!("[yav-icons] Warning: Unknown icon '{}'", fallback_name);
-            (FALLBACK_SVG, "0 0 24 24", "2", false)
-        }
+        None => (FALLBACK_SVG, "0 0 24 24", "2", false),
     };
 
     let px = size.pixels().to_string();
@@ -363,6 +360,7 @@ mod tests {
         assert!(html.contains(r#"aria-hidden="true""#));
     }
 
+    #[cfg(feature = "minimal")]
     #[test]
     fn render_minimal_solid_icon_produces_fill_svg() {
         let node = render_icon("minimal:solid:activity", IconSize::Md, None, None);
@@ -373,6 +371,7 @@ mod tests {
         assert!(html.contains(r#"viewBox="0 0 24 24""#));
     }
 
+    #[cfg(feature = "system")]
     #[test]
     fn render_system_icon_produces_256_viewbox() {
         let node = render_icon("system:acorn", IconSize::Lg, None, None);
@@ -382,6 +381,7 @@ mod tests {
         assert!(html.contains(r#"stroke-width="16""#));
     }
 
+    #[cfg(feature = "system")]
     #[test]
     fn render_system_bold_icon_produces_bold_stroke() {
         let node = render_icon("system:bold:acorn", IconSize::Lg, None, None);

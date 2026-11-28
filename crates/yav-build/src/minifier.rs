@@ -4,21 +4,50 @@
 //! before Brotli/Gzip pre-compression while preserving `<pre>`, `<code>`, `<script>`,
 //! and `<textarea>` whitespace semantics.
 
+/// Strip CSS `/* ... */` comments while preserving comment-like text inside quoted strings.
+fn strip_css_comments_preserve_strings(css: &str) -> String {
+    let mut out = String::with_capacity(css.len());
+    let chars: Vec<char> = css.chars().collect();
+    let mut i = 0;
+    let mut in_quote: Option<char> = None;
+    let mut escaped = false;
+    while i < chars.len() {
+        let ch = chars[i];
+        if let Some(q) = in_quote {
+            out.push(ch);
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == q {
+                in_quote = None;
+            }
+            i += 1;
+            continue;
+        }
+        if ch == '"' || ch == '\'' {
+            in_quote = Some(ch);
+            out.push(ch);
+            i += 1;
+            continue;
+        }
+        if ch == '/' && i + 1 < chars.len() && chars[i + 1] == '*' {
+            i += 2;
+            while i + 1 < chars.len() && !(chars[i] == '*' && chars[i + 1] == '/') {
+                i += 1;
+            }
+            i = (i + 2).min(chars.len());
+            continue;
+        }
+        out.push(ch);
+        i += 1;
+    }
+    out
+}
+
 /// Minify a CSS stylesheet string by removing `/* ... */` comments and collapsing whitespace.
 pub fn minify_css(css: &str) -> String {
-    let mut no_comments = String::with_capacity(css.len());
-    let mut rest = css;
-    while let Some(start) = rest.find("/*") {
-        no_comments.push_str(&rest[..start]);
-        let after = &rest[start + 2..];
-        if let Some(end) = after.find("*/") {
-            rest = &after[end + 2..];
-        } else {
-            rest = "";
-            break;
-        }
-    }
-    no_comments.push_str(rest);
+    let no_comments = strip_css_comments_preserve_strings(css);
 
     let mut out = String::with_capacity(no_comments.len());
     let mut prev_space = false;
@@ -135,30 +164,49 @@ fn is_tag_match(preview: &str, tag_name: &str) -> bool {
 }
 
 /// Minify an HTML document string by stripping `<!-- ... -->` comments and collapsing
-/// inter-tag whitespace outside `<pre>`, `<code>`, `<textarea>`, and `<script>`.
+/// inter-tag whitespace outside `<pre>`, `<code>`, `<textarea>`, `<script>`, and `<style>`.
 pub fn minify_html(html: &str) -> String {
-    let mut no_comments = String::with_capacity(html.len());
-    let mut rest = html;
-    while let Some(start) = rest.find("<!--") {
-        no_comments.push_str(&rest[..start]);
-        let after = &rest[start + 4..];
-        if let Some(end) = after.find("-->") {
-            rest = &after[end + 3..];
-        } else {
-            rest = "";
-            break;
-        }
-    }
-    no_comments.push_str(rest);
-
-    let mut out = String::with_capacity(no_comments.len());
+    let mut out = String::with_capacity(html.len());
     let mut prev_space = false;
     let mut preserve_depth: usize = 0;
-    let chars: Vec<char> = no_comments.chars().collect();
+    let chars: Vec<char> = html.chars().collect();
     let mut i = 0;
 
     while i < chars.len() {
-        if chars[i] == '<' {
+        // Strip HTML comments only outside rawtext/preformatted blocks
+        if preserve_depth == 0
+            && i + 3 < chars.len()
+            && chars[i] == '<'
+            && chars[i + 1] == '!'
+            && chars[i + 2] == '-'
+            && chars[i + 3] == '-'
+        {
+            i += 4;
+            while i + 2 < chars.len()
+                && !(chars[i] == '-' && chars[i + 1] == '-' && chars[i + 2] == '>')
+            {
+                i += 1;
+            }
+            i = (i + 3).min(chars.len());
+            continue;
+        }
+
+        let was_preserved = preserve_depth > 0;
+        let ch = chars[i];
+        if !was_preserved && ch.is_whitespace() {
+            prev_space = true;
+            i += 1;
+            continue;
+        }
+
+        if prev_space {
+            if !was_preserved && (!out.ends_with('>') || ch != '<') {
+                out.push(' ');
+            }
+            prev_space = false;
+        }
+
+        if ch == '<' {
             let tag_preview: String = chars[i..(i + 14).min(chars.len())]
                 .iter()
                 .collect::<String>()
@@ -169,6 +217,7 @@ pub fn minify_html(html: &str) -> String {
                     || is_tag_match(rest, "code")
                     || is_tag_match(rest, "textarea")
                     || is_tag_match(rest, "script")
+                    || is_tag_match(rest, "style")
                 {
                     preserve_depth = preserve_depth.saturating_sub(1);
                 }
@@ -177,25 +226,13 @@ pub fn minify_html(html: &str) -> String {
                     || is_tag_match(rest, "code")
                     || is_tag_match(rest, "textarea")
                     || is_tag_match(rest, "script")
+                    || is_tag_match(rest, "style")
                 {
                     preserve_depth += 1;
                 }
             }
         }
 
-        let ch = chars[i];
-        if preserve_depth == 0 && ch.is_whitespace() {
-            prev_space = true;
-            i += 1;
-            continue;
-        }
-
-        if prev_space && preserve_depth == 0 {
-            if !out.ends_with('>') && ch != '<' {
-                out.push(' ');
-            }
-            prev_space = false;
-        }
         out.push(ch);
         i += 1;
     }

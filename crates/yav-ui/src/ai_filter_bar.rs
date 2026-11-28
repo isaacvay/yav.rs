@@ -214,7 +214,7 @@ impl Component for AiFilterBar {
                     Extract & Filter\
                 </button>\
             </form>",
-            endpoint = escape_html(&self.endpoint),
+            endpoint = yav_core::escape_url(&self.endpoint).unwrap_or_else(|| "/".to_string()),
             hx_target = hx_target,
             sparkles = sparkles_svg,
             val = escape_html(&self.prompt_value),

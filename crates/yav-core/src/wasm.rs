@@ -17,6 +17,7 @@
 //! with zero arguments (`exports[name]()`). If provided, the expression is evaluated and
 //! passed directly to the exported function.
 
+use crate::escape::{escape_attribute, escape_js_str, escape_script_json};
 use crate::{Component, Element, Node};
 
 /// Properties for mounting a client-side WebAssembly Island.
@@ -42,34 +43,6 @@ pub struct WasmIslandProps {
 #[derive(Debug, Clone)]
 pub struct WasmIsland {
     props: WasmIslandProps,
-}
-
-fn escape_js_str(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() + 8);
-    for c in s.chars() {
-        match c {
-            '\\' => out.push_str("\\\\"),
-            '"' => out.push_str("\\\""),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            _ => out.push(c),
-        }
-    }
-    let lower = out.to_ascii_lowercase();
-    if lower.contains("</script") {
-        let mut sanitized = String::with_capacity(out.len());
-        let mut last = 0;
-        for (idx, _) in lower.match_indices("</script") {
-            sanitized.push_str(&out[last..idx]);
-            sanitized.push_str("<\\/script");
-            last = idx + 8;
-        }
-        sanitized.push_str(&out[last..]);
-        sanitized
-    } else {
-        out
-    }
 }
 
 impl WasmIsland {
@@ -126,7 +99,7 @@ impl WasmIsland {
         let url = escape_js_str(&self.props.module_url);
         let export = escape_js_str(&self.props.export_name);
         let nonce_attr = match &self.props.nonce {
-            Some(n) if !n.is_empty() => format!(" nonce=\"{}\"", escape_js_str(n)),
+            Some(n) if !n.is_empty() => format!(" nonce=\"{}\"", escape_attribute(n)),
             _ => String::new(),
         };
         let call_expr = match &self.props.params {
@@ -138,11 +111,7 @@ impl WasmIsland {
                 // call expression. If the value is not valid JSON, fall back
                 // to a properly escaped string literal.
                 let safe_arg = if serde_json::from_str::<serde_json::Value>(raw).is_ok() {
-                    // Valid JSON is a safe data-only subset of JS, but JSON
-                    // string values can contain "</script>" which would close
-                    // the outer <script> tag in the HTML parser. Escape it.
-                    raw.replace("</script", "<\\/script")
-                        .replace("</SCRIPT", "<\\/script")
+                    escape_script_json(raw)
                 } else {
                     format!("\"{}\"", escape_js_str(raw))
                 };
@@ -284,7 +253,7 @@ mod tests {
         let html = render_to_string(&island.render());
         // The </script> must be escaped to prevent HTML breakout.
         assert!(!html.contains("</script><script>alert(1)</script>"));
-        assert!(html.contains("<\\/script"));
+        assert!(html.contains("\\u003C/script") || html.contains("<\\/script"));
     }
 
     #[test]

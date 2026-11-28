@@ -36,7 +36,7 @@ pub const DEFAULT_CONTENT_SECURITY_POLICY: &str = concat!(
     "frame-ancestors 'none'; ",
     "form-action 'self'; ",
     "script-src 'nonce-{nonce}' 'strict-dynamic' 'unsafe-inline'; ",
-    "style-src 'self' 'unsafe-inline' 'nonce-{nonce}'; ",
+    "style-src 'self' 'unsafe-inline'; ",
     "img-src 'self' data: https:; ",
     "font-src 'self' data:; ",
     "connect-src 'self' ws: wss:; ",
@@ -91,12 +91,17 @@ impl CspNonce {
             return Self(hex);
         }
 
+        static FALLBACK_COUNTER: std::sync::atomic::AtomicU64 =
+            std::sync::atomic::AtomicU64::new(1);
+        tracing::error!("OS CSPRNG getrandom failed; falling back to mixed monotonic nonce");
+        let seq = FALLBACK_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_nanos();
         let mut hasher = sha2::Sha256::new();
         hasher.update(now.to_le_bytes());
+        hasher.update(seq.to_le_bytes());
         hasher.update(std::process::id().to_le_bytes());
         let digest = hasher.finalize();
         let mut hex = String::with_capacity(32);
@@ -332,7 +337,8 @@ pub async fn inject_nonce_into_html_response(response: &mut Response, nonce: &st
         .headers()
         .get(header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
-        .is_some_and(|v| v.starts_with("text/html"));
+        .and_then(|v| v.split(';').next())
+        .is_some_and(|v| v.trim().eq_ignore_ascii_case("text/html"));
     if !is_html {
         return true;
     }
@@ -820,13 +826,57 @@ fn urlencoded_field(body: &[u8], field: &str) -> Option<String> {
     None
 }
 
+fn multipart_field(body: &[u8], content_type: &str, field: &str) -> Option<String> {
+    let boundary = content_type.split(';').find_map(|part| {
+        let trimmed = part.trim();
+        let rest = trimmed
+            .strip_prefix("boundary=")
+            .or_else(|| trimmed.strip_prefix("BOUNDARY="))?;
+        Some(rest.trim_matches('"').trim())
+    })?;
+    if boundary.is_empty() {
+        return None;
+    }
+    let delim = format!("--{boundary}");
+    let text = String::from_utf8_lossy(body);
+    for section in text.split(&delim) {
+        let section = section.trim_start_matches("\r\n").trim_start_matches('\n');
+        if section.is_empty() || section.starts_with("--") {
+            continue;
+        }
+        let (headers_part, val_part) = if let Some((h, v)) = section.split_once("\r\n\r\n") {
+            (h, v)
+        } else if let Some((h, v)) = section.split_once("\n\n") {
+            (h, v)
+        } else {
+            continue;
+        };
+        let mut is_target = false;
+        for line in headers_part.lines() {
+            let lower = line.to_ascii_lowercase();
+            if lower.starts_with("content-disposition:") {
+                let needle = format!("name=\"{}\"", field.to_ascii_lowercase());
+                if lower.contains(&needle) {
+                    is_target = true;
+                    break;
+                }
+            }
+        }
+        if is_target {
+            let cleaned = val_part.trim_end_matches("\r\n").trim_end_matches('\n');
+            return Some(cleaned.to_string());
+        }
+    }
+    None
+}
+
 /// Validate the anti-CSRF token on every state-changing request.
 ///
 /// The expected token is read from the session (`_csrf_token`), which is
-/// populated by [`crate::forms::CsrfToken::from_session`]. Clients send it
-/// either in the `x-csrf-token` header or as the `_csrf` form field. Failed
-/// validation returns `403 Forbidden` before the handler runs. Safe methods
-/// (GET/HEAD/OPTIONS/TRACE) and exempt paths are passed through untouched.
+/// populated by [`crate::forms::CsrfToken::from_session_with_secret`]. Clients send it
+/// either in the `x-csrf-token` header or as the `_csrf` form field (`application/x-www-form-urlencoded`
+/// or `multipart/form-data`). Failed validation returns `403 Forbidden` before the handler runs.
+/// Safe methods (GET/HEAD/OPTIONS/TRACE) and exempt paths are passed through untouched.
 pub async fn csrf_middleware(req: Request, next: Next) -> Response {
     let config = req
         .extensions()
@@ -852,15 +902,19 @@ pub async fn csrf_middleware(req: Request, next: Next) -> Response {
     }
 
     let session = req.extensions().get::<crate::session::Session>().cloned();
+    let session_secret = req
+        .extensions()
+        .get::<crate::session::SessionSecret>()
+        .cloned();
     let expected = match session.as_ref().and_then(|s| s.get("_csrf_token")) {
         Some(token) if !token.is_empty() => token,
         _ => {
-            // No token bound to this session yet: seed one so the next
-            // (legitimate) form submission can succeed, then reject this
-            // request. Never compare against the freshly generated value —
-            // that would let the first attacker-controlled request succeed.
             if let Some(s) = &session {
-                let _ = crate::forms::CsrfToken::from_session(s);
+                if let Some(ref secret) = session_secret {
+                    let _ = crate::forms::CsrfToken::from_session_with_secret(s, secret.as_bytes());
+                } else {
+                    let _ = crate::forms::CsrfToken::from_session(s);
+                }
             }
             return csrf_rejected_response();
         }
@@ -879,6 +933,12 @@ pub async fn csrf_middleware(req: Request, next: Next) -> Response {
         };
     }
 
+    let content_type = req
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_string);
+
     // Form submissions: buffer, inspect, and rebuild the request so the
     // handler still sees the original body.
     let (parts, body) = req.into_parts();
@@ -886,8 +946,14 @@ pub async fn csrf_middleware(req: Request, next: Next) -> Response {
         Ok(bytes) => bytes,
         Err(_) => return csrf_rejected_response(),
     };
-    let valid = urlencoded_field(&bytes, &config.field_name)
-        .map(|submitted| crate::forms::verify_csrf_token(&expected, &submitted))
+    let submitted = match content_type.as_deref() {
+        Some(ct) if ct.to_ascii_lowercase().starts_with("multipart/form-data") => {
+            multipart_field(&bytes, ct, &config.field_name)
+        }
+        _ => urlencoded_field(&bytes, &config.field_name),
+    };
+    let valid = submitted
+        .map(|tok| crate::forms::verify_csrf_token(&expected, &tok))
         .unwrap_or(false);
     if !valid {
         return csrf_rejected_response();

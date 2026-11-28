@@ -118,23 +118,35 @@ pub struct IconData {
     pub is_fill: bool,
 }
 
-#[cfg(feature = "classic")]
+#[cfg(all(feature = "classic", not(yav_icon_pruned)))]
 pub mod classic;
+#[cfg(all(feature = "classic", yav_icon_pruned))]
+pub mod classic {
+    include!(concat!(env!("OUT_DIR"), "/pruned_classic.rs"));
+}
 #[cfg(not(feature = "classic"))]
 pub mod classic {
     pub static CLASSIC_REGULAR: &[super::IconData] = &[];
 }
 
-#[cfg(feature = "minimal")]
+#[cfg(all(feature = "minimal", not(yav_icon_pruned)))]
 pub mod minimal;
+#[cfg(all(feature = "minimal", yav_icon_pruned))]
+pub mod minimal {
+    include!(concat!(env!("OUT_DIR"), "/pruned_minimal.rs"));
+}
 #[cfg(not(feature = "minimal"))]
 pub mod minimal {
     pub static MINIMAL_REGULAR: &[super::IconData] = &[];
     pub static MINIMAL_SOLID: &[super::IconData] = &[];
 }
 
-#[cfg(feature = "system")]
+#[cfg(all(feature = "system", not(yav_icon_pruned)))]
 pub mod system;
+#[cfg(all(feature = "system", yav_icon_pruned))]
+pub mod system {
+    include!(concat!(env!("OUT_DIR"), "/pruned_system.rs"));
+}
 #[cfg(not(feature = "system"))]
 pub mod system {
     pub static SYSTEM_REGULAR: &[super::IconData] = &[];
@@ -371,6 +383,7 @@ mod tests {
         assert_eq!(get_icon("close"), get_icon("x"));
     }
 
+    #[cfg(feature = "minimal")]
     #[test]
     fn minimal_lookup_succeeds() {
         assert!(get_icon("minimal:activity").is_some());
@@ -381,6 +394,7 @@ mod tests {
         assert_eq!(solid.style, IconStyle::Solid);
     }
 
+    #[cfg(feature = "system")]
     #[test]
     fn system_weights_lookup_succeeds() {
         let reg = get_icon("system:acorn").unwrap();

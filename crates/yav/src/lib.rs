@@ -31,7 +31,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! yav = "0.1.6"
+//! yav = "0.1.8"
 //! tokio = { version = "1", features = ["full"] }
 //! ```
 //!

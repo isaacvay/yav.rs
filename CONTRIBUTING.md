@@ -96,9 +96,7 @@ hand-edit it. The upstream SVG trees are local-only and gitignored; see
 - Put user-facing docs in `docs/`, keep links **relative** (no `file:///` URLs).
 - The framework version lives in `[workspace.package] version` in the root
   `Cargo.toml`; do not hardcode a different version in docs.
-- When you add a partially implemented feature, add a line to
-  [`docs/limitations.md`](docs/limitations.md). Prefer an honest limitation
-  over an aspirational README claim.
+- When you add a new feature, document its scope and usage in `docs/`.
 
 ## Reporting vulnerabilities
 

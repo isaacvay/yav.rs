@@ -707,6 +707,7 @@ pub async fn session_middleware(
             std::env::var("SESSION_SECRET")
                 .or_else(|_| std::env::var("YAV_SECRET"))
                 .ok()
+                .filter(|s| !s.is_empty())
                 .map(|s| SessionSecret::new(s.into_bytes()))
         })
         .unwrap_or_else(|| SessionSecret::new(fallback_secret_bytes()));

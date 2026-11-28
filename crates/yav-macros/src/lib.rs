@@ -18,7 +18,7 @@
 //! the consuming project at compile time. They are therefore **not** compiled
 //! here. Real, compiled examples of `rsx!`, `#[component]`, `#[server]` and
 //! the route macros live in the `yav` crate documentation, where
-//! `use yav::prelude::*;` is available; see `docs/limitations.md`.
+//! `use yav::prelude::*;` is available.
 
 extern crate proc_macro;
 

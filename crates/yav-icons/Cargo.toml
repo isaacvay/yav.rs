@@ -17,7 +17,7 @@ exclude = ["lucide/", "mynaui-icons-main/", "phosphor-icons/", "scripts/"]
 yav-core.workspace = true
 
 [features]
-default = ["classic", "minimal", "system"]
+default = ["classic"]
 classic = []
 minimal = []
 system = []

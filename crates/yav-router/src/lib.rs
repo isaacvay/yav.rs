@@ -62,45 +62,52 @@ pub use trie::{RouteTrie, RouteTrieNode};
 /// assert_eq!(url_for("/files/*path", &[("path", "images/logo.png")]), "/files/images/logo.png");
 /// ```
 pub fn url_for(pattern: &str, params: &[(&str, &str)]) -> String {
-    let mut url = pattern.to_string();
-    let mut sorted_params = params.to_vec();
-    sorted_params.sort_by_key(|a| std::cmp::Reverse(a.0.len()));
-
-    for (k, v) in sorted_params {
-        let colon = format!(":{k}");
-        let star = format!("*{k}");
-        let bracket = format!("[{k}]");
-        let encoded_seg = matcher::percent_encode(v, false);
-        let encoded_catch = matcher::percent_encode(v, true);
-        url = replace_param_token(&url, &colon, &encoded_seg);
-        url = replace_param_token(&url, &star, &encoded_catch);
-        url = url.replace(&bracket, &encoded_seg);
+    let mut param_map = std::collections::HashMap::with_capacity(params.len());
+    for (k, v) in params {
+        param_map.insert(*k, *v);
     }
-    url
-}
 
-fn replace_param_token(input: &str, token: &str, replacement: &str) -> String {
-    let mut result = String::with_capacity(input.len());
-    let mut rem = input;
-    while let Some(pos) = rem.find(token) {
-        let after_idx = pos + token.len();
-        let is_boundary = if let Some(next_char) = rem[after_idx..].chars().next() {
-            !next_char.is_ascii_alphanumeric() && next_char != '_'
-        } else {
-            true
-        };
+    let bytes = pattern.as_bytes();
+    let mut out = String::with_capacity(pattern.len());
+    let mut i = 0;
 
-        if is_boundary {
-            result.push_str(&rem[..pos]);
-            result.push_str(replacement);
-            rem = &rem[after_idx..];
-        } else {
-            result.push_str(&rem[..after_idx]);
-            rem = &rem[after_idx..];
+    while i < bytes.len() {
+        let ch = pattern[i..].chars().next().unwrap();
+        if ch == ':' || ch == '*' {
+            let is_catch = ch == '*';
+            let rest = &pattern[i + 1..];
+            let name_len = rest
+                .find(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+                .unwrap_or(rest.len());
+            if name_len > 0 {
+                let key = &rest[..name_len];
+                if let Some(val) = param_map.get(key) {
+                    out.push_str(&matcher::percent_encode(val, is_catch));
+                    i += 1 + name_len;
+                    continue;
+                }
+            }
+        } else if ch == '[' {
+            let rest = &pattern[i + 1..];
+            if let Some(close_idx) = rest.find(']') {
+                let raw_key = &rest[..close_idx];
+                let (is_catch, key) = match raw_key.strip_prefix("...") {
+                    Some(k) => (true, k),
+                    None => (false, raw_key),
+                };
+                if !key.is_empty() {
+                    if let Some(val) = param_map.get(key) {
+                        out.push_str(&matcher::percent_encode(val, is_catch));
+                        i += 1 + close_idx + 1;
+                        continue;
+                    }
+                }
+            }
         }
+        out.push(ch);
+        i += ch.len_utf8();
     }
-    result.push_str(rem);
-    result
+    out
 }
 
 /// Convenience prelude module.

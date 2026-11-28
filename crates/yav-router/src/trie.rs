@@ -105,7 +105,8 @@ impl RouteTrie {
         }
 
         if index < segments.len() {
-            let seg = segments[index];
+            let decoded = crate::matcher::percent_decode(segments[index]);
+            let seg = decoded.as_str();
 
             // 2. Try static branch (Priority: Highest)
             if let Some(static_child) = node.static_children.get(seg) {
@@ -129,11 +130,9 @@ impl RouteTrie {
                     candidates.push(r.clone());
                 }
             }
-            if index < segments.len() {
-                for i in index + 1..=segments.len() {
-                    if let Some(r) = self.match_node(catch_all_node, segments, i, method) {
-                        candidates.push(r);
-                    }
+            for i in index..=segments.len() {
+                if let Some(r) = self.match_node(catch_all_node, segments, i, method) {
+                    candidates.push(r);
                 }
             }
         }

@@ -49,6 +49,7 @@ pub struct ImageOptParams {
 pub struct ImageOptRequest {
     pub params: ImageOptParams,
     pub accept: Option<String>,
+    pub public_dir: Option<PathBuf>,
 }
 
 impl<S> FromRequestParts<S> for ImageOptRequest
@@ -66,7 +67,15 @@ where
             .get(header::ACCEPT)
             .and_then(|v| v.to_str().ok())
             .map(str::to_string);
-        Ok(Self { params, accept })
+        let public_dir = parts
+            .extensions
+            .get::<ImageOptimizerDir>()
+            .map(|d| d.0.clone());
+        Ok(Self {
+            params,
+            accept,
+            public_dir,
+        })
     }
 }
 
@@ -135,8 +144,20 @@ pub fn generate_blur_svg_data_uri(
 ) -> String {
     let w = width.max(16);
     let h = height.max(16);
-    let c1 = primary_hex.trim_start_matches('#');
-    let c2 = secondary_hex.trim_start_matches('#');
+    let c1: String = primary_hex
+        .trim_start_matches('#')
+        .chars()
+        .filter(|c| c.is_ascii_hexdigit())
+        .take(8)
+        .collect();
+    let c2: String = secondary_hex
+        .trim_start_matches('#')
+        .chars()
+        .filter(|c| c.is_ascii_hexdigit())
+        .take(8)
+        .collect();
+    let c1 = if c1.is_empty() { "cbd5e1" } else { &c1 };
+    let c2 = if c2.is_empty() { "94a3b8" } else { &c2 };
     let svg = format!(
         "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 {w} {h}' width='{w}' height='{h}'>\
         <defs><linearGradient id='g' x1='0%' y1='0%' x2='100%' y2='100%'>\
@@ -212,6 +233,19 @@ fn mime_for_extension(path: &Path) -> &'static str {
     }
 }
 
+/// Bounded limits + decoding helper protecting against decompression bombs (OOM).
+fn decode_bounded_image(bytes: &[u8]) -> Result<DynamicImage, String> {
+    let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes))
+        .with_guessed_format()
+        .map_err(|e| e.to_string())?;
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(8192);
+    limits.max_image_height = Some(8192);
+    limits.max_alloc = Some(128 * 1024 * 1024);
+    reader.limits(limits);
+    reader.decode().map_err(|err| err.to_string())
+}
+
 /// Decode an image, resize it to `target_width` (never upscaling) with a Lanczos3
 /// kernel, and re-encode it in `format`.
 ///
@@ -222,7 +256,7 @@ pub fn optimize_image_bytes(
     quality: u8,
     format: OutputFormat,
 ) -> Result<(Vec<u8>, &'static str, u32, u32), String> {
-    let decoded = image::load_from_memory(bytes).map_err(|err| err.to_string())?;
+    let decoded = decode_bounded_image(bytes)?;
     let (source_w, source_h) = decoded.dimensions();
     if source_w == 0 || source_h == 0 {
         return Err("image has zero dimensions".to_string());
@@ -372,14 +406,21 @@ fn sha256_etag(bytes: &[u8]) -> String {
     )
 }
 
+/// Optional extension allowing `YavApp::static_dir` to override the default `"public"` folder for `/_yav/image`.
+#[derive(Debug, Clone)]
+pub struct ImageOptimizerDir(pub PathBuf);
+
 /// Axum route handler for `/_yav/image`.
 pub async fn image_optimizer_handler(request: ImageOptRequest) -> Response {
     let params = request.params;
     let width = params.w.clamp(16, 3840);
     let quality = params.q.clamp(1, 100);
 
-    let public_dir = Path::new("public");
-    let Some(file_path) = resolve_safe_asset_path(public_dir, &params.url) else {
+    let configured_dir = request
+        .public_dir
+        .or_else(|| yav_core::use_context::<ImageOptimizerDir>().map(|d| d.0.clone()));
+    let public_dir = configured_dir.unwrap_or_else(|| PathBuf::from("public"));
+    let Some(file_path) = resolve_safe_asset_path(&public_dir, &params.url) else {
         return (StatusCode::BAD_REQUEST, "Invalid image path").into_response();
     };
 
@@ -388,8 +429,13 @@ pub async fn image_optimizer_handler(request: ImageOptRequest) -> Response {
     };
 
     if params.blur {
-        return match generate_blur_svg_document_from_bytes(&bytes, width) {
-            Ok(svg) => (
+        let blur_bytes = bytes;
+        let blur_res = tokio::task::spawn_blocking(move || {
+            generate_blur_svg_document_from_bytes(&blur_bytes, width)
+        })
+        .await;
+        return match blur_res {
+            Ok(Ok(svg)) => (
                 StatusCode::OK,
                 [
                     (header::CONTENT_TYPE, "image/svg+xml; charset=utf-8"),
@@ -398,28 +444,36 @@ pub async fn image_optimizer_handler(request: ImageOptRequest) -> Response {
                 svg,
             )
                 .into_response(),
-            Err(err) => (
+            Ok(Err(err)) => (
                 StatusCode::UNPROCESSABLE_ENTITY,
                 [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
                 format!("Cannot decode source image for LQIP: {err}"),
             )
                 .into_response(),
+            Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "Image blur task failed").into_response(),
         };
     }
 
     let accept = request.accept.as_deref();
     let format = negotiated_format(params.fm.as_deref(), accept, &file_path);
 
-    let (output, mime, out_w, out_h) = match optimize_image_bytes(&bytes, width, quality, format) {
-        Ok(result) => result,
-        Err(err) => {
+    let bytes_for_task = bytes.clone();
+    let opt_res = tokio::task::spawn_blocking(move || {
+        optimize_image_bytes(&bytes_for_task, width, quality, format)
+    })
+    .await;
+
+    let (output, mime, out_w, out_h) = match opt_res {
+        Ok(Ok(result)) => result,
+        Ok(Err(err)) => {
             // Unsupported inputs (SVG, AVIF, corrupt files) are still useful:
-            // serve them unchanged with the original MIME type and no-store.
+            // serve them unchanged with original MIME type, no-store, and SVG sandbox CSP.
             tracing::warn!(path = %file_path.display(), error = %err, "Image optimization failed; serving original bytes");
+            let mime_val = mime_for_extension(&file_path);
             let mut passthrough = (
                 StatusCode::OK,
                 [
-                    (header::CONTENT_TYPE, mime_for_extension(&file_path)),
+                    (header::CONTENT_TYPE, mime_val),
                     (header::CACHE_CONTROL, "private, no-store"),
                 ],
                 bytes,
@@ -428,7 +482,22 @@ pub async fn image_optimizer_handler(request: ImageOptRequest) -> Response {
             passthrough
                 .headers_mut()
                 .insert(header::VARY, HeaderValue::from_static("Accept"));
+            if mime_val == "image/svg+xml" {
+                passthrough.headers_mut().insert(
+                    header::CONTENT_SECURITY_POLICY,
+                    HeaderValue::from_static(
+                        "sandbox; default-src 'none'; style-src 'unsafe-inline'",
+                    ),
+                );
+            }
             return passthrough;
+        }
+        Err(_) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Image optimization task failed",
+            )
+                .into_response();
         }
     };
 

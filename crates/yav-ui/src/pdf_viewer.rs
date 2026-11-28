@@ -147,7 +147,7 @@ impl Component for PdfViewer {
             prev_dis = if self.current_page <= 1 { "disabled" } else { "" },
             next_dis = if self.current_page >= self.total_pages { "disabled" } else { "" },
             zoom = self.zoom * 100.0,
-            url = escape_html(&self.src_url)
+            url = yav_core::escape_url(&self.src_url).unwrap_or_else(|| "#".to_string())
         );
 
         // Page vector representation with A4 aspect ratio (595 x 842 pt)
@@ -200,7 +200,7 @@ impl Component for PdfViewer {
             pw = page_w,
             ph = page_h,
             annotations = annotations_svg,
-            url = escape_html(&self.src_url),
+            url = yav_core::escape_url(&self.src_url).unwrap_or_else(|| "about:blank".to_string()),
             page = self.current_page,
             title = escape_html(&self.title)
         );

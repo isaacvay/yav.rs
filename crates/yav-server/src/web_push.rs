@@ -556,26 +556,30 @@ fn validate_push_endpoint_syntax(endpoint: &str) -> Result<(), WebPushError> {
 
 /// Resolve the endpoint's host and reject any result that lands on a private,
 /// loopback, link-local, multicast or unspecified address (IPv4 and IPv6).
-async fn check_push_endpoint_dns(endpoint: &str) -> Result<(), WebPushError> {
+/// Returns `(host, validated_socket_addrs)` so the HTTP client can pin the
+/// resolved IP addresses and prevent DNS-rebinding TOCTOU attacks.
+async fn check_push_endpoint_dns(
+    endpoint: &str,
+) -> Result<(String, Vec<std::net::SocketAddr>), WebPushError> {
     let (host, port) = parse_validated_endpoint(endpoint)?;
     let addrs = tokio::net::lookup_host((host.as_str(), port))
         .await
         .map_err(|e| WebPushError::UnsafeEndpoint(format!("DNS lookup failed: {e}")))?;
-    let mut seen = false;
+    let mut validated = Vec::new();
     for addr in addrs {
-        seen = true;
         if is_forbidden_ip(addr.ip()) {
             return Err(WebPushError::UnsafeEndpoint(
                 "endpoint resolves to a forbidden address".into(),
             ));
         }
+        validated.push(addr);
     }
-    if !seen {
+    if validated.is_empty() {
         return Err(WebPushError::UnsafeEndpoint(
             "endpoint resolved to no address".into(),
         ));
     }
-    Ok(())
+    Ok((host, validated))
 }
 
 /// Send a Web Push notification to a subscriber's push endpoint.
@@ -598,7 +602,7 @@ pub async fn send_notification(
     // sending: `Authorization` is a signed VAPID credential and must never be
     // delivered to a client-chosen internal host (SSRF / cloud metadata).
     validate_push_endpoint_syntax(&subscription.endpoint)?;
-    check_push_endpoint_dns(&subscription.endpoint).await?;
+    let (pinned_host, pinned_addrs) = check_push_endpoint_dns(&subscription.endpoint).await?;
 
     let payload = notification.to_json().into_bytes();
     let encrypted = encrypt_payload(subscription, &payload)?;
@@ -606,9 +610,12 @@ pub async fn send_notification(
     let audience = VapidSigner::extract_audience(&subscription.endpoint);
     let auth_header = vapid.create_authorization_header(&audience, 12 * 3600)?;
 
-    let client = reqwest::Client::builder()
+    let mut builder = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
-        .timeout(Duration::from_secs(10))
+        .no_proxy()
+        .timeout(Duration::from_secs(10));
+    builder = builder.resolve_to_addrs(&pinned_host, &pinned_addrs);
+    let client = builder
         .build()
         .map_err(|e| WebPushError::DeliveryFailed(e.to_string()))?;
     let resp = client

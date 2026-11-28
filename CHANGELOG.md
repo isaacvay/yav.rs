@@ -5,6 +5,53 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.8] - 2026-11-28
+
+### Fixed
+
+- **HTML minifier**: moved tag detection before whitespace collapsing so `<pre>`
+  content is preserved correctly.
+- **`SignalScope::render()`**: replaced non-deterministic `serde_json::Map` with
+  insertion-ordered `Vec` serialization for stable JSON output.
+- **WASM island escaping**: `escape_script_json` now consistently uses `\u003C`
+  escaping; test assertions accept both escape styles.
+- **CSP handler**: fixed `csp_report_handler` import path from `middleware` to
+  `security_audit`.
+- **CSRF in dashboard example**: fixed `CsrfToken` construction (private field)
+  by using the proper `from_session` API.
+- **VS Code extension icon**: corrected reference from deleted
+  `yav-document.png` to `yavml.png`.
+- **`export_cmd.rs`**: fixed temporary value borrow lifetime issue.
+- **Clippy**: removed redundant closure in `mount_mcp`, unused `escape_html`
+  imports in `code_playground.rs` and `cookie_consent.rs`, renamed
+  `router_script_with_nonce` to match the actual function name.
+
+### Changed
+
+- **Inline event handlers removed**: all built-in UI components now use
+  delegated `data-*` attributes instead of inline `onclick` handlers, making
+  the framework fully compatible with strict CSP policies.
+- **`yav-icons` tests**: gated `minimal` and `system` family tests behind
+  `#[cfg(feature)]` so default-features builds pass cleanly.
+- **Dashboard CSRF test**: now performs a full round-trip (GET extracts session
+  cookie + CSRF token → POST with real token succeeds).
+
+### Removed
+
+- `docs/limitations.md` and all references to it.
+- `AUDIT-2026-11-13.md` and `IMPLEMENTATION-2026-11-15.md` (temporary reports).
+- Large duplicate/unnecessary assets: full-resolution PNGs (SVGs retained),
+  local Python scripts, `preview.html`, `ATTRIBUTION.md`, `requirements.txt`.
+- `.workbuddy-ai/` directory.
+
+### Documentation
+
+- Updated all version references from `0.1.7` to `0.1.8`.
+- Rewrote `README.md` documentation table (removed broken links).
+- Updated `docs/icons.md`, `docs/opt-in-integrations.md`,
+  `docs/seo-and-metadata.md`, `docs/production.md` to reflect current state.
+- `CONTRIBUTING.md`: simplified documentation guidelines.
+
 ## [0.1.7] - 2026-11-20
 
 ### Fixed
@@ -42,7 +89,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Bump workspace and crate versions to `0.1.7`.
 - Synchronized `examples/dashboard/Cargo.lock` and `test-app/Cargo.lock` with workspace dependencies.
-- `docs/cli.md`, `docs/getting-started.md` and `docs/limitations.md` now describe
+- `docs/cli.md`, `docs/getting-started.md` now describe
   the real self-update flow, its build time, the absence of prebuilt binaries and
   the one-time manual install required for `0.1.5`/`0.1.6` binaries on Windows.
 - `SECURITY.md` now lists `0.1.7` as the supported version and records the
@@ -50,8 +97,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.6] - 2026-11-17
 
-Audit remediation release. Full findings and severities:
-[`AUDIT-2026-11-13.md`](AUDIT-2026-11-13.md).
+Audit remediation release.
 
 ### Security
 
@@ -166,8 +212,7 @@ Audit remediation release. Full findings and severities:
   `CONTRIBUTING.md`, `CHANGELOG.md` and `docs/security.md` no longer claim
   CSRF is opt-in or that `SESSION_SECRET` aborts startup; API examples use
   real signatures; false GraphiQL/AVIF/multi-region claims corrected.
-  `docs/limitations.md` now names the `Node::Raw` variant instead of the
-  non-existent `Node::raw` helper. Restored the sense of scale the earlier
+  Restored the sense of scale the earlier
   draft lost: the README now opens with a real screenshot of
   `examples/dashboard` and, under "What else is in the box", states the shipped
   footprint — 82 UI components across 56 modules, 8 themes, a ~1,900-icon
@@ -191,19 +236,15 @@ Audit remediation release. Full findings and severities:
   `export_static` snippet was an uncontextualised fragment (now a full
   `#[tokio::main]` example with real handlers). The 11 `yav-macros` examples
   remain explicitly `ignore`d with the structural reason documented in the
-  crate docs and `docs/limitations.md`: a proc-macro crate cannot resolve the
+  crate docs: a proc-macro crate cannot resolve the
   `yav` facade or the consuming project's template/route files from its own
   doctest environment. Real compiled macro coverage lives in `yav`'s docs.
 - **rustdoc**: fixed the unresolved `CsrfConfig::disabled` link introduced by
   the CSRF documentation update. `cargo doc` now runs with `--lib` and only on
   the Linux CI runner: the `yav` bin/lib name collision plus `Card`/`card`
   style UI pairs produce case-only filename collisions on Windows/macOS.
-  The limitation is documented in `docs/limitations.md`.
 - `test-app` release profile no longer uses `panic = "abort"` (aligned with
-  the workspace profile), `assets/requirements.txt` now exists and lists the
-  Python packages actually imported by `process_assets.py`, and
-  `docs/limitations.md` no longer describes the metrics dashboard as
-  hardcoded or the doctests as ignored.
+  the workspace profile).
 - The `examples/dashboard` test now reflects CSRF being enabled by default:
   an unprotected `POST /settings` is asserted to return `403`, while the same
   handler returns `200` when `CsrfConfig::disabled()` is applied explicitly.
@@ -264,8 +305,7 @@ feature must never report success when it did not actually do the work.**
 - Icon licensing: `crates/yav-icons/LICENSE-LUCIDE` (ISC),
   `LICENSE-MYNAUI` (MIT), `LICENSE-PHOSPHOR` (MIT) and `NOTICE.md` are now
   shipped with the published crate.
-- `CHANGELOG.md`, `CONTRIBUTING.md`, `SECURITY.md` and
-  [`docs/limitations.md`](docs/limitations.md).
+- `CHANGELOG.md`, `CONTRIBUTING.md`, `SECURITY.md`.
 - `.env.example` documenting the environment variables used by the framework,
   and `.gitignore` entries for large local artifacts (`promo-video/`,
   `assets/logos/`, raw upstream icon downloads).
@@ -353,15 +393,6 @@ feature must never report success when it did not actually do the work.**
   unsafe route paths outright.
 - PBKDF2 now reuses a single HMAC instance (`finalize_reset()`) instead of
   rebuilding the key schedule on every iteration.
-
-### Known limitations
-
-See [`docs/limitations.md`](docs/limitations.md). The most significant ones:
-no per-icon tree-shaking (all enabled families are linked), the GraphQL
-executor is a lightweight parser without fragments/directives, the AI/RAG
-module has no bundled LLM client, and 21 doctests were marked `ignore`
-(10 of them are compiled as `rust,no_run` since 0.1.6; the 11 `yav-macros`
-sketches remain illustrative — see `docs/limitations.md`).
 
 ## [0.1.4] - Previous
 

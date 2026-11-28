@@ -213,14 +213,446 @@ pub fn escape_srcset(input: &str) -> Option<String> {
 /// assert_eq!(escape_style("color: red;"), "color: red;");
 /// assert_eq!(escape_style("background: url(javascript:alert(1))"), "");
 /// ```
-pub fn escape_style(input: &str) -> String {
-    let normalized: String = input
+/// Escape a string for embedding inside a single- or double-quoted JavaScript string literal.
+///
+/// Escapes backslashes, single and double quotes, newlines, tabs, `<`/`>`/`&` (to prevent
+/// `</script>` breakouts), and JS line separators U+2028 / U+2029.
+pub fn escape_js_str(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 8);
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\'' => out.push_str("\\'"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '<' => out.push_str("\\u003C"),
+            '>' => out.push_str("\\u003E"),
+            '&' => out.push_str("\\u0026"),
+            '\u{2028}' => out.push_str("\\u2028"),
+            '\u{2029}' => out.push_str("\\u2029"),
+            _ if c.is_control() => {
+                use std::fmt::Write;
+                let _ = write!(&mut out, "\\u{:04X}", c as u32);
+            }
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
+/// Escape serialized JSON for safe embedding inside an HTML `<script>` element.
+pub fn escape_script_json(raw_json: &str) -> String {
+    let mut out = String::with_capacity(raw_json.len());
+    for ch in raw_json.chars() {
+        match ch {
+            '<' => out.push_str("\\u003C"),
+            '>' => out.push_str("\\u003E"),
+            '&' => out.push_str("\\u0026"),
+            '\u{2028}' => out.push_str("\\u2028"),
+            '\u{2029}' => out.push_str("\\u2029"),
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
+/// Strip CSS comments (`/* ... */`) and decode simple CSS backslash escapes (`\hh` or `\c`)
+/// for normalized security inspection in [`escape_style`].
+fn normalize_css_for_security_check(input: &str) -> String {
+    let mut no_comments = String::with_capacity(input.len());
+    let bytes = input.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if i + 1 < bytes.len() && bytes[i] == b'/' && bytes[i + 1] == b'*' {
+            i += 2;
+            while i + 1 < bytes.len() && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
+                i += 1;
+            }
+            if i + 1 < bytes.len() {
+                i += 2;
+            } else {
+                break;
+            }
+            continue;
+        }
+        let ch = input[i..].chars().next().unwrap();
+        no_comments.push(ch);
+        i += ch.len_utf8();
+    }
+
+    // Decode CSS backslash escapes (up to 6 hex digits + optional trailing whitespace, or literal char)
+    let mut decoded = String::with_capacity(no_comments.len());
+    let chars: Vec<char> = no_comments.chars().collect();
+    let mut idx = 0;
+    while idx < chars.len() {
+        if chars[idx] == '\\' && idx + 1 < chars.len() {
+            idx += 1;
+            let start_hex = idx;
+            while idx < chars.len() && idx - start_hex < 6 && chars[idx].is_ascii_hexdigit() {
+                idx += 1;
+            }
+            if idx > start_hex {
+                let hex: String = chars[start_hex..idx].iter().collect();
+                if let Ok(code) = u32::from_str_radix(&hex, 16) {
+                    if let Some(c) = char::from_u32(code) {
+                        decoded.push(c);
+                    }
+                }
+                if idx < chars.len() && chars[idx].is_whitespace() {
+                    idx += 1;
+                }
+                continue;
+            }
+            decoded.push(chars[idx]);
+            idx += 1;
+        } else {
+            decoded.push(chars[idx]);
+            idx += 1;
+        }
+    }
+
+    decoded
         .chars()
         .map(|c| c.to_ascii_lowercase())
         .filter(|c| !c.is_whitespace() && !c.is_control())
-        .collect();
+        .collect()
+}
 
-    const FORBIDDEN: &[&str] = &["expression(", "url(javascript:", "javascript:", "</style"];
+/// Sanitize an untrusted HTML fragment using a strict allowlist of safe structural
+/// tags and safe URL/attribute filtering.
+///
+/// Strips dangerous elements (`<script>`, `<style>`, `<iframe>`, `<object>`, `<embed>`,
+/// `<base>`, `<meta>`, `<link>`, `<form>`, `<svg>`), strips `on*=` event handlers
+/// (including obfuscated whitespace around `=`), and validates URL attributes (`href`, `src`)
+/// through [`escape_url`].
+pub fn sanitize_html_strict(html: &str) -> String {
+    let mut out = String::with_capacity(html.len());
+    let bytes = html.as_bytes();
+    let mut i = 0;
+    let len = bytes.len();
+
+    while i < len {
+        if bytes[i] == b'<' {
+            let rest = &html[i..];
+            // Strip HTML comments
+            if rest.starts_with("<!--") {
+                if let Some(end_c) = rest.find("-->") {
+                    i += end_c + 3;
+                    continue;
+                }
+                break;
+            }
+
+            // Find closing '>' respecting single/double quoted attribute values
+            let mut quote: Option<u8> = None;
+            let mut end_rel = None;
+            for (k, &b) in rest.as_bytes().iter().enumerate().skip(1) {
+                if let Some(q) = quote {
+                    if b == q {
+                        quote = None;
+                    }
+                } else if b == b'"' || b == b'\'' {
+                    quote = Some(b);
+                } else if b == b'>' {
+                    end_rel = Some(k);
+                    break;
+                }
+            }
+
+            let Some(end_k) = end_rel else {
+                // Unterminated tag: escape remainder so it cannot inject active markup
+                out.push_str(&escape_html(&html[i..]));
+                break;
+            };
+
+            let raw_tag = &rest[1..end_k];
+            let trimmed = raw_tag.trim();
+            let is_closing = trimmed.starts_with('/');
+            let name_part = trimmed.strip_prefix('/').unwrap_or(trimmed).trim_start();
+            let tag_name: String = name_part
+                .chars()
+                .take_while(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == ':')
+                .collect::<String>()
+                .to_ascii_lowercase();
+
+            // Strip dangerous container elements along with their inner content
+            if !is_closing
+                && matches!(
+                    tag_name.as_str(),
+                    "script"
+                        | "style"
+                        | "iframe"
+                        | "object"
+                        | "embed"
+                        | "svg"
+                        | "math"
+                        | "noscript"
+                        | "template"
+                )
+            {
+                let close_pat = format!("</{tag_name}");
+                let after_open = &html[i + end_k + 1..];
+                let lower_after = after_open.to_ascii_lowercase();
+                if let Some(c_pos) = lower_after.find(&close_pat) {
+                    if let Some(gt_pos) = after_open[c_pos..].find('>') {
+                        i = i + end_k + 1 + c_pos + gt_pos + 1;
+                        continue;
+                    }
+                }
+                i = i + end_k + 1;
+                continue;
+            }
+
+            const SAFE_TAGS: &[&str] = &[
+                "a",
+                "abbr",
+                "b",
+                "blockquote",
+                "br",
+                "code",
+                "dd",
+                "del",
+                "div",
+                "dl",
+                "dt",
+                "em",
+                "figcaption",
+                "figure",
+                "h1",
+                "h2",
+                "h3",
+                "h4",
+                "h5",
+                "h6",
+                "hr",
+                "i",
+                "img",
+                "ins",
+                "kbd",
+                "li",
+                "mark",
+                "ol",
+                "p",
+                "pre",
+                "q",
+                "s",
+                "samp",
+                "section",
+                "small",
+                "span",
+                "strong",
+                "sub",
+                "sup",
+                "table",
+                "tbody",
+                "td",
+                "tfoot",
+                "th",
+                "thead",
+                "tr",
+                "u",
+                "ul",
+            ];
+
+            if !SAFE_TAGS.contains(&tag_name.as_str()) {
+                // Drop unsafe tag (keeping text between open/close tags for benign ones like <font>/<base>)
+                i += end_k + 1;
+                continue;
+            }
+
+            if is_closing {
+                out.push_str("</");
+                out.push_str(&tag_name);
+                out.push('>');
+                i += end_k + 1;
+                continue;
+            }
+
+            // Rebuild opening tag with allowlisted, sanitized attributes
+            let attrs_raw = &name_part[tag_name.len()..];
+            let self_close = attrs_raw.trim_end().ends_with('/');
+            let attrs_str = attrs_raw.trim_end().strip_suffix('/').unwrap_or(attrs_raw);
+            let sanitized_attrs = sanitize_tag_attributes(attrs_str);
+
+            out.push('<');
+            out.push_str(&tag_name);
+            out.push_str(&sanitized_attrs);
+            if self_close {
+                out.push_str(" />");
+            } else {
+                out.push('>');
+            }
+            i += end_k + 1;
+        } else {
+            let next_lt = html[i..].find('<').map(|p| i + p).unwrap_or(len);
+            out.push_str(&html[i..next_lt]);
+            i = next_lt;
+        }
+    }
+    out
+}
+
+fn sanitize_tag_attributes(attrs: &str) -> String {
+    const SAFE_ATTRS: &[&str] = &[
+        "href",
+        "src",
+        "alt",
+        "title",
+        "class",
+        "id",
+        "target",
+        "rel",
+        "width",
+        "height",
+        "colspan",
+        "rowspan",
+        "aria-label",
+        "aria-hidden",
+        "role",
+    ];
+    let mut out = String::new();
+    let chars: Vec<char> = attrs.chars().collect();
+    let mut i = 0;
+
+    while i < chars.len() {
+        while i < chars.len() && (chars[i].is_whitespace() || chars[i] == '/') {
+            i += 1;
+        }
+        if i >= chars.len() {
+            break;
+        }
+        let name_start = i;
+        while i < chars.len() && !chars[i].is_whitespace() && chars[i] != '=' && chars[i] != '/' {
+            i += 1;
+        }
+        let attr_name: String = chars[name_start..i].iter().collect();
+        let lower_name = attr_name.to_ascii_lowercase();
+
+        while i < chars.len() && chars[i].is_whitespace() {
+            i += 1;
+        }
+
+        let mut attr_val: Option<String> = None;
+        if i < chars.len() && chars[i] == '=' {
+            i += 1;
+            while i < chars.len() && chars[i].is_whitespace() {
+                i += 1;
+            }
+            if i < chars.len() && (chars[i] == '"' || chars[i] == '\'') {
+                let q = chars[i];
+                i += 1;
+                let val_start = i;
+                while i < chars.len() && chars[i] != q {
+                    i += 1;
+                }
+                attr_val = Some(chars[val_start..i].iter().collect());
+                if i < chars.len() {
+                    i += 1;
+                }
+            } else {
+                let val_start = i;
+                while i < chars.len() && !chars[i].is_whitespace() {
+                    i += 1;
+                }
+                attr_val = Some(chars[val_start..i].iter().collect());
+            }
+        }
+
+        if lower_name.starts_with("on") {
+            continue;
+        }
+        let is_allowed = SAFE_ATTRS.contains(&lower_name.as_str())
+            || (lower_name.starts_with("data-")
+                && !lower_name.contains("yav")
+                && lower_name
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-'));
+        if !is_allowed {
+            continue;
+        }
+
+        if let Some(raw_val) = attr_val {
+            // Decode common numeric/named entities before URL validation
+            let decoded_for_check = decode_basic_html_entities(&raw_val);
+            if lower_name == "href" || lower_name == "src" {
+                let Some(safe_url) = escape_url(&decoded_for_check) else {
+                    continue;
+                };
+                out.push(' ');
+                out.push_str(&lower_name);
+                out.push_str("=\"");
+                out.push_str(&safe_url);
+                out.push('"');
+            } else {
+                out.push(' ');
+                out.push_str(&lower_name);
+                out.push_str("=\"");
+                out.push_str(&escape_attribute(&raw_val));
+                out.push('"');
+            }
+        } else {
+            out.push(' ');
+            out.push_str(&lower_name);
+        }
+    }
+    out
+}
+
+fn decode_basic_html_entities(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let bytes = input.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'&' {
+            if let Some(semi) = input[i..].find(';').filter(|&p| p <= 10) {
+                let entity = &input[i + 1..i + semi];
+                if let Some(hex) = entity
+                    .strip_prefix("#x")
+                    .or_else(|| entity.strip_prefix("#X"))
+                {
+                    if let Ok(code) = u32::from_str_radix(hex, 16) {
+                        if let Some(ch) = char::from_u32(code) {
+                            out.push(ch);
+                            i += semi + 1;
+                            continue;
+                        }
+                    }
+                } else if let Some(dec) = entity.strip_prefix('#') {
+                    if let Ok(code) = dec.parse::<u32>() {
+                        if let Some(ch) = char::from_u32(code) {
+                            out.push(ch);
+                            i += semi + 1;
+                            continue;
+                        }
+                    }
+                } else if entity.eq_ignore_ascii_case("colon") {
+                    out.push(':');
+                    i += semi + 1;
+                    continue;
+                }
+            }
+        }
+        let ch = input[i..].chars().next().unwrap();
+        out.push(ch);
+        i += ch.len_utf8();
+    }
+    out
+}
+
+pub fn escape_style(input: &str) -> String {
+    let normalized = normalize_css_for_security_check(input);
+
+    const FORBIDDEN: &[&str] = &[
+        "expression(",
+        "url(javascript:",
+        "javascript:",
+        "vbscript:",
+        "</style",
+        "behavior:",
+        "-moz-binding:",
+    ];
     if FORBIDDEN.iter().any(|pat| normalized.contains(*pat)) {
         return String::new();
     }
@@ -233,6 +665,7 @@ pub fn escape_style(input: &str) -> String {
             || tail.contains("https:")
             || tail.contains("//")
             || tail.contains("data:")
+            || tail.contains("javascript:")
         {
             return String::new();
         }

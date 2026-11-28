@@ -480,8 +480,44 @@ impl PasskeyManager {
         };
 
         let mut creds = self.credentials.lock().unwrap_or_else(|e| e.into_inner());
+        const MAX_PASSKEY_CREDENTIALS: usize = 50_000;
+        if creds.len() >= MAX_PASSKEY_CREDENTIALS && !creds.contains_key(credential_id) {
+            if let Some(oldest) = creds
+                .iter()
+                .min_by_key(|(_, c)| c.created_at)
+                .map(|(k, _)| k.clone())
+            {
+                creds.remove(&oldest);
+            }
+        }
         creds.insert(credential_id.to_string(), cred.clone());
         Ok(cred)
+    }
+
+    /// Strict W3C registration variant that also validates `authenticatorData` (`rpIdHash` and UP flag).
+    pub fn finish_registration_with_auth_data(
+        &self,
+        credential_id: &str,
+        client_data_json_b64: &str,
+        authenticator_data_b64: &str,
+        public_key_b64: &str,
+        label: &str,
+    ) -> Result<PasskeyCredential, &'static str> {
+        let auth_bytes = base64url_decode(authenticator_data_b64)
+            .map_err(|_| "Invalid base64url in authenticatorData")?;
+        if auth_bytes.len() < 37 {
+            return Err("authenticatorData too short (must be at least 37 bytes)");
+        }
+        let mut hasher = Sha256::new();
+        hasher.update(self.rp_id.as_bytes());
+        let expected_rp_hash = hasher.finalize();
+        if !constant_time_eq(&auth_bytes[..32], &expected_rp_hash) {
+            return Err("authenticatorData RP ID hash mismatch");
+        }
+        if (auth_bytes[32] & 0x01) == 0 {
+            return Err("User Present flag (UP) not set in authenticatorData");
+        }
+        self.finish_registration(credential_id, client_data_json_b64, public_key_b64, label)
     }
 
     /// Generate WebAuthn authentication options (`webauthn.get`) for a user.
@@ -668,11 +704,13 @@ impl PasskeyManager {
             auth_bytes[35],
             auth_bytes[36],
         ]);
-        let effective_sign_count = if auth_sign_count > 0 {
-            auth_sign_count
-        } else {
-            new_sign_count
-        };
+        // Only trust the signed `auth_sign_count` inside `authenticatorData`;
+        // never accept an unauthenticated non-zero `new_sign_count` when the
+        // signed authenticatorData reports 0 (software/stateless authenticators stay at 0).
+        if auth_sign_count == 0 && new_sign_count > 0 {
+            return Err("Unauthenticated sign_count escalation rejected");
+        }
+        let effective_sign_count = auth_sign_count;
 
         self.verify_ceremony_metadata(credential_id, client_data_json_b64, effective_sign_count)
     }
@@ -697,7 +735,20 @@ pub fn yav_passkey_script() -> &'static str {
 function b64ToBuf(s){var b=atob(s.replace(/-/g,'+').replace(/_/g,'/'));var u=new Uint8Array(b.length);for(var i=0;i<b.length;i++)u[i]=b.charCodeAt(i);return u.buffer;}
 function bufToB64(buf){var u=new Uint8Array(buf),s='';for(var i=0;i<u.length;i++)s+=String.fromCharCode(u[i]);return btoa(s).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');}
 window.__yavPasskey={b64ToBuf:b64ToBuf,bufToB64:bufToB64};
+document.addEventListener('click',function(e){
+  var regBtn=e.target&&e.target.closest&&e.target.closest('[yav\\:passkey-register]');
+  if(regBtn){document.dispatchEvent(new CustomEvent('yav:passkey-register',{detail:{element:regBtn}}));return;}
+  var loginBtn=e.target&&e.target.closest&&e.target.closest('[yav\\:passkey-login]');
+  if(loginBtn){document.dispatchEvent(new CustomEvent('yav:passkey-login',{detail:{element:loginBtn}}));}
+});
 })();</script>"#
+}
+
+/// Nonce-aware variant of [`yav_passkey_script`] for strict CSP policies.
+#[must_use]
+pub fn yav_passkey_script_with_nonce(nonce: &str) -> String {
+    let escaped = yav_core::escape_attribute(nonce);
+    yav_passkey_script().replacen("<script ", &format!(r#"<script nonce="{escaped}" "#), 1)
 }
 
 #[cfg(test)]

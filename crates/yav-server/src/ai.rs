@@ -359,6 +359,30 @@ impl VectorIndex {
         scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
         scored
     }
+
+    /// Persist this vector index to a JSON file atomically so embeddings survive server restarts.
+    pub fn save_to_file(&self, path: impl AsRef<std::path::Path>) -> std::io::Result<()> {
+        static SAVE_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let path = path.as_ref();
+        if let Some(parent) = path.parent() {
+            if !parent.as_os_str().is_empty() {
+                std::fs::create_dir_all(parent)?;
+            }
+        }
+        let json = serde_json::to_vec_pretty(self)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        let seq = SAVE_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let tmp_path = path.with_extension(format!("tmp.{}.{seq}", std::process::id()));
+        std::fs::write(&tmp_path, json)?;
+        std::fs::rename(&tmp_path, path)
+    }
+
+    /// Load a previously saved vector index from a JSON file.
+    pub fn load_from_file(path: impl AsRef<std::path::Path>) -> std::io::Result<Self> {
+        let raw = std::fs::read(path)?;
+        serde_json::from_slice(&raw)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+    }
 }
 
 /// Compute cosine similarity between two vectors (`-1.0..=1.0`).

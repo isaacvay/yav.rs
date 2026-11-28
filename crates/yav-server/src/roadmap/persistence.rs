@@ -27,25 +27,106 @@ fn now_epoch() -> u64 {
         .unwrap_or(0)
 }
 
-/// Split a SQL section into individual statements.
-///
-/// Fragments that are empty or contain only `--` comments are discarded.
-/// This is intentionally simple: migration files are trusted, developer-owned
-/// SQL, and statements are still passed to the driver as bound-parameter-free
-/// strings (no interpolation of user input happens here).
+/// Split a SQL section into individual statements while respecting `'...'` string
+/// literals, `"..."` quoted identifiers, `--` line comments and `/* ... */` blocks.
 fn split_sql_statements(sql: &str) -> Vec<String> {
-    sql.split(';')
-        .map(|fragment| {
-            fragment
-                .lines()
-                .filter(|line| !line.trim_start().starts_with("--"))
-                .collect::<Vec<_>>()
-                .join("\n")
-                .trim()
-                .to_string()
-        })
-        .filter(|statement| !statement.is_empty())
-        .collect()
+    let mut statements = Vec::new();
+    let mut current = String::new();
+    let chars: Vec<char> = sql.chars().collect();
+    let mut i = 0;
+    let mut in_single = false;
+    let mut in_double = false;
+    let mut in_line_comment = false;
+    let mut in_block_comment = false;
+
+    while i < chars.len() {
+        let ch = chars[i];
+        let next = chars.get(i + 1).copied();
+
+        if in_line_comment {
+            if ch == '\n' {
+                in_line_comment = false;
+                current.push('\n');
+            }
+            i += 1;
+            continue;
+        }
+        if in_block_comment {
+            if ch == '*' && next == Some('/') {
+                in_block_comment = false;
+                i += 2;
+            } else {
+                i += 1;
+            }
+            continue;
+        }
+        if in_single {
+            current.push(ch);
+            if ch == '\'' {
+                if next == Some('\'') {
+                    current.push('\'');
+                    i += 2;
+                    continue;
+                }
+                in_single = false;
+            }
+            i += 1;
+            continue;
+        }
+        if in_double {
+            current.push(ch);
+            if ch == '"' {
+                if next == Some('"') {
+                    current.push('"');
+                    i += 2;
+                    continue;
+                }
+                in_double = false;
+            }
+            i += 1;
+            continue;
+        }
+
+        if ch == '-' && next == Some('-') {
+            in_line_comment = true;
+            i += 2;
+            continue;
+        }
+        if ch == '/' && next == Some('*') {
+            in_block_comment = true;
+            i += 2;
+            continue;
+        }
+        if ch == '\'' {
+            in_single = true;
+            current.push(ch);
+            i += 1;
+            continue;
+        }
+        if ch == '"' {
+            in_double = true;
+            current.push(ch);
+            i += 1;
+            continue;
+        }
+        if ch == ';' {
+            let trimmed = current.trim().to_string();
+            if !trimmed.is_empty() {
+                statements.push(trimmed);
+            }
+            current.clear();
+            i += 1;
+            continue;
+        }
+        current.push(ch);
+        i += 1;
+    }
+
+    let trimmed = current.trim().to_string();
+    if !trimmed.is_empty() {
+        statements.push(trimmed);
+    }
+    statements
 }
 
 impl Migrator {
@@ -54,7 +135,7 @@ impl Migrator {
     /// For each discovered migration:
     /// 1. an already-applied migration with a different checksum is an error;
     /// 2. the `-- Up` section is split into statements and executed in order;
-    /// 3. only after every statement succeeded is the migration journaled.
+    /// 3. immediately after every statement in a migration succeeds, the migration is journaled.
     ///
     /// Returns the versions that were newly applied.
     pub fn apply_all_with(&self, adapter: &dyn DatabaseAdapter) -> Result<Vec<String>, String> {
@@ -82,10 +163,10 @@ impl Migrator {
                 checksum: migration.checksum.clone(),
                 applied_at_epoch: now_epoch(),
             });
+            self.record_applied(&applied)?;
             newly_applied.push(migration.version);
         }
 
-        self.record_applied(&applied)?;
         Ok(newly_applied)
     }
 
@@ -126,53 +207,77 @@ impl Migrator {
 // SQLx database adapters
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Build a dedicated multi-threaded runtime used by the synchronous trait
-/// methods. The pool is created on this same runtime so its background
-/// maintenance tasks live on a driver that stays alive with the adapter.
-#[cfg(any(feature = "sqlite", feature = "postgres"))]
-fn dedicated_runtime() -> Result<tokio::runtime::Runtime, String> {
-    tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .map_err(|e| format!("failed to build dedicated Tokio runtime: {e}"))
-}
-
 /// Real SQLite driver backed by a `sqlx` connection pool.
 #[cfg(feature = "sqlite")]
 pub struct SqliteDatabaseAdapter {
     pool: sqlx::SqlitePool,
-    runtime: tokio::runtime::Runtime,
 }
 
 #[cfg(feature = "sqlite")]
 impl SqliteDatabaseAdapter {
-    /// Open a pooled SQLite connection from a `sqlx` URL (e.g. `sqlite::memory:`
-    /// or `sqlite://./app.db`). The connection is established eagerly; an
-    /// unreachable/invalid database is an error, never a silent no-op.
-    pub fn connect(url: &str) -> Result<Self, String> {
-        let runtime = dedicated_runtime()?;
-        let pool = runtime
-            .block_on(sqlx::sqlite::SqlitePoolOptions::new().connect(url))
+    /// Open a pooled SQLite connection asynchronously (safe inside any Axum/Tokio task).
+    pub async fn connect_async(url: &str) -> Result<Self, String> {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .connect(url)
+            .await
             .map_err(|e| format!("failed to connect to SQLite at '{url}': {e}"))?;
-        Ok(Self { pool, runtime })
+        Ok(Self { pool })
+    }
+
+    /// Open a pooled SQLite connection synchronously (safe both outside and inside Tokio).
+    pub fn connect(url: &str) -> Result<Self, String> {
+        let owned = url.to_string();
+        crate::roadmap::block_on_shared(Self::connect_async(&owned))?
+    }
+
+    /// Asynchronously execute a parameterized statement.
+    pub async fn execute_async(&self, sql: &str, params: &[String]) -> Result<u64, String> {
+        let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
+        for param in params {
+            query = query.bind(param);
+        }
+        query
+            .execute(&self.pool)
+            .await
+            .map(|result| result.rows_affected())
+            .map_err(|e| format!("SQLite execute failed: {e}"))
+    }
+
+    /// Asynchronously run a parameterized query returning rows as string maps.
+    pub async fn query_rows_async(
+        &self,
+        sql: &str,
+        params: &[String],
+    ) -> Result<Vec<HashMap<String, String>>, String> {
+        let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
+        for param in params {
+            query = query.bind(param);
+        }
+        let rows = query
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| format!("SQLite query failed: {e}"))?;
+        use sqlx::{Column, Row};
+        let mut collected = Vec::with_capacity(rows.len());
+        for row in rows {
+            let mut record = HashMap::new();
+            for column in row.columns() {
+                let name = column.name();
+                let value: Option<String> = row
+                    .try_get(name)
+                    .map_err(|e| format!("SQLite query failed: {e}"))?;
+                record.insert(name.to_string(), value.unwrap_or_default());
+            }
+            collected.push(record);
+        }
+        Ok(collected)
     }
 }
 
 #[cfg(feature = "sqlite")]
 impl DatabaseAdapter for SqliteDatabaseAdapter {
     fn execute(&self, sql: &str, params: &[String]) -> Result<u64, String> {
-        let owned_sql = sql.to_string();
-        let outcome = self.runtime.block_on(async move {
-            let mut query = sqlx::query(sqlx::AssertSqlSafe(owned_sql));
-            for param in params {
-                query = query.bind(param.clone());
-            }
-            query
-                .execute(&self.pool)
-                .await
-                .map(|result| result.rows_affected())
-        });
-        outcome.map_err(|e| format!("SQLite execute failed: {e}"))
+        crate::roadmap::block_on_shared(self.execute_async(sql, params))?
     }
 
     fn query_rows(
@@ -180,27 +285,7 @@ impl DatabaseAdapter for SqliteDatabaseAdapter {
         sql: &str,
         params: &[String],
     ) -> Result<Vec<HashMap<String, String>>, String> {
-        let owned_sql = sql.to_string();
-        let outcome = self.runtime.block_on(async move {
-            let mut query = sqlx::query(sqlx::AssertSqlSafe(owned_sql));
-            for param in params {
-                query = query.bind(param.clone());
-            }
-            let rows = query.fetch_all(&self.pool).await?;
-            use sqlx::{Column, Row};
-            let mut collected = Vec::with_capacity(rows.len());
-            for row in rows {
-                let mut record = HashMap::new();
-                for column in row.columns() {
-                    let name = column.name();
-                    let value: Option<String> = row.try_get(name)?;
-                    record.insert(name.to_string(), value.unwrap_or_default());
-                }
-                collected.push(record);
-            }
-            Ok::<Vec<HashMap<String, String>>, sqlx::Error>(collected)
-        });
-        outcome.map_err(|e| format!("SQLite query failed: {e}"))
+        crate::roadmap::block_on_shared(self.query_rows_async(sql, params))?
     }
 
     fn health_check(&self) -> bool {
@@ -212,36 +297,73 @@ impl DatabaseAdapter for SqliteDatabaseAdapter {
 #[cfg(feature = "postgres")]
 pub struct PostgresDatabaseAdapter {
     pool: sqlx::PgPool,
-    runtime: tokio::runtime::Runtime,
 }
 
 #[cfg(feature = "postgres")]
 impl PostgresDatabaseAdapter {
-    /// Open a pooled PostgreSQL connection from a `sqlx` URL.
-    pub fn connect(url: &str) -> Result<Self, String> {
-        let runtime = dedicated_runtime()?;
-        let pool = runtime
-            .block_on(sqlx::postgres::PgPoolOptions::new().connect(url))
+    /// Open a pooled PostgreSQL connection asynchronously.
+    pub async fn connect_async(url: &str) -> Result<Self, String> {
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect(url)
+            .await
             .map_err(|e| format!("failed to connect to PostgreSQL: {e}"))?;
-        Ok(Self { pool, runtime })
+        Ok(Self { pool })
+    }
+
+    /// Open a pooled PostgreSQL connection synchronously (safe both outside and inside Tokio).
+    pub fn connect(url: &str) -> Result<Self, String> {
+        let owned = url.to_string();
+        crate::roadmap::block_on_shared(Self::connect_async(&owned))?
+    }
+
+    /// Asynchronously execute a parameterized statement.
+    pub async fn execute_async(&self, sql: &str, params: &[String]) -> Result<u64, String> {
+        let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
+        for param in params {
+            query = query.bind(param);
+        }
+        query
+            .execute(&self.pool)
+            .await
+            .map(|result| result.rows_affected())
+            .map_err(|e| format!("PostgreSQL execute failed: {e}"))
+    }
+
+    /// Asynchronously run a parameterized query returning rows as string maps.
+    pub async fn query_rows_async(
+        &self,
+        sql: &str,
+        params: &[String],
+    ) -> Result<Vec<HashMap<String, String>>, String> {
+        let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
+        for param in params {
+            query = query.bind(param);
+        }
+        let rows = query
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| format!("PostgreSQL query failed: {e}"))?;
+        use sqlx::{Column, Row};
+        let mut collected = Vec::with_capacity(rows.len());
+        for row in rows {
+            let mut record = HashMap::new();
+            for column in row.columns() {
+                let name = column.name();
+                let value: Option<String> = row
+                    .try_get(name)
+                    .map_err(|e| format!("PostgreSQL query failed: {e}"))?;
+                record.insert(name.to_string(), value.unwrap_or_default());
+            }
+            collected.push(record);
+        }
+        Ok(collected)
     }
 }
 
 #[cfg(feature = "postgres")]
 impl DatabaseAdapter for PostgresDatabaseAdapter {
     fn execute(&self, sql: &str, params: &[String]) -> Result<u64, String> {
-        let owned_sql = sql.to_string();
-        let outcome = self.runtime.block_on(async move {
-            let mut query = sqlx::query(sqlx::AssertSqlSafe(owned_sql));
-            for param in params {
-                query = query.bind(param.clone());
-            }
-            query
-                .execute(&self.pool)
-                .await
-                .map(|result| result.rows_affected())
-        });
-        outcome.map_err(|e| format!("PostgreSQL execute failed: {e}"))
+        crate::roadmap::block_on_shared(self.execute_async(sql, params))?
     }
 
     fn query_rows(
@@ -249,27 +371,7 @@ impl DatabaseAdapter for PostgresDatabaseAdapter {
         sql: &str,
         params: &[String],
     ) -> Result<Vec<HashMap<String, String>>, String> {
-        let owned_sql = sql.to_string();
-        let outcome = self.runtime.block_on(async move {
-            let mut query = sqlx::query(sqlx::AssertSqlSafe(owned_sql));
-            for param in params {
-                query = query.bind(param.clone());
-            }
-            let rows = query.fetch_all(&self.pool).await?;
-            use sqlx::{Column, Row};
-            let mut collected = Vec::with_capacity(rows.len());
-            for row in rows {
-                let mut record = HashMap::new();
-                for column in row.columns() {
-                    let name = column.name();
-                    let value: Option<String> = row.try_get(name)?;
-                    record.insert(name.to_string(), value.unwrap_or_default());
-                }
-                collected.push(record);
-            }
-            Ok::<Vec<HashMap<String, String>>, sqlx::Error>(collected)
-        });
-        outcome.map_err(|e| format!("PostgreSQL query failed: {e}"))
+        crate::roadmap::block_on_shared(self.query_rows_async(sql, params))?
     }
 
     fn health_check(&self) -> bool {
@@ -402,24 +504,33 @@ impl CacheAdapter for MokaCacheAdapter {
     }
 
     fn invalidate_tag(&self, tag: &str) -> usize {
+        self.cache.run_pending_tasks();
         let keys = self
             .tag_index
             .write()
             .unwrap_or_else(|e| e.into_inner())
             .remove(tag)
             .unwrap_or_default();
-        let count = keys.len();
-        for key in keys {
-            self.cache.invalidate(&key);
-            // The same key may be indexed under other tags. Drop those stale
-            // references too, otherwise a later `invalidate_tag` reports keys
-            // that were already removed.
-            let mut index = self.tag_index.write().unwrap_or_else(|e| e.into_inner());
-            for remaining in index.values_mut() {
-                remaining.remove(&key);
-            }
-            index.retain(|_, remaining| !remaining.is_empty());
+        if keys.is_empty() {
+            return 0;
         }
+        let mut count = 0usize;
+        for key in &keys {
+            if self.cache.get(key).is_some() {
+                count += 1;
+            }
+            self.cache.invalidate(key);
+        }
+        // The same key may be indexed under other tags. Drop those stale
+        // references too, otherwise a later `invalidate_tag` reports keys
+        // that were already removed.
+        let mut index = self.tag_index.write().unwrap_or_else(|e| e.into_inner());
+        for remaining in index.values_mut() {
+            for key in &keys {
+                remaining.remove(key);
+            }
+        }
+        index.retain(|_, remaining| !remaining.is_empty());
         count
     }
 }

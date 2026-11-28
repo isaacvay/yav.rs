@@ -102,7 +102,7 @@ pub fn generate_dockerfile(app_name: &str, has_crates: bool, has_public: bool) -
 # ==========================================
 
 # 1. Builder Stage
-FROM rust:1.80-alpine3.20 AS builder
+FROM rust:1.88-alpine3.20 AS builder
 WORKDIR /app
 
 RUN apk add --no-cache musl-dev curl build-base

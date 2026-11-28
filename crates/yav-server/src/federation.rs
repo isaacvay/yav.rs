@@ -139,149 +139,6 @@ fn extract_host(url: &str) -> Option<String> {
     }
 }
 
-/// Absolute byte index of the `>` closing the tag whose content starts at
-/// `from` (just after the opening `<`), ignoring `>` inside quoted attributes.
-/// Returns `input.len()` when the tag is unterminated.
-fn find_tag_end(input: &str, from: usize) -> usize {
-    let bytes = input.as_bytes();
-    let mut quote: Option<u8> = None;
-    let mut i = from;
-    while i < bytes.len() {
-        let b = bytes[i];
-        if let Some(q) = quote {
-            if b == q {
-                quote = None;
-            }
-        } else {
-            match b {
-                b'"' | b'\'' => quote = Some(b),
-                b'>' => return i,
-                _ => {}
-            }
-        }
-        i += 1;
-    }
-    input.len()
-}
-
-/// Check `lower` starts with `prefix` followed by a tag-name boundary.
-fn tag_name_boundary(lower: &str, prefix: &str) -> bool {
-    if !lower.starts_with(prefix) {
-        return false;
-    }
-    match lower.as_bytes().get(prefix.len()) {
-        None => true,
-        Some(c) => c.is_ascii_whitespace() || *c == b'>' || *c == b'/',
-    }
-}
-
-/// Absolute byte index just after the matching `</tag>` for a block opened at
-/// `open_start`. Returns `input.len()` (dropping the rest) when no closing tag
-/// is found, which is the conservative choice for untrusted markup.
-fn skip_block(input: &str, open_start: usize, tag: &str) -> usize {
-    let gt = find_tag_end(input, open_start + 1);
-    let after_open = if gt < input.len() {
-        gt + 1
-    } else {
-        input.len()
-    };
-    let close = format!("</{tag}");
-    if let Some(cl) = find_ci(input, &close, after_open) {
-        let boundary_ok = match input.as_bytes().get(cl + close.len()) {
-            None => true,
-            Some(c) => c.is_ascii_whitespace() || *c == b'>',
-        };
-        if boundary_ok {
-            let cgt = find_tag_end(input, cl + 1);
-            return if cgt < input.len() {
-                cgt + 1
-            } else {
-                input.len()
-            };
-        }
-    }
-    input.len()
-}
-
-/// Split an attribute string into `name` / `name=value` tokens, keeping quoted
-/// values (which may contain spaces) intact.
-fn attribute_tokens(attrs: &str) -> Vec<&str> {
-    let mut result = Vec::new();
-    let bytes = attrs.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        while i < bytes.len() && (bytes[i].is_ascii_whitespace() || bytes[i] == b'/') {
-            i += 1;
-        }
-        if i >= bytes.len() {
-            break;
-        }
-        let start = i;
-        let mut quote: Option<u8> = None;
-        while i < bytes.len() {
-            let b = bytes[i];
-            if let Some(q) = quote {
-                if b == q {
-                    quote = None;
-                }
-            } else {
-                match b {
-                    b'"' | b'\'' => quote = Some(b),
-                    c if c.is_ascii_whitespace() => break,
-                    _ => {}
-                }
-            }
-            i += 1;
-        }
-        if i > start {
-            result.push(&attrs[start..i]);
-        }
-    }
-    result
-}
-
-/// Rebuild a single (non script/iframe) tag, dropping `on*` event-handler
-/// attributes and any attribute token containing a `javascript:` URL.
-fn sanitize_tag(tag: &str) -> String {
-    if tag.len() < 2 {
-        return tag.to_string();
-    }
-    let (body, tail): (&str, &str) = match tag.strip_suffix('>') {
-        Some(stripped) => (stripped, ">"),
-        None => (tag, ""),
-    };
-    let closing = body.as_bytes().get(1) == Some(&b'/');
-    let prefix_len = if closing { 2 } else { 1 };
-    let name_end = body[prefix_len..]
-        .bytes()
-        .position(|c| c.is_ascii_whitespace() || c == b'/')
-        .map(|p| prefix_len + p)
-        .unwrap_or(body.len());
-    let name = &body[..name_end];
-    let attrs = &body[name_end..];
-    let self_closing = attrs.trim_end().ends_with('/');
-
-    let mut out = String::with_capacity(tag.len());
-    out.push_str(name);
-    for token in attribute_tokens(attrs) {
-        let name_len = token.bytes().position(|c| c == b'=').unwrap_or(token.len());
-        let lname = token[..name_len].to_ascii_lowercase();
-        if lname.starts_with("on") {
-            continue;
-        }
-        if find_ci(token, "javascript:", 0).is_some() {
-            continue;
-        }
-        out.push(' ');
-        out.push_str(token);
-    }
-    if self_closing {
-        out.push_str(" /");
-    }
-    out.push_str(tail);
-    out
-}
-
 /// Remove every case-insensitive `javascript:` occurrence from `input`.
 fn strip_javascript_scheme(input: &str) -> String {
     let pattern = "javascript:";
@@ -308,50 +165,8 @@ fn strip_javascript_scheme(input: &str) -> String {
 /// fragments, **not** a full HTML sanitizer: unknown/unusual markup is left
 /// intact. Callers should still serve a strict Content-Security-Policy.
 pub fn sanitize_upstream_fragment(fragment: &str) -> String {
-    let bytes = fragment.as_bytes();
-    let mut out = String::with_capacity(fragment.len());
-    let mut i = 0usize;
-    while i < bytes.len() {
-        if bytes[i] == b'<' {
-            let gt = find_tag_end(fragment, i + 1);
-            let end = if gt < fragment.len() {
-                gt + 1
-            } else {
-                fragment.len()
-            };
-            let tag = &fragment[i..end];
-            let lower = tag.to_ascii_lowercase();
-            if lower.starts_with("<!") || lower.starts_with("<?") {
-                // Comments / doctype / processing instructions: keep verbatim.
-                out.push_str(tag);
-                i = end;
-                continue;
-            }
-            if tag_name_boundary(&lower, "<script") {
-                i = skip_block(fragment, i, "script");
-                continue;
-            }
-            if tag_name_boundary(&lower, "<iframe") {
-                i = skip_block(fragment, i, "iframe");
-                continue;
-            }
-            if tag_name_boundary(&lower, "</script") || tag_name_boundary(&lower, "</iframe") {
-                i = end;
-                continue;
-            }
-            out.push_str(&sanitize_tag(tag));
-            i = end;
-        } else {
-            let next = bytes[i..]
-                .iter()
-                .position(|&b| b == b'<')
-                .map(|p| i + p)
-                .unwrap_or(bytes.len());
-            out.push_str(&fragment[i..next]);
-            i = next;
-        }
-    }
-    strip_javascript_scheme(&out)
+    let cleaned = yav_core::sanitize_html_strict(fragment);
+    strip_javascript_scheme(&cleaned)
 }
 
 /// One slot to resolve in a parallel federation request.
@@ -549,6 +364,45 @@ impl FederationGateway {
         format!("{parent_shell}\n<!-- Appended Federated Slot: {slot_name} -->\n{fragment}")
     }
 
+    /// Merge deduplicated safe `<head>` `<link>`/`<meta>` tags from upstream documents
+    /// into `parent_shell` alongside their sanitized `<body>` fragments at `slot_name`.
+    pub fn stitch_with_head(parent_shell: &str, slots: &[(&str, &str)]) -> String {
+        use std::collections::HashSet;
+        let mut seen_head_lines = HashSet::new();
+        let mut extra_head = Vec::new();
+        let mut out = parent_shell.to_string();
+
+        for (slot_name, full_doc) in slots {
+            let (head, body) = Self::parse_upstream_document(full_doc);
+            for raw_line in head.lines() {
+                let t = raw_line.trim();
+                let lower = t.to_ascii_lowercase();
+                if (lower.starts_with("<link ") || lower.starts_with("<meta "))
+                    && !lower.contains("javascript:")
+                    && !lower.contains("on")
+                    && seen_head_lines.insert(t.to_string())
+                {
+                    extra_head.push(t.to_string());
+                }
+            }
+            out = Self::stitch_slot(&out, slot_name, &body);
+        }
+
+        if !extra_head.is_empty() {
+            let head_block = extra_head.join("\n");
+            if let Some(pos) = out.to_ascii_lowercase().find("</head>") {
+                let mut merged = String::with_capacity(out.len() + head_block.len() + 2);
+                merged.push_str(&out[..pos]);
+                merged.push('\n');
+                merged.push_str(&head_block);
+                merged.push('\n');
+                merged.push_str(&out[pos..]);
+                return merged;
+            }
+        }
+        out
+    }
+
     /// Extract separate `<head>` assets and `<body>` contents from an upstream HTML document.
     pub fn parse_upstream_document(full_html: &str) -> (String, String) {
         let mut head = String::new();
@@ -604,11 +458,14 @@ impl FederationGateway {
         self.ensure_host_allowed(&route.upstream_url)?;
         let target_url = self.target_url(route, request_path);
 
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(timeout_secs))
-            .no_proxy()
-            .build()
-            .map_err(|e| FederationError::UpstreamError(e.to_string()))?;
+        static FEDERATION_CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+        let client = FEDERATION_CLIENT.get_or_init(|| {
+            reqwest::Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
+                .no_proxy()
+                .build()
+                .expect("failed to build federation reqwest client")
+        });
 
         let req_method = method.to_ascii_uppercase();
         let mut builder = match req_method.as_str() {
@@ -618,7 +475,8 @@ impl FederationGateway {
             "DELETE" => client.delete(&target_url),
             "PATCH" => client.patch(&target_url),
             _ => client.get(&target_url),
-        };
+        }
+        .timeout(Duration::from_secs(timeout_secs));
 
         if route.forward_auth {
             if let Some(cookie) = cookie_header {

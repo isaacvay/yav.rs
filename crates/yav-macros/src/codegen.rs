@@ -514,14 +514,23 @@ fn try_fold_static_node(node: &RsxNode) -> Option<String> {
             if el.is_component {
                 return None;
             }
-            if matches!(el.tag.as_str(), "template" | "title" | "meta" | "link") {
+            if matches!(
+                el.tag.to_ascii_lowercase().as_str(),
+                "template" | "title" | "meta" | "link" | "script" | "style"
+            ) {
                 return None;
             }
-            if el
-                .attributes
-                .iter()
-                .any(|a| a.name.starts_with("class:") || a.name == "yav:initial")
-            {
+            if !is_valid_static_tag(&el.tag) {
+                return None;
+            }
+            if el.attributes.iter().any(|a| {
+                a.name.starts_with("class:")
+                    || a.name == "yav:initial"
+                    || a.name.eq_ignore_ascii_case("style")
+                    || a.name.eq_ignore_ascii_case("srcdoc")
+                    || a.name.eq_ignore_ascii_case("srcset")
+                    || !is_valid_static_attr(&a.name)
+            }) {
                 return None;
             }
 
@@ -567,4 +576,20 @@ fn try_fold_static_node(node: &RsxNode) -> Option<String> {
             None
         }
     }
+}
+
+fn is_valid_static_tag(name: &str) -> bool {
+    let mut chars = name.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    first.is_ascii_alphabetic()
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == ':')
+}
+
+fn is_valid_static_attr(name: &str) -> bool {
+    !name.is_empty()
+        && !name.chars().any(|c| {
+            c.is_ascii_whitespace() || c.is_control() || matches!(c, '"' | '\'' | '>' | '/' | '=')
+        })
 }

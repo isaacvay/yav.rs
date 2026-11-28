@@ -212,7 +212,8 @@ pub async fn run(output_dir: &str, base_url: &str) -> Result<(), Box<dyn std::er
                 } else {
                     route.trim_start_matches('/')
                 };
-                let title = format!("{} — Yav Application", clean_title.replace('/', " — "));
+                let raw_title = format!("{} — Yav Application", clean_title.replace('/', " — "));
+                let title = yav_core::escape_html(&raw_title);
                 let body = format!(
                     r#"<main class="min-h-screen bg-slate-950 text-white flex flex-col items-center justify-center p-8">
   <div class="max-w-xl text-center space-y-4">
@@ -221,7 +222,7 @@ pub async fn run(output_dir: &str, base_url: &str) -> Result<(), Box<dyn std::er
     <a href="/" class="inline-block mt-4 px-4 py-2 bg-indigo-600 rounded-lg text-sm font-semibold hover:bg-indigo-500">Back Home</a>
   </div>
 </main>"#,
-                    clean_title
+                    yav_core::escape_html(clean_title)
                 );
                 let html =
                     yav_core::document_shell(&title, "", &body, yav_core::YAV_MICRO_ACTIONS_SCRIPT);
@@ -278,7 +279,8 @@ pub async fn run(output_dir: &str, base_url: &str) -> Result<(), Box<dyn std::er
             .iter()
             .map(|r| {
                 let full = format!("{}{}", base_url.trim_end_matches('/'), r);
-                format!("  <url><loc>{full}</loc><priority>0.8</priority></url>")
+                let escaped = yav_core::escape_html(&full);
+                format!("  <url><loc>{escaped}</loc><priority>0.8</priority></url>")
             })
             .collect::<Vec<_>>()
             .join("\n")

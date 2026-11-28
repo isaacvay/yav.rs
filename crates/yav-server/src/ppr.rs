@@ -79,6 +79,22 @@ fn shell_cache() -> &'static Mutex<HashMap<String, String>> {
     SHELL_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+fn escape_template_closing_tag(html: &str) -> String {
+    let lower = html.to_ascii_lowercase();
+    if !lower.contains("</template") {
+        return html.to_string();
+    }
+    let mut out = String::with_capacity(html.len() + 8);
+    let mut last = 0;
+    for (idx, _) in lower.match_indices("</template") {
+        out.push_str(&html[last..idx]);
+        out.push_str("&lt;/template");
+        last = idx + "</template".len();
+    }
+    out.push_str(&html[last..]);
+    out
+}
+
 impl PprPage {
     /// Create a new Partially Prerendered page.
     #[must_use]
@@ -105,8 +121,9 @@ impl PprPage {
     /// Retrieve or build the pre-rendered static HTML shell.
     #[must_use]
     pub fn get_or_build_shell(&self) -> (String, bool) {
+        let full_key = format!("{}\0{}", self.cache_key, self.title);
         let mut lock = shell_cache().lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(cached) = lock.get(&self.cache_key) {
+        if let Some(cached) = lock.get(&full_key) {
             return (cached.clone(), true);
         }
         let body_html = render_to_string(&self.shell);
@@ -120,7 +137,7 @@ impl PprPage {
                 lock.remove(&first);
             }
         }
-        lock.insert(self.cache_key.clone(), full_shell.clone());
+        lock.insert(full_key, full_shell.clone());
         (full_shell, false)
     }
 
@@ -129,7 +146,8 @@ impl PprPage {
         let mut lock = shell_cache().lock().unwrap_or_else(|e| e.into_inner());
         match cache_key {
             Some(k) => {
-                lock.remove(k);
+                let prefix = format!("{k}\0");
+                lock.retain(|key, _| key != k && !key.starts_with(&prefix));
             }
             None => lock.clear(),
         }
@@ -138,46 +156,46 @@ impl PprPage {
     /// Render the static shell immediately and resolve all dynamic slots concurrently into a complete HTML string
     /// (useful for testing and non-streaming environments).
     pub async fn render_complete(self) -> String {
-        let (mut out, _) = self.get_or_build_shell();
+        let (shell_html, _) = self.get_or_build_shell();
+        let nonce = yav_core::use_context::<crate::middleware::CspNonce>()
+            .map(|n| n.0.clone())
+            .filter(|n| !n.is_empty())
+            .unwrap_or_else(|| crate::middleware::CspNonce::generate().0);
+        // Only stamp nonces onto the static shell's trusted scripts; dynamic slot
+        // swap scripts receive `safe_nonce` explicitly below so an untrusted
+        // `</template><script>` inside a slot can never acquire a valid nonce.
+        let mut out = crate::handler::inject_csp_nonce_into_scripts(&shell_html, &nonce);
+        let safe_nonce = yav_core::escape_attribute(&nonce);
+
         let slot_ids: Vec<String> = self.slots.iter().map(|s| s.id.clone()).collect();
         let resolvers: Vec<_> = self.slots.into_iter().map(|s| s.resolver).collect();
         let resolved_nodes = futures_util::future::join_all(resolvers).await;
         for (id, resolved_node) in slot_ids.into_iter().zip(resolved_nodes) {
             let resolved_html = render_to_string(&resolved_node);
+            let safe_template_html = escape_template_closing_tag(&resolved_html);
             let escaped_json = crate::streaming::escape_js_string_literal(&resolved_html);
             let safe_id = yav_core::escape_attribute(&id);
+            let safe_js_id = yav_core::escape_js_str(&id);
             out.push_str(&format!(
-                "\n<template data-ppr-target=\"yav-ppr-{safe_id}\">{resolved_html}</template><script>(function(){{var t=document.getElementById('yav-ppr-{safe_id}');if(t)t.innerHTML={escaped_json};}})();</script>"
+                "\n<template data-ppr-target=\"yav-ppr-{safe_id}\">{safe_template_html}</template><script nonce=\"{safe_nonce}\">(function(){{var t=document.getElementById('yav-ppr-{safe_js_id}');if(t)t.innerHTML={escaped_json};}})();</script>"
             ));
         }
         out.push_str("\n</body>\n</html>");
-
-        // `into_streaming_response()` tags every chunk with the request CSP
-        // nonce; the non-streaming path must do the same for its final HTML,
-        // otherwise a strict `script-src 'nonce-…'` policy blocks the swap
-        // scripts. Use the same context lookup / fallback as the streaming path.
-        let nonce = yav_core::use_context::<crate::middleware::CspNonce>()
-            .map(|n| n.0.clone())
-            .filter(|n| !n.is_empty())
-            .unwrap_or_else(|| crate::middleware::CspNonce::generate().0);
-        crate::handler::inject_csp_nonce_into_scripts(&out, &nonce)
+        out
     }
 
     /// Convert into a streaming HTTP response that flushes the cached static shell on frame 0
     /// and streams each resolved dynamic slot concurrently as soon as each completes (out-of-order).
     pub fn into_streaming_response(self) -> Response {
-        let (shell_html, is_hit) = self.get_or_build_shell();
+        let (raw_shell_html, is_hit) = self.get_or_build_shell();
         let slots = self.slots;
         let slot_count = slots.len();
 
-        // Each streamed slot carries an inline `<script>` that performs the DOM
-        // swap. Tag every chunk with the request nonce so the strict CSP does
-        // not break Partial Prerendering, and advertise the nonce to the
-        // security middleware (which then skips buffering the stream).
         let nonce = yav_core::use_context::<crate::middleware::CspNonce>()
             .map(|n| n.0.clone())
             .filter(|n| !n.is_empty())
             .unwrap_or_else(|| crate::middleware::CspNonce::generate().0);
+        let shell_html = crate::handler::inject_csp_nonce_into_scripts(&raw_shell_html, &nonce);
 
         let (tx, rx) = tokio::sync::mpsc::channel::<String>(slot_count.max(1));
         let nonce_task = nonce.clone();
@@ -196,14 +214,16 @@ impl PprPage {
                 });
             }
 
+            let safe_nonce = yav_core::escape_attribute(&nonce_task);
             while let Some((id, resolved_node)) = tasks.next().await {
                 let resolved_html = render_to_string(&resolved_node);
+                let safe_template_html = escape_template_closing_tag(&resolved_html);
                 let escaped_json = crate::streaming::escape_js_string_literal(&resolved_html);
                 let safe_id = yav_core::escape_attribute(&id);
+                let safe_js_id = yav_core::escape_js_str(&id);
                 let chunk = format!(
-                    "\n<template data-ppr-target=\"yav-ppr-{safe_id}\">{resolved_html}</template><script>(function(){{var t=document.getElementById('yav-ppr-{safe_id}');if(t)t.innerHTML={escaped_json};}})();</script>"
+                    "\n<template data-ppr-target=\"yav-ppr-{safe_id}\">{safe_template_html}</template><script nonce=\"{safe_nonce}\">(function(){{var t=document.getElementById('yav-ppr-{safe_js_id}');if(t)t.innerHTML={escaped_json};}})();</script>"
                 );
-                let chunk = crate::handler::inject_csp_nonce_into_scripts(&chunk, &nonce_task);
                 if tx.send(chunk).await.is_err() {
                     break;
                 }

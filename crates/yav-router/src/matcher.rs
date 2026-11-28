@@ -209,7 +209,7 @@ fn match_route_segments(route: &Route, req_segments: &[&str]) -> Option<HashMap<
             for (route_seg, req_seg) in route.segments.iter().zip(req_segments.iter()) {
                 match route_seg {
                     RouteSegment::Static(expected) => {
-                        if expected != *req_seg {
+                        if expected != &percent_decode_path_segment(req_seg) {
                             return None;
                         }
                     }
@@ -236,7 +236,7 @@ fn match_route_segments(route: &Route, req_segments: &[&str]) -> Option<HashMap<
             for (i, req_seg) in req_segments.iter().enumerate().take(prefix_len) {
                 match &route.segments[i] {
                     RouteSegment::Static(expected) => {
-                        if expected != *req_seg {
+                        if expected != &percent_decode_path_segment(req_seg) {
                             return None;
                         }
                     }
@@ -253,7 +253,7 @@ fn match_route_segments(route: &Route, req_segments: &[&str]) -> Option<HashMap<
                 let req_idx = req_segments.len() - suffix_len + i;
                 match &route.segments[route_idx] {
                     RouteSegment::Static(expected) => {
-                        if expected != req_segments[req_idx] {
+                        if expected != &percent_decode_path_segment(req_segments[req_idx]) {
                             return None;
                         }
                     }

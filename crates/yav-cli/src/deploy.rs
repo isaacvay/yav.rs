@@ -198,7 +198,8 @@ RestartSec=5s
 Environment=YAV_ENV=production
 Environment=PORT=3000
 Environment=RUST_LOG=info
-Environment=SESSION_SECRET=${{SESSION_SECRET:?SESSION_SECRET environment variable is required}}
+# Store SESSION_SECRET in /etc/{app_name}.env (chmod 600 root:www-data) — systemd does not expand bash `${{VAR:?}}` syntax.
+EnvironmentFile=-/etc/{app_name}.env
 
 # Hardening
 NoNewPrivileges=true

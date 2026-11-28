@@ -56,7 +56,6 @@ pub struct HttpLlmAdapter {
     api_key: String,
     base_url: String,
     client: reqwest::Client,
-    runtime: tokio::runtime::Runtime,
 }
 
 impl HttpLlmAdapter {
@@ -70,15 +69,10 @@ impl HttpLlmAdapter {
         if base_url.is_empty() {
             return Err("YAV LLM base URL must not be empty".to_string());
         }
-        let runtime = tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()
-            .map_err(|e| format!("failed to build dedicated Tokio runtime: {e}"))?;
         Ok(Self {
             api_key,
             base_url,
             client: reqwest::Client::new(),
-            runtime,
         })
     }
 
@@ -103,43 +97,80 @@ impl HttpLlmAdapter {
         uuid::Uuid::new_v4().to_string()
     }
 
-    /// Execute `future` on the adapter's runtime and decode a JSON response.
-    fn post_json<T: for<'de> Deserialize<'de>>(
+    /// Asynchronously POST JSON and decode a typed response (non-blocking inside Tokio).
+    pub async fn post_json_async<T: for<'de> Deserialize<'de>>(
         &self,
         url: String,
         body: serde_json::Value,
     ) -> Result<T, String> {
         let request_id = Self::request_id();
-        let api_key = self.api_key.clone();
-        let client = self.client.clone();
+        let response = self
+            .client
+            .post(&url)
+            .bearer_auth(&self.api_key)
+            .header("Content-Type", "application/json")
+            .header("X-Request-Id", &request_id)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| format!("LLM request to '{url}' failed: {e}"))?;
 
-        let outcome = self.runtime.block_on(async move {
-            let response = client
-                .post(&url)
-                .bearer_auth(&api_key)
-                .header("Content-Type", "application/json")
-                .header("X-Request-Id", &request_id)
-                .json(&body)
-                .send()
-                .await
-                .map_err(|e| format!("LLM request to '{url}' failed: {e}"))?;
+        let status = response.status();
+        let text = response
+            .text()
+            .await
+            .map_err(|e| format!("failed to read LLM response body: {e}"))?;
+        if !status.is_success() {
+            return Err(format!(
+                "LLM API returned HTTP {status} (request {request_id}): {}",
+                text.chars().take(500).collect::<String>()
+            ));
+        }
+        serde_json::from_str::<T>(&text)
+            .map_err(|e| format!("invalid LLM JSON response (request {request_id}): {e}"))
+    }
 
-            let status = response.status();
-            let text = response
-                .text()
-                .await
-                .map_err(|e| format!("failed to read LLM response body: {e}"))?;
-            if !status.is_success() {
-                return Err(format!(
-                    "LLM API returned HTTP {status} (request {request_id}): {}",
-                    text.chars().take(500).collect::<String>()
-                ));
-            }
-            serde_json::from_str::<T>(&text)
-                .map_err(|e| format!("invalid LLM JSON response (request {request_id}): {e}"))
-        });
+    /// Native async chat completion helper safe inside any Axum handler.
+    pub async fn complete_async(
+        &self,
+        model: &str,
+        messages: &[ChatMessage],
+    ) -> Result<String, String> {
+        let body = serde_json::to_value(ChatRequest { model, messages })
+            .map_err(|e| format!("failed to serialize chat request: {e}"))?;
+        let response: ChatResponse = self
+            .post_json_async(format!("{}/v1/chat/completions", self.base_url), body)
+            .await?;
+        response
+            .choices
+            .into_iter()
+            .next()
+            .and_then(|choice| choice.message.content)
+            .ok_or_else(|| "LLM response contained no completion choice".to_string())
+    }
 
-        outcome
+    /// Native async embedding helper safe inside any Axum handler.
+    pub async fn embed_async(&self, model: &str, text: &str) -> Result<Vec<f32>, String> {
+        let body = serde_json::to_value(EmbeddingRequest { model, input: text })
+            .map_err(|e| format!("failed to serialize embedding request: {e}"))?;
+        let response: EmbeddingResponse = self
+            .post_json_async(format!("{}/v1/embeddings", self.base_url), body)
+            .await?;
+        response
+            .data
+            .into_iter()
+            .next()
+            .map(|entry| entry.embedding)
+            .ok_or_else(|| "LLM response contained no embedding".to_string())
+    }
+
+    /// Drive an HTTP JSON request synchronously without panicking inside an active Tokio runtime.
+    fn post_json<T: for<'de> Deserialize<'de> + Send>(
+        &self,
+        url: String,
+        body: serde_json::Value,
+    ) -> Result<T, String> {
+        crate::roadmap::block_on_shared(self.post_json_async(url, body))?
     }
 }
 

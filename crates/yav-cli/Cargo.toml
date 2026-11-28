@@ -11,6 +11,7 @@ repository.workspace = true
 rust-version.workspace = true
 keywords = ["web", "framework", "cli", "scaffold", "ssr"]
 categories = ["command-line-utilities", "web-programming"]
+exclude = ["tests/snapshots/*"]
 
 [[bin]]
 name = "yav"

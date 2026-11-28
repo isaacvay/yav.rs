@@ -754,6 +754,7 @@ impl CsrfToken {
             }
             hex
         } else {
+            tracing::error!("OS CSPRNG getrandom failed while generating CSRF seed");
             let nanos = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_nanos())

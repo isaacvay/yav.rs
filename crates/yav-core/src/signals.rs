@@ -223,10 +223,24 @@ pub fn create_signal<T: Clone + Send + Sync + 'static>(
     Signal::new(initial).split()
 }
 
+/// Cleanup guard that unsubscribes memo callbacks once all clones of [`Computed`] drop.
+struct MemoCleanup {
+    unsubscribes: Vec<Box<dyn Fn() + Send + Sync>>,
+}
+
+impl Drop for MemoCleanup {
+    fn drop(&mut self) {
+        for f in &self.unsubscribes {
+            f();
+        }
+    }
+}
+
 /// A memoized derived signal that automatically updates when its source [`Signal`] changes.
 #[derive(Clone)]
 pub struct Computed<U> {
     derived: Signal<U>,
+    _cleanup: Arc<MemoCleanup>,
 }
 
 impl<U: Clone + Send + Sync + 'static> Computed<U> {
@@ -252,10 +266,19 @@ where
     let initial = source.with(&compute);
     let derived = Signal::new(initial);
     let derived_clone = derived.clone();
-    source.subscribe(move |val| {
+    let sub_id = source.subscribe(move |val| {
         derived_clone.set(compute(val));
     });
-    Computed { derived }
+    let src_clone = source.clone();
+    let cleanup = Arc::new(MemoCleanup {
+        unsubscribes: vec![Box::new(move || {
+            src_clone.unsubscribe(sub_id);
+        })],
+    });
+    Computed {
+        derived,
+        _cleanup: cleanup,
+    }
 }
 
 /// Create a derived [`Computed`] signal from two source signals and a combiner function.
@@ -273,18 +296,34 @@ where
     let d1 = derived.clone();
     let s2_clone = s2.clone();
     let c1 = Arc::clone(&compute);
-    s1.subscribe(move |v1| {
+    let id1 = s1.subscribe(move |v1| {
         d1.set(c1(v1, &s2_clone.get()));
     });
 
     let d2 = derived.clone();
     let s1_clone = s1.clone();
     let c2 = Arc::clone(&compute);
-    s2.subscribe(move |v2| {
+    let id2 = s2.subscribe(move |v2| {
         d2.set(c2(&s1_clone.get(), v2));
     });
 
-    Computed { derived }
+    let s1_drop = s1.clone();
+    let s2_drop = s2.clone();
+    let cleanup = Arc::new(MemoCleanup {
+        unsubscribes: vec![
+            Box::new(move || {
+                s1_drop.unsubscribe(id1);
+            }),
+            Box::new(move || {
+                s2_drop.unsubscribe(id2);
+            }),
+        ],
+    });
+
+    Computed {
+        derived,
+        _cleanup: cleanup,
+    }
 }
 
 /// Declarative builder for client-side reactive scopes (`yav:state`).
@@ -295,7 +334,7 @@ where
 pub struct SignalScope {
     tag: String,
     class: Option<String>,
-    entries: Vec<(String, String)>,
+    entries: Vec<(String, serde_json::Value)>,
     children: Vec<Node>,
 }
 
@@ -323,26 +362,38 @@ impl SignalScope {
     }
 
     /// Declare an integer or float reactive state variable.
+    ///
+    /// Non-finite floats (`NaN`, `Infinity`) fall back to `0` so the emitted JSON stays valid.
     pub fn state_num(mut self, key: impl Into<String>, value: impl fmt::Display) -> Self {
-        self.entries.push((key.into(), value.to_string()));
+        let raw = value.to_string();
+        let val = if let Ok(n) = raw.parse::<i64>() {
+            serde_json::Value::Number(n.into())
+        } else if let Ok(u) = raw.parse::<u64>() {
+            serde_json::Value::Number(u.into())
+        } else if let Ok(f) = raw.parse::<f64>() {
+            serde_json::Number::from_f64(f)
+                .map(serde_json::Value::Number)
+                .unwrap_or_else(|| serde_json::Value::Number(0.into()))
+        } else {
+            serde_json::Value::Number(0.into())
+        };
+        self.entries.push((key.into(), val));
         self
     }
 
     /// Declare a boolean reactive state variable.
     pub fn state_bool(mut self, key: impl Into<String>, value: bool) -> Self {
         self.entries
-            .push((key.into(), if value { "true" } else { "false" }.to_string()));
+            .push((key.into(), serde_json::Value::Bool(value)));
         self
     }
 
     /// Declare a string reactive state variable.
     pub fn state_str(mut self, key: impl Into<String>, value: impl AsRef<str>) -> Self {
-        let escaped = value
-            .as_ref()
-            .replace('\\', "\\\\")
-            .replace('"', "\\\"")
-            .replace('\n', "\\n");
-        self.entries.push((key.into(), format!("\"{escaped}\"")));
+        self.entries.push((
+            key.into(),
+            serde_json::Value::String(value.as_ref().to_string()),
+        ));
         self
     }
 
@@ -354,12 +405,28 @@ impl SignalScope {
 
     /// Render the reactive scope into a [`Node`].
     pub fn render(self) -> Node {
-        let pairs: Vec<String> = self
-            .entries
-            .iter()
-            .map(|(k, v)| format!("\"{}\":{}", k.replace('"', "\\\""), v))
-            .collect();
-        let json_state = format!("{{{}}}", pairs.join(","));
+        // Deduplicate keys preserving insertion order so emitted JSON order is deterministic
+        // and matches callers' declaration order.
+        let mut ordered: Vec<(String, serde_json::Value)> = Vec::with_capacity(self.entries.len());
+        for (k, v) in self.entries {
+            if let Some(existing) = ordered.iter_mut().find(|(ek, _)| *ek == k) {
+                existing.1 = v;
+            } else {
+                ordered.push((k, v));
+            }
+        }
+        let mut json_state = String::from("{");
+        for (idx, (k, v)) in ordered.iter().enumerate() {
+            if idx > 0 {
+                json_state.push(',');
+            }
+            let k_json = serde_json::to_string(k).unwrap_or_else(|_| "\"\"".to_string());
+            let v_json = serde_json::to_string(v).unwrap_or_else(|_| "null".to_string());
+            json_state.push_str(&k_json);
+            json_state.push(':');
+            json_state.push_str(&v_json);
+        }
+        json_state.push('}');
 
         let mut el = Element::new(self.tag).attr("yav:state", json_state);
         if let Some(cls) = self.class {

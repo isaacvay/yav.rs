@@ -226,7 +226,7 @@ pure-RTLS position intact.
 ## Sources
 
 - Local code: `Cargo.toml`, all `crates/*/Cargo.toml`, `Cargo.lock`,
-  `docs/limitations.md`, `README.md`.
+  `README.md`.
 - Version check: `cargo search <crate> --limit 1`, 2026-11-16.
 - Pre-release/stable distinction: crates.io API `max_version` and
   `max_stable_version`, 2026-11-16.

@@ -23,7 +23,7 @@ exclude = [
 ]
 
 [workspace.package]
-version = "0.1.7"
+version = "0.1.8"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 authors = ["Isaac Yav <isaacyavs@gmail.com>"]
@@ -37,13 +37,13 @@ rust-version = "1.88"
 
 [workspace.dependencies]
 # Internal crates
-yav-core = { path = "crates/yav-core", version = "0.1.7" }
-yav-macros = { path = "crates/yav-macros", version = "0.1.7" }
-yav-router = { path = "crates/yav-router", version = "0.1.7" }
-yav-server = { path = "crates/yav-server", version = "0.1.7" }
-yav-ui = { path = "crates/yav-ui", version = "0.1.7" }
-yav-icons = { path = "crates/yav-icons", version = "0.1.7", default-features = false }
-yav-build = { path = "crates/yav-build", version = "0.1.7" }
+yav-core = { path = "crates/yav-core", version = "0.1.8" }
+yav-macros = { path = "crates/yav-macros", version = "0.1.8" }
+yav-router = { path = "crates/yav-router", version = "0.1.8" }
+yav-server = { path = "crates/yav-server", version = "0.1.8" }
+yav-ui = { path = "crates/yav-ui", version = "0.1.8" }
+yav-icons = { path = "crates/yav-icons", version = "0.1.8", default-features = false }
+yav-build = { path = "crates/yav-build", version = "0.1.8" }
 
 # External dependencies
 axum = "0.8"

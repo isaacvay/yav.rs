@@ -236,15 +236,16 @@ impl Component for AudioWaveform {
         );
 
         let controls_markup = if self.show_controls {
-            let audio_tag = if let Some(ref url) = self.audio_url {
-                format!(
-                    "<audio id=\"{}-audio\" src=\"{}\" preload=\"metadata\"></audio>",
-                    self.id,
-                    escape_html(url)
-                )
-            } else {
-                String::new()
-            };
+            let audio_tag =
+                if let Some(safe_url) = self.audio_url.as_deref().and_then(yav_core::escape_url) {
+                    format!(
+                        "<audio id=\"{}-audio\" src=\"{}\" preload=\"metadata\"></audio>",
+                        escape_html(&self.id),
+                        safe_url
+                    )
+                } else {
+                    String::new()
+                };
 
             format!(
                 "<div class=\"flex items-center space-x-3 mb-3\">\

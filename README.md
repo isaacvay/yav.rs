@@ -96,13 +96,11 @@ Everything else in this README is detail on one of those five boxes.
 
 This is **0.1.x**. Some parts are finished, some are library modules you mount
 yourself, and some are single-process prototypes whose names oversell them.
-We try to say which is which; [`docs/limitations.md`](docs/limitations.md) is
-the authoritative list, and it is worth reading before you build on anything
-advertised here.
+The [documentation](#documentation) describes each module's scope and maturity.
 
 One practical wrinkle: the `0.1.5` archive on crates.io declares
 `rust-version = 1.75`, enables all three icon families and does not expose the
-`full-icons` feature described below. Version `0.1.6` needs **Rust 1.88** and
+`full-icons` feature described below. Version `0.1.8` needs **Rust 1.88** and
 enables only the Classic family by default; use `full-icons` to restore the
 whole catalog.
 
@@ -350,7 +348,7 @@ it are real, taken from `yav-ui`. The full component catalogue lives in
 | Images | `ImagePipeline`, `WebPEncoder` | WebP output only; no AVIF encoder |
 | Build | `package.yavml`, Tailwind CLI, `yav export` | ready |
 | Local primitives | `DistributedCache`, `DistributedLock`, `TransactionalOutbox`, `DbReplicaPool` | in-memory, single process |
-| Experimental | `ai`, `pdf_signer`, `pdf_viewer` | see `docs/limitations.md` |
+| Experimental | `ai`, `pdf_signer`, `pdf_viewer` | library modules |
 
 The integrations added from the [competitive roadmap](docs/competitive-roadmap.md)
 are real adapters, but they are compiled only when their Cargo feature is
@@ -434,8 +432,8 @@ emits framework and route types; it does not parse arbitrary Rust structs.
 | Start | [Getting started](docs/getting-started.md) · [Configuration](docs/configuration.md) · [CLI reference](docs/cli.md) |
 | Building UI | [Components](docs/components.md) · [Styling](docs/styling.md) · [Icons](docs/icons.md) · [Themes](docs/themes.md) · [Zero-JS motion](docs/zero-js-interactions-and-motion.md) |
 | Server | [Architecture](docs/architecture.md) · [Routing](docs/routing.md) · [Dev server](docs/development-server.md) · [Production](docs/production.md) · [Security](docs/security.md) |
-| Details | [Opt-in integrations](docs/opt-in-integrations.md) · [SEO and metadata](docs/seo-and-metadata.md) · [Interactivity and HTMX](docs/interactivity-and-htmx.md) · [Known limitations](docs/limitations.md) · [Competitive roadmap](docs/competitive-roadmap.md) |
-| Project | [Audit](AUDIT-2026-11-13.md) · [Implementation report](IMPLEMENTATION-2026-11-15.md) · [Changelog](CHANGELOG.md) · [Contributing](CONTRIBUTING.md) · [Security policy](SECURITY.md) |
+| Details | [Opt-in integrations](docs/opt-in-integrations.md) · [SEO and metadata](docs/seo-and-metadata.md) · [Interactivity and HTMX](docs/interactivity-and-htmx.md) · [Competitive roadmap](docs/competitive-roadmap.md) |
+| Project | [Changelog](CHANGELOG.md) · [Contributing](CONTRIBUTING.md) · [Security policy](SECURITY.md) |
 
 ## Examples
 

@@ -119,33 +119,48 @@ pub const CLIENT_RELOAD_SCRIPT: &str = r#"(function() {
     var oldChildren = Array.from(oldEl.childNodes);
     var newChildren = Array.from(newEl.childNodes);
 
-    // Key-aware matching for stable DOM updates
+    // Key-aware matching & reordering for stable DOM updates
     var oldKeyMap = {};
     for (var ki = 0; ki < oldChildren.length; ki++) {
       var oc = oldChildren[ki];
       if (oc.nodeType === 1) {
         var kVal = oc.getAttribute('key') || oc.getAttribute('data-key') || (oc.id ? '#' + oc.id : null);
-        if (kVal) oldKeyMap[kVal] = oc;
+        if (kVal && !oldKeyMap[kVal]) oldKeyMap[kVal] = oc;
       }
     }
 
-    var commonLen = Math.min(oldChildren.length, newChildren.length);
-    for (var k = 0; k < commonLen; k++) {
+    var matchedOld = new Set();
+    var cursor = oldEl.firstChild;
+    for (var k = 0; k < newChildren.length; k++) {
       var nChild = newChildren[k];
       var nKey = (nChild.nodeType === 1) ? (nChild.getAttribute('key') || nChild.getAttribute('data-key') || (nChild.id ? '#' + nChild.id : null)) : null;
-      if (nKey && oldKeyMap[nKey]) {
-        morphElement(oldKeyMap[nKey], nChild);
+      var targetOld = (nKey && oldKeyMap[nKey]) ? oldKeyMap[nKey] : null;
+      if (!targetOld) {
+        while (cursor && matchedOld.has(cursor)) {
+          cursor = cursor.nextSibling;
+        }
+        if (cursor && cursor.nodeType === 1 && (cursor.getAttribute('key') || cursor.getAttribute('data-key') || cursor.id)) {
+          targetOld = null;
+        } else {
+          targetOld = cursor;
+        }
+      }
+      if (targetOld) {
+        matchedOld.add(targetOld);
+        if (targetOld !== cursor) {
+          oldEl.insertBefore(targetOld, cursor);
+        } else if (cursor) {
+          cursor = cursor.nextSibling;
+        }
+        morphElement(targetOld, nChild);
       } else {
-        morphElement(oldChildren[k], nChild);
+        oldEl.insertBefore(nChild.cloneNode(true), cursor);
       }
     }
-    if (newChildren.length > oldChildren.length) {
-      for (var m = commonLen; m < newChildren.length; m++) {
-        oldEl.appendChild(newChildren[m].cloneNode(true));
-      }
-    } else if (oldChildren.length > newChildren.length) {
-      for (var n = oldChildren.length - 1; n >= commonLen; n--) {
-        oldChildren[n].remove();
+    var leftover = Array.from(oldEl.childNodes).slice(newChildren.length);
+    for (var n = leftover.length - 1; n >= 0; n--) {
+      if (!matchedOld.has(leftover[n])) {
+        leftover[n].remove();
       }
     }
   }
@@ -387,17 +402,23 @@ async fn handle_connection(
     let req_str = String::from_utf8_lossy(&buf[..n]);
     let req_line = req_str.lines().next().unwrap_or("");
 
-    // Restrict CORS to local loopback origins only so external websites cannot read dev SSE events
+    // Restrict CORS to exact local loopback origins only so external websites (e.g. localhost.evil.com) cannot read dev SSE events
     let allowed_origin = req_str
         .lines()
         .find_map(|line| {
             let (name, val) = line.split_once(':')?;
             if name.trim().eq_ignore_ascii_case("origin") {
                 let origin = val.trim();
-                if origin.starts_with("http://127.0.0.1")
-                    || origin.starts_with("http://localhost")
-                    || origin.starts_with("http://[::1]")
-                {
+                let is_loopback = ["http://127.0.0.1", "http://localhost", "http://[::1]"]
+                    .iter()
+                    .any(|prefix| match origin.strip_prefix(prefix) {
+                        Some("") => true,
+                        Some(rest) => rest.strip_prefix(':').is_some_and(|port| {
+                            !port.is_empty() && port.chars().all(|c| c.is_ascii_digit())
+                        }),
+                        None => false,
+                    });
+                if is_loopback {
                     return Some(origin.to_string());
                 }
             }

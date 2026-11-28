@@ -32,15 +32,19 @@
 //! let html = yav_core::render_to_string(&home);
 //! assert!(html.contains(r#"viewBox="0 0 24 24""#));
 //!
-//! // Minimal solid icon (MynaUI style)
+//! // Minimal solid icon (MynaUI style, requires the `minimal` feature)
 //! let act = render_icon("minimal:solid:activity", IconSize::Md, None, None);
 //! let html_act = yav_core::render_to_string(&act);
+//! # if cfg!(feature = "minimal") {
 //! assert!(html_act.contains(r#"fill="currentColor""#));
+//! # }
 //!
-//! // System bold icon (Phosphor style)
+//! // System bold icon (Phosphor style, requires the `system` feature)
 //! let acorn = render_icon("system:bold:acorn", IconSize::Lg, None, None);
 //! let html_acorn = yav_core::render_to_string(&acorn);
+//! # if cfg!(feature = "system") {
 //! assert!(html_acorn.contains(r#"viewBox="0 0 256 256""#));
+//! # }
 //! ```
 //!
 //! ### Using the `Icon` Component
@@ -57,7 +61,9 @@
 //!
 //! let html = yav_core::render_to_string(&icon.render());
 //! assert!(html.contains(r#"width="24""#));
+//! # if cfg!(feature = "system") {
 //! assert!(html.contains(r#"viewBox="0 0 256 256""#));
+//! # }
 //! ```
 //!
 //! ### Searching and Filtering Icons
@@ -125,49 +131,59 @@ mod tests {
         assert_eq!(classic.family, IconFamily::Classic);
         assert_eq!(classic.style, IconStyle::Regular);
 
-        let minimal_reg = get_icon("minimal:activity").expect("minimal:activity should exist");
-        assert_eq!(minimal_reg.family, IconFamily::Minimal);
-        assert_eq!(minimal_reg.style, IconStyle::Regular);
+        #[cfg(feature = "minimal")]
+        {
+            let minimal_reg = get_icon("minimal:activity").expect("minimal:activity should exist");
+            assert_eq!(minimal_reg.family, IconFamily::Minimal);
+            assert_eq!(minimal_reg.style, IconStyle::Regular);
 
-        let minimal_solid =
-            get_icon("minimal:solid:activity").expect("minimal:solid:activity should exist");
-        assert_eq!(minimal_solid.family, IconFamily::Minimal);
-        assert_eq!(minimal_solid.style, IconStyle::Solid);
+            let minimal_solid =
+                get_icon("minimal:solid:activity").expect("minimal:solid:activity should exist");
+            assert_eq!(minimal_solid.family, IconFamily::Minimal);
+            assert_eq!(minimal_solid.style, IconStyle::Solid);
 
-        let system_reg = get_icon("system:acorn").expect("system:acorn should exist");
-        assert_eq!(system_reg.family, IconFamily::System);
-        assert_eq!(system_reg.style, IconStyle::Regular);
+            let solid_act = get_icon("solid:activity").expect("solid:activity should exist");
+            assert_eq!(solid_act.style, IconStyle::Solid);
+        }
 
-        let system_bold = get_icon("system:bold:acorn").expect("system:bold:acorn should exist");
-        assert_eq!(system_bold.family, IconFamily::System);
-        assert_eq!(system_bold.style, IconStyle::Bold);
+        #[cfg(feature = "system")]
+        {
+            let system_reg = get_icon("system:acorn").expect("system:acorn should exist");
+            assert_eq!(system_reg.family, IconFamily::System);
+            assert_eq!(system_reg.style, IconStyle::Regular);
 
-        let system_solid = get_icon("system:solid:acorn").expect("system:solid:acorn should exist");
-        assert_eq!(system_solid.family, IconFamily::System);
-        assert_eq!(system_solid.style, IconStyle::Solid);
+            let system_bold =
+                get_icon("system:bold:acorn").expect("system:bold:acorn should exist");
+            assert_eq!(system_bold.family, IconFamily::System);
+            assert_eq!(system_bold.style, IconStyle::Bold);
 
-        let system_duotone =
-            get_icon("system:duotone:acorn").expect("system:duotone:acorn should exist");
-        assert_eq!(system_duotone.family, IconFamily::System);
-        assert_eq!(system_duotone.style, IconStyle::Duotone);
+            let system_solid =
+                get_icon("system:solid:acorn").expect("system:solid:acorn should exist");
+            assert_eq!(system_solid.family, IconFamily::System);
+            assert_eq!(system_solid.style, IconStyle::Solid);
 
-        let system_thin = get_icon("system:thin:acorn").expect("system:thin:acorn should exist");
-        assert_eq!(system_thin.family, IconFamily::System);
-        assert_eq!(system_thin.style, IconStyle::Thin);
+            let system_duotone =
+                get_icon("system:duotone:acorn").expect("system:duotone:acorn should exist");
+            assert_eq!(system_duotone.family, IconFamily::System);
+            assert_eq!(system_duotone.style, IconStyle::Duotone);
 
-        let system_light = get_icon("system:light:acorn").expect("system:light:acorn should exist");
-        assert_eq!(system_light.family, IconFamily::System);
-        assert_eq!(system_light.style, IconStyle::Light);
+            let system_thin =
+                get_icon("system:thin:acorn").expect("system:thin:acorn should exist");
+            assert_eq!(system_thin.family, IconFamily::System);
+            assert_eq!(system_thin.style, IconStyle::Thin);
 
-        // Style-only prefixes (without family)
-        let bold_acorn = get_icon("bold:acorn").expect("bold:acorn should exist");
-        assert_eq!(bold_acorn.style, IconStyle::Bold);
+            let system_light =
+                get_icon("system:light:acorn").expect("system:light:acorn should exist");
+            assert_eq!(system_light.family, IconFamily::System);
+            assert_eq!(system_light.style, IconStyle::Light);
 
-        let duo_acorn = get_icon("duotone:acorn").expect("duotone:acorn should exist");
-        assert_eq!(duo_acorn.style, IconStyle::Duotone);
+            // Style-only prefixes (without family)
+            let bold_acorn = get_icon("bold:acorn").expect("bold:acorn should exist");
+            assert_eq!(bold_acorn.style, IconStyle::Bold);
 
-        let solid_act = get_icon("solid:activity").expect("solid:activity should exist");
-        assert_eq!(solid_act.style, IconStyle::Solid);
+            let duo_acorn = get_icon("duotone:acorn").expect("duotone:acorn should exist");
+            assert_eq!(duo_acorn.style, IconStyle::Duotone);
+        }
     }
 
     #[test]
@@ -251,7 +267,10 @@ mod tests {
     fn icon_count_matches_expected() {
         let total = all_icons_iter().count();
         assert_eq!(total, ICON_COUNT);
+        #[cfg(all(feature = "classic", feature = "minimal", feature = "system"))]
         assert!(total > 10000);
+        #[cfg(not(all(feature = "classic", feature = "minimal", feature = "system")))]
+        assert!(total > 1500);
     }
 
     #[test]

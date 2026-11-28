@@ -16,7 +16,7 @@ bundle for validation and CI, not a recommended production default.
 
 ```toml
 [dependencies]
-yav = { version = "0.1.6", features = ["sqlite", "validation", "smtp"] }
+yav = { version = "0.1.8", features = ["sqlite", "validation", "smtp"] }
 ```
 
 ```bash
@@ -74,17 +74,17 @@ enabled; the `roadmap` module itself is always present and may be empty.
   not coordinate invalidation across nodes.
 - **`oauth` stops at the access token.** Full OIDC `id_token` signature and
   claims validation is not wired on top of the OAuth client.
-- **`icon-minify` is an allowlist hook**, not catalog rewriting. It does not
-  currently remove unreferenced icon data from the compiled binary.
-- **`schema-codegen` does not discover types automatically.** `yav codegen`
-  still emits framework and route types; it does not parse arbitrary Rust
-  structs.
+- **`icon-minify` performs compile-time allowlist pruning** when
+  `YAV_ICON_ALLOWLIST` is non-empty, omitting unlisted icons from the compiled
+  `IconData` slices.
+- **`schema-codegen` + `yav generate`** emit `schemars` / `ts-rs` schemas in
+  application code and scan `#[derive(Serialize/Deserialize/ApiSchema/TS/JsonSchema)]`
+  structs into `types.d.ts` and `openapi.json` via `yav generate`.
 - **`a11y` is a static rule set**, not an automated WCAG audit or a keyboard
   test runner. `i18n-advanced` covers four locales' plural rules, not all CLDR
   languages.
 - **`http-llm` needs network access and a key.** With no key it returns an
   error; there is no mock model.
 
-For the remaining gaps, see [Known limitations](limitations.md). For the
-reasoning and dependency versions behind these additions, see the
+For the reasoning and dependency versions behind these additions, see the
 [competitive roadmap](competitive-roadmap.md).

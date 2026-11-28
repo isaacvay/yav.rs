@@ -216,6 +216,12 @@ fn collect_fs_files(base: &Path, current: &Path, acc: &mut Vec<PathBuf>) -> std:
         let entry = entry?;
         let p = entry.path();
         if p.is_dir() {
+            let dir_name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            let is_dynamic_underscore =
+                dir_name.starts_with('_') && dir_name.ends_with('_') && dir_name.len() > 2;
+            if dir_name.starts_with('_') && !is_dynamic_underscore {
+                continue;
+            }
             collect_fs_files(base, &p, acc)?;
         } else if p
             .extension()
@@ -320,7 +326,10 @@ impl FileSystemRouter {
                 || file_name == "robots.yav"
                 || file_name == "robots.rsx"
                 || file_name == "mod.rs"
-                || (file_name.starts_with('_') && !file_name.ends_with("_.rs"))
+                || (file_name.starts_with('_')
+                    && !(file_name.ends_with("_.rs")
+                        || file_name.ends_with("_.yav")
+                        || file_name.ends_with("_.rsx")))
             {
                 continue;
             }
@@ -359,11 +368,18 @@ impl FileSystemRouter {
     /// Populate a [`RouteTable`] with the discovered routes for a given HTTP method.
     pub fn populate_table(&self, table: &mut RouteTable, method: &str) {
         for r in &self.discovered {
-            table.add(Route::new(
-                method,
-                &r.path_pattern,
-                r.file_path.to_string_lossy(),
-            ));
+            let handler = r.file_path.to_string_lossy();
+            table.add(Route::new(method, &r.path_pattern, handler.as_ref()));
+            if r.is_optional_catch_all {
+                if let Some(pos) = r.path_pattern.rfind("/*") {
+                    let base = if pos == 0 {
+                        "/"
+                    } else {
+                        &r.path_pattern[..pos]
+                    };
+                    table.add(Route::new(method, base, handler.as_ref()));
+                }
+            }
         }
     }
 

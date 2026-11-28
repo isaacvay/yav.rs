@@ -55,10 +55,32 @@ fn escape_md_html(input: &str) -> String {
             '<' => out.push_str("&lt;"),
             '>' => out.push_str("&gt;"),
             '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&#x27;"),
             _ => out.push(c),
         }
     }
     out
+}
+
+fn sanitize_md_url(raw: &str) -> &str {
+    let clean = raw.trim();
+    if clean.is_empty() {
+        return "#";
+    }
+    let normalized: String = clean
+        .chars()
+        .filter(|c| !c.is_control() && !c.is_whitespace())
+        .collect::<String>()
+        .to_ascii_lowercase();
+    if normalized.starts_with("javascript:")
+        || normalized.starts_with("vbscript:")
+        || normalized.starts_with("data:")
+        || normalized.contains("&#")
+    {
+        "#"
+    } else {
+        clean
+    }
 }
 
 fn format_inline(input: &str) -> String {
@@ -91,8 +113,9 @@ fn format_inline(input: &str) -> String {
                         let url: String = chars[paren_start + 1..paren_start + 1 + close_paren]
                             .iter()
                             .collect();
+                        let safe_img_url = sanitize_md_url(&url);
                         out.push_str("<img src=\"");
-                        out.push_str(&escape_md_html(url.trim()));
+                        out.push_str(&escape_md_html(safe_img_url));
                         out.push_str("\" alt=\"");
                         out.push_str(&escape_md_html(&alt));
                         out.push_str("\" loading=\"lazy\" />");
@@ -128,16 +151,7 @@ fn format_inline(input: &str) -> String {
                         let url: String = chars[paren_start + 1..paren_start + 1 + close_paren]
                             .iter()
                             .collect();
-                        let clean_url = url.trim();
-                        let lower_url = clean_url.to_ascii_lowercase();
-                        let safe_url = if lower_url.starts_with("javascript:")
-                            || lower_url.starts_with("vbscript:")
-                            || lower_url.starts_with("data:")
-                        {
-                            "#"
-                        } else {
-                            clean_url
-                        };
+                        let safe_url = sanitize_md_url(&url);
                         out.push_str("<a href=\"");
                         out.push_str(&escape_md_html(safe_url));
                         out.push_str("\">");
@@ -366,10 +380,20 @@ pub fn parse_markdown(source: &str) -> MarkdownDoc {
             let q = quote_text.trim();
             if let Some(rest) = q.strip_prefix("[!") {
                 if let Some((alert_kind, alert_body)) = rest.split_once(']') {
-                    let kind_lower = alert_kind.trim().to_ascii_lowercase();
+                    let kind_lower: String = alert_kind
+                        .trim()
+                        .chars()
+                        .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+                        .map(|c| c.to_ascii_lowercase())
+                        .collect();
+                    let safe_kind = if kind_lower.is_empty() {
+                        "note".to_string()
+                    } else {
+                        kind_lower
+                    };
                     html.push_str(&format!(
-                        "<div class=\"markdown-alert markdown-alert-{kind_lower}\" role=\"note\"><strong>{}</strong><p>{}</p></div>\n",
-                        escape_md_html(&alert_kind.to_ascii_uppercase()),
+                        "<div class=\"markdown-alert markdown-alert-{safe_kind}\" role=\"note\"><strong>{}</strong><p>{}</p></div>\n",
+                        escape_md_html(&alert_kind.trim().to_ascii_uppercase()),
                         format_inline(alert_body.trim())
                     ));
                     continue;
@@ -537,7 +561,7 @@ pub fn highlight_code_html(code: &str, lang: &str) -> String {
 
     let mut out = String::with_capacity(code.len() * 2);
     for line in code.lines() {
-        if let Some(comment_idx) = line.find("//") {
+        if let Some(comment_idx) = find_line_comment_outside_strings(line) {
             let (before, comment) = line.split_at(comment_idx);
             highlight_tokens_in_segment(before, keywords, &mut out);
             out.push_str("<span class=\"hl-comment\">");
@@ -552,6 +576,37 @@ pub fn highlight_code_html(code: &str, lang: &str) -> String {
         out.pop();
     }
     out
+}
+
+fn find_line_comment_outside_strings(line: &str) -> Option<usize> {
+    let bytes = line.as_bytes();
+    let mut i = 0usize;
+    let mut quote: Option<u8> = None;
+    let mut escaped = false;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if let Some(q) = quote {
+            if escaped {
+                escaped = false;
+            } else if b == b'\\' {
+                escaped = true;
+            } else if b == q {
+                quote = None;
+            }
+            i += 1;
+            continue;
+        }
+        if b == b'"' || b == b'\'' {
+            quote = Some(b);
+            i += 1;
+            continue;
+        }
+        if b == b'/' && i + 1 < bytes.len() && bytes[i + 1] == b'/' {
+            return Some(i);
+        }
+        i += 1;
+    }
+    None
 }
 
 fn highlight_tokens_in_segment(segment: &str, keywords: &[&str], out: &mut String) {

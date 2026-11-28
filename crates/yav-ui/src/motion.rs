@@ -1248,6 +1248,14 @@ pub fn motion_script() -> Node {
     Node::Element(Element::new("script").child(Node::raw(script)))
 }
 
+/// Nonce-aware variant of the Yav Motion hydration script for strict CSP.
+pub fn motion_script_with_nonce(nonce: &str) -> Node {
+    match motion_script() {
+        Node::Element(el) => Node::Element(el.attr("nonce", nonce)),
+        other => other,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

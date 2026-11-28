@@ -195,9 +195,11 @@ impl SsrCache {
             rec.access_count += 1;
             let entry = rec.entry.clone();
             guard.stats.hits += 1;
+            crate::metrics_dashboard::record_cache_hit();
             Some(entry)
         } else {
             guard.stats.misses += 1;
+            crate::metrics_dashboard::record_cache_miss();
             None
         }
     }

@@ -153,24 +153,23 @@ impl Component for SpotlightTour {
 
         let total_steps = self.steps.len();
 
-        let mut steps_json = String::from("[");
-        for (idx, s) in self.steps.iter().enumerate() {
-            if idx > 0 {
-                steps_json.push(',');
-            }
-            steps_json.push_str(&format!(
-                r##"{{"id":"{}","target":"{}","title":"{}","content":"{}","placement":"{}","badge":{}}}"##,
-                escape_html(&s.id),
-                escape_html(&s.target_selector),
-                escape_html(&s.title),
-                escape_html(&s.content),
-                s.placement.as_str(),
-                s.badge_text
-                    .as_ref()
-                    .map_or("null".to_string(), |b| format!(r#""{}""#, escape_html(b)))
-            ));
-        }
-        steps_json.push(']');
+        let steps_payload: Vec<serde_json::Value> = self
+            .steps
+            .iter()
+            .map(|s| {
+                serde_json::json!({
+                    "id": s.id,
+                    "target": s.target_selector,
+                    "title": s.title,
+                    "content": s.content,
+                    "placement": s.placement.as_str(),
+                    "badge": s.badge_text,
+                })
+            })
+            .collect();
+        let steps_json = yav_core::escape_script_json(
+            &serde_json::to_string(&steps_payload).unwrap_or_else(|_| "[]".to_string()),
+        );
 
         let mut steps_dom = Vec::new();
         for (idx, step) in self.steps.iter().enumerate() {

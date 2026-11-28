@@ -5,11 +5,55 @@
 //! [`crate::otel::global_tracer()`]; values that are not instrumented are shown as `0`
 //! and are never fabricated.
 
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use axum::http::StatusCode;
 use axum::response::Response;
 
 use crate::handler::html_response;
 use crate::otel::global_tracer;
+
+static CACHE_HITS: AtomicU64 = AtomicU64::new(0);
+static CACHE_MISSES: AtomicU64 = AtomicU64::new(0);
+
+/// Record an SSR cache hit for telemetry dashboards.
+pub fn record_cache_hit() {
+    CACHE_HITS.fetch_add(1, Ordering::Relaxed);
+}
+
+/// Record an SSR cache miss for telemetry dashboards.
+pub fn record_cache_miss() {
+    CACHE_MISSES.fetch_add(1, Ordering::Relaxed);
+}
+
+/// Compute the live SSR cache hit percentage (`0.0..=100.0`).
+#[must_use]
+pub fn cache_hit_pct() -> f64 {
+    let hits = CACHE_HITS.load(Ordering::Relaxed);
+    let misses = CACHE_MISSES.load(Ordering::Relaxed);
+    let total = hits + misses;
+    if total == 0 {
+        0.0
+    } else {
+        (hits as f64 / total as f64) * 100.0
+    }
+}
+
+/// Read current process RSS memory in megabytes when exposed by the OS (`/proc/self/statm`).
+#[must_use]
+pub fn process_rss_mb() -> f64 {
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(statm) = std::fs::read_to_string("/proc/self/statm") {
+            if let Some(rss_pages_str) = statm.split_whitespace().nth(1) {
+                if let Ok(rss_pages) = rss_pages_str.parse::<u64>() {
+                    return (rss_pages * 4096) as f64 / (1024.0 * 1024.0);
+                }
+            }
+        }
+    }
+    0.0
+}
 
 /// Render the complete self-contained HTML metrics dashboard from caller-supplied values.
 ///
@@ -259,23 +303,23 @@ pub fn live_metrics() -> LiveMetrics {
     }
 }
 
-/// Build the dashboard HTML from real tracer data, with no sample/demo constants.
-///
-/// Percentiles, cache hit ratio and RSS memory are not instrumented by the tracer,
-/// so they are rendered as `0` rather than guessed.
+/// Build the dashboard HTML from real tracer data, cache metrics, and process memory.
 #[must_use]
 pub fn render_live_metrics_dashboard_html(app_name: &str) -> String {
     let m = live_metrics();
+    let (p50, p90, p99) = global_tracer().latency_percentiles_ms();
+    let hit_pct = cache_hit_pct();
+    let rss_mb = process_rss_mb();
     render_dashboard_html(
         app_name,
         m.uptime_secs,
         m.total_spans,
         m.requests_per_sec,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
+        p50,
+        p90,
+        p99,
+        hit_pct,
+        rss_mb,
         Some(m),
     )
 }

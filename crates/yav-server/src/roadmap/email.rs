@@ -75,7 +75,6 @@ fn build_message(email: &EmailMessage) -> Result<lettre::Message, String> {
 /// SMTP mail adapter backed by lettre's async transport.
 pub struct SmtpMailAdapter {
     transport: lettre::AsyncSmtpTransport<lettre::Tokio1Executor>,
-    runtime: tokio::runtime::Runtime,
 }
 
 impl SmtpMailAdapter {
@@ -125,12 +124,7 @@ impl SmtpMailAdapter {
         };
 
         let transport: AsyncSmtpTransport<Tokio1Executor> = builder.build();
-        let runtime = tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()
-            .map_err(|e| format!("failed to build dedicated Tokio runtime: {e}"))?;
-
-        Ok(Self { transport, runtime })
+        Ok(Self { transport })
     }
 
     /// Build from `YAV_SMTP_*` environment variables.
@@ -151,23 +145,27 @@ impl SmtpMailAdapter {
 
         Self::new(relay, port, username, password, from)
     }
-}
 
-impl MailAdapter for SmtpMailAdapter {
-    fn send_email(&self, message: EmailMessage) -> Result<String, String> {
+    /// Native async SMTP delivery helper safe inside any Axum handler.
+    pub async fn send_email_async(&self, message: EmailMessage) -> Result<String, String> {
         use lettre::AsyncTransport;
-
         let mail = build_message(&message)?;
-        // `send` consumes the Message and returns the relay's response. The
-        // transport is owned by this adapter and borrows only for the call.
-        let sent = self.runtime.block_on(self.transport.send(mail));
-        sent.map_err(|e| format!("SMTP delivery failed: {e}"))?;
+        self.transport
+            .send(mail)
+            .await
+            .map_err(|e| format!("SMTP delivery failed: {e}"))?;
 
         Ok(format!(
             "smtp_{}_{}",
             now_epoch(),
             NEXT_SEND_ID.fetch_add(1, Ordering::Relaxed)
         ))
+    }
+}
+
+impl MailAdapter for SmtpMailAdapter {
+    fn send_email(&self, message: EmailMessage) -> Result<String, String> {
+        crate::roadmap::block_on_shared(self.send_email_async(message))?
     }
 }
 

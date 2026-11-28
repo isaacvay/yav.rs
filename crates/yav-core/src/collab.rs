@@ -260,7 +260,9 @@ impl LexoRank {
                         res
                     }
                 } else {
-                    format!("0{}U", n)
+                    // `n` consists solely of '0' characters (the minimum alphabet char).
+                    // No strictly smaller non-empty string exists within ALPHABET.
+                    "0".to_string()
                 }
             }
             (Some(p), None) => {
@@ -278,60 +280,59 @@ impl LexoRank {
                 }
                 let p_bytes = p.as_bytes();
                 let n_bytes = n.as_bytes();
-                let max_len = p_bytes.len().max(n_bytes.len());
+                let mut i = 0;
                 let mut prefix = String::new();
+                while i < p_bytes.len() && i < n_bytes.len() && p_bytes[i] == n_bytes[i] {
+                    prefix.push(p_bytes[i] as char);
+                    i += 1;
+                }
 
-                for i in 0..max_len {
-                    let pb = p_bytes.get(i).copied().unwrap_or(ALPHABET[0]);
-                    let nb = n_bytes
-                        .get(i)
-                        .copied()
-                        .unwrap_or(ALPHABET[ALPHABET.len() - 1]);
-                    let pi = char_to_rank(pb);
-                    let ni = char_to_rank(nb);
-
-                    if pi == ni {
-                        prefix.push(pb as char);
-                        continue;
+                // Case 1: `p` is a proper prefix of `n` (e.g. "a" vs "a04" or "a4")
+                if i == p_bytes.len() {
+                    let mut j = i;
+                    while j < n_bytes.len() && n_bytes[j] == b'0' {
+                        prefix.push('0');
+                        j += 1;
                     }
-
-                    if ni > pi + 1 {
-                        let mid = (pi + ni) / 2;
-                        prefix.push(ALPHABET[mid] as char);
-                        return prefix;
-                    } else if ni == pi + 1 {
-                        prefix.push(pb as char);
-                        let rem_p = if i + 1 < p_bytes.len() {
-                            &p_bytes[i + 1..]
+                    if j < n_bytes.len() {
+                        let ni = char_to_rank(n_bytes[j]);
+                        if ni > 1 {
+                            prefix.push(ALPHABET[ni / 2] as char);
                         } else {
-                            b""
-                        };
-                        if rem_p.is_empty() {
+                            prefix.push('0');
                             prefix.push('U');
-                            return prefix;
-                        } else {
-                            let mut found = false;
-                            for &rb in rem_p {
-                                let ri = char_to_rank(rb);
-                                if ri + 1 < ALPHABET.len() - 1 {
-                                    let mid = (ri + ALPHABET.len()) / 2;
-                                    prefix.push(ALPHABET[mid] as char);
-                                    found = true;
-                                    break;
-                                } else {
-                                    prefix.push(rb as char);
-                                }
-                            }
-                            if !found {
-                                prefix.push('U');
-                            }
-                            return prefix;
                         }
-                    } else {
+                        return prefix;
+                    }
+                    // Adjacent strings ("a" and "a0...0"): append '0' beyond n to mark minimum boundary fallback
+                    return format!("{n}0");
+                }
+
+                // Case 2: Diverge at index `i` with `p_bytes[i] < n_bytes[i]`
+                let pi = char_to_rank(p_bytes[i]);
+                let ni = char_to_rank(n_bytes[i]);
+                if ni > pi + 1 {
+                    prefix.push(ALPHABET[(pi + ni) / 2] as char);
+                    return prefix;
+                }
+
+                // Adjacent digits at `i`: copy `p_bytes[i]` and advance `p`'s suffix upward
+                prefix.push(p_bytes[i] as char);
+                let mut found = false;
+                for &rb in &p_bytes[i + 1..] {
+                    let ri = char_to_rank(rb);
+                    if ri + 1 < ALPHABET.len() {
+                        let mid = (ri + ALPHABET.len()) / 2;
+                        prefix.push(ALPHABET[mid] as char);
+                        found = true;
                         break;
                     }
+                    prefix.push(rb as char);
                 }
-                format!("{p}U")
+                if !found {
+                    prefix.push('U');
+                }
+                prefix
             }
         }
     }

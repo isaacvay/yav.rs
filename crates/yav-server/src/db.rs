@@ -228,10 +228,11 @@ impl Migrator {
                 checksum: m.checksum.clone(),
                 applied_at_epoch: now,
             });
+            // Persist the journal incrementally so a later failure never hides applied migrations.
+            self.save_applied(&applied)?;
             newly_applied.push(m.version);
         }
 
-        self.save_applied(&applied)?;
         Ok(newly_applied)
     }
 
@@ -436,20 +437,29 @@ impl QueryBuilder {
                 }
             }
             QueryKind::Insert => {
-                let cols: Vec<&str> = self.set_clauses.iter().map(|(c, _)| c.as_str()).collect();
-                let mut placeholders = Vec::with_capacity(self.set_clauses.len());
-                for (_, val) in &self.set_clauses {
-                    params.push(val.clone());
-                    placeholders.push(format!("${}", params.len()));
+                if self.set_clauses.is_empty() {
+                    sql.push_str(&format!("INSERT INTO {} DEFAULT VALUES", self.table));
+                } else {
+                    let cols: Vec<&str> =
+                        self.set_clauses.iter().map(|(c, _)| c.as_str()).collect();
+                    let mut placeholders = Vec::with_capacity(self.set_clauses.len());
+                    for (_, val) in &self.set_clauses {
+                        params.push(val.clone());
+                        placeholders.push(format!("${}", params.len()));
+                    }
+                    sql.push_str(&format!(
+                        "INSERT INTO {} ({}) VALUES ({})",
+                        self.table,
+                        cols.join(", "),
+                        placeholders.join(", ")
+                    ));
                 }
-                sql.push_str(&format!(
-                    "INSERT INTO {} ({}) VALUES ({})",
-                    self.table,
-                    cols.join(", "),
-                    placeholders.join(", ")
-                ));
             }
             QueryKind::Update => {
+                assert!(
+                    !self.set_clauses.is_empty(),
+                    "QueryBuilder::update requires at least one .value(col, val) assignment"
+                );
                 let mut sets = Vec::with_capacity(self.set_clauses.len());
                 for (col, val) in &self.set_clauses {
                     params.push(val.clone());
@@ -607,13 +617,17 @@ impl EmbeddedStore {
     }
 
     fn flush_if_persistent(&self) -> Result<(), String> {
+        static FLUSH_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         if let Some(ref p) = self.persist_path {
             if let Some(parent) = p.parent() {
                 let _ = fs::create_dir_all(parent);
             }
-            let guard = self.collections.read().unwrap_or_else(|e| e.into_inner());
-            let json = serde_json::to_string_pretty(&*guard).map_err(|e| e.to_string())?;
-            let tmp_path = p.with_extension(format!("tmp.{}", std::process::id()));
+            let json = {
+                let guard = self.collections.read().unwrap_or_else(|e| e.into_inner());
+                serde_json::to_string_pretty(&*guard).map_err(|e| e.to_string())?
+            };
+            let seq = FLUSH_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let tmp_path = p.with_extension(format!("tmp.{}.{seq}", std::process::id()));
             fs::write(&tmp_path, json).map_err(|e| e.to_string())?;
             fs::rename(&tmp_path, p).map_err(|e| e.to_string())?;
         }

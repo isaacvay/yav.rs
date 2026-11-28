@@ -637,7 +637,7 @@ mod tests {
     #[test]
     fn test_unparsable_versions_are_never_updates() {
         assert!(!is_newer_version("0.1.6", "not-a-version"));
-        assert!(!is_newer_version("not-a-version", "0.1.7"));
+        assert!(!is_newer_version("not-a-version", "0.1.8"));
         assert!(!should_update_version("0.1.6", "unknown"));
     }
 

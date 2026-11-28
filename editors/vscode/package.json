@@ -2,7 +2,7 @@
   "name": "yav-vscode",
   "displayName": "Yav Framework Support",
   "description": "Rich syntax highlighting, snippets, and language configuration for Yav components (.yav, .rsx)",
-  "version": "0.1.5",
+  "version": "0.1.7",
   "publisher": "yav-framework",
   "author": {
     "name": "Yav Framework Team"
@@ -63,8 +63,8 @@
         ],
         "configuration": "./language-configuration-yavml.json",
         "icon": {
-          "light": "./icons/yav-document.png",
-          "dark": "./icons/yav-document.png"
+          "light": "./icons/yavml.png",
+          "dark": "./icons/yavml.png"
         }
       }
     ],

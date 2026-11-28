@@ -235,85 +235,72 @@ impl TailwindManager {
         local_fallback.is_file()
     }
 
+    async fn verify_or_prepare_cached_binary(
+        &self,
+        candidate: &Path,
+        delete_on_mismatch: bool,
+    ) -> Result<bool, TailwindError> {
+        if !candidate.is_file() {
+            return Ok(false);
+        }
+        let platform = current_platform()?;
+        if let Some(expected_hash) = known_sha256_for_binary(&self.version, &platform) {
+            if let Ok(cached_bytes) = tokio::fs::read(candidate).await {
+                use sha2::{Digest, Sha256};
+                let mut hasher = Sha256::new();
+                hasher.update(&cached_bytes);
+                let actual = format!("{:x}", hasher.finalize());
+                if !actual.eq_ignore_ascii_case(expected_hash) {
+                    tracing::warn!(
+                        "Cached Tailwind binary checksum mismatch at {} (expected {}, got {})",
+                        candidate.display(),
+                        expected_hash,
+                        actual
+                    );
+                    if delete_on_mismatch {
+                        let _ = tokio::fs::remove_file(candidate).await;
+                    }
+                    return Ok(false);
+                }
+            }
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if let Ok(metadata) = tokio::fs::metadata(candidate).await {
+                let mut perms = metadata.permissions();
+                if perms.mode() & 0o111 == 0 {
+                    perms.set_mode(0o755);
+                    let _ = tokio::fs::set_permissions(candidate, perms).await;
+                }
+            }
+        }
+        tracing::debug!(
+            "Using cached Tailwind CLI binary at {}",
+            candidate.display()
+        );
+        Ok(true)
+    }
+
     /// Ensures the Tailwind CLI binary is available locally, downloading if necessary.
     /// Validates the version string and re-verifies checksums for cached binaries.
     pub async fn ensure_binary(&self) -> Result<PathBuf, TailwindError> {
         validate_version(&self.version)?;
         let bin_path = self.binary_path()?;
-        if bin_path.is_file() {
-            // Re-verify checksum of cached binary to detect tampering
-            let platform = current_platform()?;
-            let expected = known_sha256_for_binary(&self.version, &platform);
-            if let Some(expected_hash) = expected {
-                if let Ok(cached_bytes) = tokio::fs::read(&bin_path).await {
-                    use sha2::{Digest, Sha256};
-                    let mut hasher = Sha256::new();
-                    hasher.update(&cached_bytes);
-                    let actual = format!("{:x}", hasher.finalize());
-                    if !actual.eq_ignore_ascii_case(expected_hash) {
-                        tracing::warn!(
-                            "Cached Tailwind binary checksum mismatch (expected {}, got {}); re-downloading",
-                            expected_hash, actual
-                        );
-                        // Delete the tampered binary and re-download
-                        let _ = tokio::fs::remove_file(&bin_path).await;
-                        // Fall through to download
-                    } else {
-                        #[cfg(unix)]
-                        {
-                            use std::os::unix::fs::PermissionsExt;
-                            if let Ok(metadata) = std::fs::metadata(&bin_path) {
-                                let mut perms = metadata.permissions();
-                                if perms.mode() & 0o111 == 0 {
-                                    perms.set_mode(0o755);
-                                    let _ = std::fs::set_permissions(&bin_path, perms);
-                                }
-                            }
-                        }
-                        tracing::debug!(
-                            "Using cached Tailwind CLI binary at {}",
-                            bin_path.display()
-                        );
-                        return Ok(bin_path);
-                    }
-                }
-            }
-            // If no known checksum, we already validated version format above.
-            // Proceed only if we have a known checksum (otherwise download_binary will reject).
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                if let Ok(metadata) = std::fs::metadata(&bin_path) {
-                    let mut perms = metadata.permissions();
-                    if perms.mode() & 0o111 == 0 {
-                        perms.set_mode(0o755);
-                        let _ = std::fs::set_permissions(&bin_path, perms);
-                    }
-                }
-            }
-            tracing::debug!("Using cached Tailwind CLI binary at {}", bin_path.display());
+        if self
+            .verify_or_prepare_cached_binary(&bin_path, true)
+            .await?
+        {
             return Ok(bin_path);
         }
 
         let local_fallback = PathBuf::from(".yav/cache/tailwind")
             .join(self.version.trim_start_matches('v'))
             .join(self.binary_filename().unwrap_or_default());
-        if local_fallback.is_file() {
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                if let Ok(metadata) = std::fs::metadata(&local_fallback) {
-                    let mut perms = metadata.permissions();
-                    if perms.mode() & 0o111 == 0 {
-                        perms.set_mode(0o755);
-                        let _ = std::fs::set_permissions(&local_fallback, perms);
-                    }
-                }
-            }
-            tracing::debug!(
-                "Using local cached Tailwind CLI binary at {}",
-                local_fallback.display()
-            );
+        if self
+            .verify_or_prepare_cached_binary(&local_fallback, false)
+            .await?
+        {
             return Ok(local_fallback);
         }
 
@@ -349,10 +336,14 @@ impl TailwindManager {
         let url = construct_download_url(&self.version, &platform);
         tracing::info!("Downloading Tailwind standalone CLI from {}", url);
 
-        let client = reqwest::Client::builder()
-            .connect_timeout(std::time::Duration::from_secs(15))
-            .timeout(std::time::Duration::from_secs(120))
-            .build()?;
+        static TW_HTTP_CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+        let client = TW_HTTP_CLIENT.get_or_init(|| {
+            reqwest::Client::builder()
+                .connect_timeout(std::time::Duration::from_secs(15))
+                .timeout(std::time::Duration::from_secs(120))
+                .build()
+                .unwrap_or_else(|_| reqwest::Client::new())
+        });
 
         let response = client.get(&url).send().await?;
         if !response.status().is_success() {

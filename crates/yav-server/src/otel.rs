@@ -228,6 +228,24 @@ impl OtelTracer {
         lock.iter().cloned().collect()
     }
 
+    /// Compute real `(p50_ms, p90_ms, p99_ms)` latency percentiles across buffered spans.
+    #[must_use]
+    pub fn latency_percentiles_ms(&self) -> (f64, f64, f64) {
+        let mut durations: Vec<u64> = {
+            let lock = self.spans.lock().unwrap_or_else(|e| e.into_inner());
+            lock.iter().map(|s| s.duration_us).collect()
+        };
+        if durations.is_empty() {
+            return (0.0, 0.0, 0.0);
+        }
+        durations.sort_unstable();
+        let pct = |q: f64| -> f64 {
+            let idx = ((durations.len() - 1) as f64 * q).round() as usize;
+            durations[idx.min(durations.len() - 1)] as f64 / 1000.0
+        };
+        (pct(0.50), pct(0.90), pct(0.99))
+    }
+
     /// Export buffered spans in standard OTLP/HTTP JSON format (`resourceSpans`).
     #[must_use]
     pub fn export_otlp_json(&self) -> serde_json::Value {

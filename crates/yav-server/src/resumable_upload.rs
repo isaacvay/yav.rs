@@ -152,37 +152,54 @@ impl ChunkedUploader {
         upload_offset: u64,
         chunk: &[u8],
     ) -> Result<u64, TusError> {
-        let mut map = self.sessions.write().unwrap_or_else(|e| e.into_inner());
-        let session = map
-            .get_mut(session_id)
-            .ok_or_else(|| TusError::SessionNotFound(session_id.to_string()))?;
+        let (spool_dir, total_size) = {
+            let mut map = self.sessions.write().unwrap_or_else(|e| e.into_inner());
+            let session = map
+                .get_mut(session_id)
+                .ok_or_else(|| TusError::SessionNotFound(session_id.to_string()))?;
 
-        if session.is_completed {
-            return Err(TusError::SessionAlreadyCompleted(session_id.to_string()));
-        }
+            if session.is_completed {
+                return Err(TusError::SessionAlreadyCompleted(session_id.to_string()));
+            }
+            if upload_offset != session.current_offset {
+                return Err(TusError::OffsetMismatch {
+                    expected: session.current_offset,
+                    received: upload_offset,
+                });
+            }
+            let new_offset = session
+                .current_offset
+                .checked_add(chunk.len() as u64)
+                .ok_or(TusError::ExceedsTotalSize {
+                    total: session.total_size,
+                    attempted: u64::MAX,
+                })?;
 
-        if upload_offset != session.current_offset {
-            return Err(TusError::OffsetMismatch {
-                expected: session.current_offset,
-                received: upload_offset,
-            });
-        }
+            if self.spool_dir.is_none() && new_offset > MAX_IN_MEMORY_UPLOAD_BYTES {
+                return Err(TusError::ExceedsMemoryLimit {
+                    max_allowed: MAX_IN_MEMORY_UPLOAD_BYTES,
+                });
+            }
+            if new_offset > session.total_size {
+                return Err(TusError::ExceedsTotalSize {
+                    total: session.total_size,
+                    attempted: new_offset,
+                });
+            }
 
-        let new_offset = session.current_offset + chunk.len() as u64;
-        if self.spool_dir.is_none() && new_offset > MAX_IN_MEMORY_UPLOAD_BYTES {
-            return Err(TusError::ExceedsMemoryLimit {
-                max_allowed: MAX_IN_MEMORY_UPLOAD_BYTES,
-            });
-        }
+            if self.spool_dir.is_none() {
+                session.data.extend_from_slice(chunk);
+                session.current_offset = new_offset;
+                if session.current_offset == session.total_size {
+                    session.is_completed = true;
+                }
+                return Ok(session.current_offset);
+            }
+            (self.spool_dir.clone(), session.total_size)
+        };
 
-        if new_offset > session.total_size {
-            return Err(TusError::ExceedsTotalSize {
-                total: session.total_size,
-                attempted: new_offset,
-            });
-        }
-
-        if let Some(ref dir) = self.spool_dir {
+        // Perform blocking file I/O WITHOUT holding the sessions RwLock write guard
+        if let Some(ref dir) = spool_dir {
             let file_path = safe_spool_path(dir, session_id)?;
             let mut file = OpenOptions::new()
                 .create(true)
@@ -191,16 +208,17 @@ impl ChunkedUploader {
                 .map_err(|e| TusError::IoError(e.to_string()))?;
             file.write_all(chunk)
                 .map_err(|e| TusError::IoError(e.to_string()))?;
-        } else {
-            session.data.extend_from_slice(chunk);
         }
 
-        session.current_offset = new_offset;
-
+        let mut map = self.sessions.write().unwrap_or_else(|e| e.into_inner());
+        let session = map
+            .get_mut(session_id)
+            .ok_or_else(|| TusError::SessionNotFound(session_id.to_string()))?;
+        let new_offset = upload_offset.saturating_add(chunk.len() as u64);
+        session.current_offset = new_offset.min(total_size);
         if session.current_offset == session.total_size {
             session.is_completed = true;
         }
-
         Ok(session.current_offset)
     }
 
@@ -217,16 +235,19 @@ impl ChunkedUploader {
 
     /// Consume completed uploaded data.
     pub fn take_completed_data(&self, session_id: &str) -> Option<Vec<u8>> {
+        let is_spooled_done = {
+            let map = self.sessions.read().unwrap_or_else(|e| e.into_inner());
+            map.get(session_id).is_some_and(|s| s.is_completed)
+        };
+        if !is_spooled_done {
+            return None;
+        }
+
         if let Some(ref dir) = self.spool_dir {
             if let Ok(file_path) = safe_spool_path(dir, session_id) {
                 if let Ok(bytes) = std::fs::read(&file_path) {
-                    let mut map = self.sessions.write().unwrap_or_else(|e| e.into_inner());
-                    if let Some(session) = map.get_mut(session_id) {
-                        if session.is_completed {
-                            let _ = std::fs::remove_file(file_path);
-                            return Some(bytes);
-                        }
-                    }
+                    let _ = std::fs::remove_file(file_path);
+                    return Some(bytes);
                 }
             }
         }
@@ -248,26 +269,36 @@ fn safe_spool_path(dir: &std::path::Path, session_id: &str) -> Result<PathBuf, T
     {
         return Err(TusError::SessionNotFound("Invalid session ID".into()));
     }
-    let sanitized_id: String = session_id
-        .chars()
-        .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
-        .collect();
-    if sanitized_id.is_empty() {
-        return Err(TusError::SessionNotFound("Invalid session ID".into()));
+    // Collision-free lowercase hex encoding preserves distinct session IDs without stripping characters
+    let mut hex_name = String::with_capacity(session_id.len() * 2 + 4);
+    hex_name.push_str("tus_");
+    for &b in session_id.as_bytes() {
+        use std::fmt::Write;
+        let _ = write!(&mut hex_name, "{b:02x}");
     }
-    Ok(dir.join(sanitized_id))
+    Ok(dir.join(hex_name))
 }
 
-/// Helper parsing standard Tus `Upload-Metadata` header.
+/// Helper parsing standard Tus `Upload-Metadata` header (decoding base64 values per Tus 1.0).
 #[must_use]
 pub fn parse_tus_metadata(header: &str) -> HashMap<String, String> {
+    use base64::Engine;
     let mut map = HashMap::new();
     for pair in header.split(',') {
         let mut parts = pair.trim().splitn(2, ' ');
         if let Some(key) = parts.next() {
             if !key.is_empty() {
-                let val = parts.next().unwrap_or("");
-                map.insert(key.to_string(), val.to_string());
+                let raw_val = parts.next().unwrap_or("").trim();
+                let decoded = if raw_val.is_empty() {
+                    String::new()
+                } else {
+                    base64::engine::general_purpose::STANDARD
+                        .decode(raw_val.as_bytes())
+                        .ok()
+                        .and_then(|bytes| String::from_utf8(bytes).ok())
+                        .unwrap_or_else(|| raw_val.to_string())
+                };
+                map.insert(key.to_string(), decoded);
             }
         }
     }

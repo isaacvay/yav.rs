@@ -70,7 +70,6 @@ pub struct ObjectStoreAdapter {
     store: Arc<dyn object_store::ObjectStore>,
     base_url: String,
     prefix: String,
-    runtime: tokio::runtime::Runtime,
 }
 
 impl ObjectStoreAdapter {
@@ -85,15 +84,10 @@ impl ObjectStoreAdapter {
         base_url: impl Into<String>,
         prefix: impl Into<String>,
     ) -> Result<Self, String> {
-        let runtime = tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()
-            .map_err(|e| format!("failed to build dedicated Tokio runtime: {e}"))?;
         Ok(Self {
             store,
             base_url: base_url.into().trim_end_matches('/').to_string(),
             prefix: prefix.into().trim_matches('/').to_string(),
-            runtime,
         })
     }
 
@@ -121,10 +115,9 @@ impl ObjectStoreAdapter {
     pub fn prefix(&self) -> &str {
         &self.prefix
     }
-}
 
-impl StorageAdapter for ObjectStoreAdapter {
-    fn put_object(
+    /// Native async object write helper safe inside any Axum handler.
+    pub async fn put_object_async(
         &self,
         key: &str,
         content_type: &str,
@@ -140,9 +133,10 @@ impl StorageAdapter for ObjectStoreAdapter {
             .map(|d| d.as_secs())
             .unwrap_or(0);
 
-        let payload = PutPayload::from(bytes.clone());
-        self.runtime
-            .block_on(self.store.put(&Path::from(full_key.clone()), payload))
+        let payload = PutPayload::from(bytes);
+        self.store
+            .put(&Path::from(full_key.clone()), payload)
+            .await
             .map_err(|e| format!("object store put failed for '{full_key}': {e}"))?;
 
         Ok(ObjectMeta {
@@ -154,16 +148,14 @@ impl StorageAdapter for ObjectStoreAdapter {
         })
     }
 
-    fn get_object(&self, key: &str) -> Option<(ObjectMeta, Vec<u8>)> {
+    /// Native async object read helper safe inside any Axum handler.
+    pub async fn get_object_async(&self, key: &str) -> Option<(ObjectMeta, Vec<u8>)> {
         use object_store::{path::Path, ObjectStoreExt};
 
         let full_key = prefixed_key(&self.prefix, key);
-        let result = self
-            .runtime
-            .block_on(self.store.get(&Path::from(full_key.clone())))
-            .ok()?;
+        let result = self.store.get(&Path::from(full_key.clone())).await.ok()?;
         let meta = result.meta.clone();
-        let bytes = self.runtime.block_on(result.bytes()).ok()?.to_vec();
+        let bytes = result.bytes().await.ok()?.to_vec();
 
         let uploaded_at = u64::try_from(meta.last_modified.timestamp()).unwrap_or(0);
         let content_type = content_type_from_key(&full_key).to_string();
@@ -177,13 +169,33 @@ impl StorageAdapter for ObjectStoreAdapter {
         Some((object_meta, bytes))
     }
 
-    fn delete_object(&self, key: &str) -> bool {
+    /// Native async object delete helper safe inside any Axum handler.
+    pub async fn delete_object_async(&self, key: &str) -> bool {
         use object_store::{path::Path, ObjectStoreExt};
 
         let full_key = prefixed_key(&self.prefix, key);
-        self.runtime
-            .block_on(self.store.delete(&Path::from(full_key)))
-            .is_ok()
+        self.store.delete(&Path::from(full_key)).await.is_ok()
+    }
+}
+
+impl StorageAdapter for ObjectStoreAdapter {
+    fn put_object(
+        &self,
+        key: &str,
+        content_type: &str,
+        bytes: Vec<u8>,
+    ) -> Result<ObjectMeta, String> {
+        crate::roadmap::block_on_shared(self.put_object_async(key, content_type, bytes))?
+    }
+
+    fn get_object(&self, key: &str) -> Option<(ObjectMeta, Vec<u8>)> {
+        crate::roadmap::block_on_shared(self.get_object_async(key))
+            .ok()
+            .flatten()
+    }
+
+    fn delete_object(&self, key: &str) -> bool {
+        crate::roadmap::block_on_shared(self.delete_object_async(key)).unwrap_or(false)
     }
 
     fn presign_put(

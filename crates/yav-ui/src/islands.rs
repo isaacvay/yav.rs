@@ -293,6 +293,14 @@ if (document.readyState === 'loading') {
     Node::Element(el)
 }
 
+/// Nonce-aware variant of [`web_components_script`] for strict CSP.
+pub fn web_components_script_with_nonce(nonce: &str) -> Node {
+    match web_components_script() {
+        Node::Element(el) => Node::Element(el.attr("nonce", nonce)),
+        other => other,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
